@@ -1,15 +1,20 @@
 name: update-data
+
 on:
   schedule:
-    - cron: "20 0 * * 1-5"
-    - cron: "0 3 * * 1-5"
-    - cron: "50 6 * * 1-5"
+    # 日本時間 平日 8:30〜15:30 の30分毎（cronはUTC表記のためJST-9時間）
+    - cron: "30 23 * * 0-4"
+    - cron: "0,30 0-6 * * 1-5"
   workflow_dispatch: {}
+
 permissions:
   contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
