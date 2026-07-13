@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.json">
+<title>株ダッシュボード</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--line:#e5e7eb;--tx:#1f2937;--sub:#6b7280;--navy:#1e293b;
+--blue:#2563eb;--green:#059669;--red:#dc2626;--amber:#d97706;--purple:#7c3aed}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;background:var(--bg);color:var(--tx);padding-bottom:40px}
+header{background:var(--navy);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5}
+header h1{font-size:15px;font-weight:700}
+header .sub{font-size:10.5px;color:#94a3b8;margin-top:2px}
+main{padding:12px;max-width:640px;margin:0 auto}
+.pin-box{margin:60px auto;max-width:300px;text-align:center}
+.pin-box input{width:100%;padding:12px;font-size:18px;text-align:center;border:1px solid var(--line);border-radius:10px;margin:10px 0}
+.pin-box button{width:100%;padding:12px;background:var(--navy);color:#fff;border:0;border-radius:10px;font-size:14px;font-weight:700}
+.pin-box .err{color:var(--red);font-size:12px;min-height:16px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 4px;text-align:center}
+.stat b{font-size:15px;display:block}.stat span{font-size:9.5px;color:var(--sub)}
+h2{font-size:13px;margin:16px 0 8px;display:flex;align-items:center;gap:6px}
+h2 .cnt{font-size:10px;color:var(--sub);font-weight:400}
+.mkt{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.mkt div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:7px 10px;white-space:nowrap;font-size:11px}
+.mkt b{display:block;font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:8px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ttl{font-weight:700;font-size:13.5px}.code{font-size:10.5px;color:var(--sub)}
+.badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:auto}
+.b-S,.b-A{background:#ecfdf5;color:var(--green)}.b-B{background:#eff6ff;color:var(--blue)}.b-C{background:#f3f4f6;color:var(--sub)}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.px{font-size:16px;font-weight:700}
+.meta{font-size:10.5px;color:var(--sub);margin-top:3px;line-height:1.6}
+.plan{background:#f8fafc;border:1px dashed var(--line);border-radius:8px;padding:8px 10px;margin-top:7px;font-size:11px;line-height:1.7}
+.plan b{color:var(--navy)}
+.deep{margin-top:7px;font-size:11px;line-height:1.6;border-left:3px solid var(--purple);padding-left:8px}
+.deep .v{font-weight:700}
+.alert{font-size:11px;padding:7px 10px;border-radius:8px;margin-bottom:5px;background:var(--card);border:1px solid var(--line)}
+.alert.danger{border-color:#fecaca;background:#fef2f2}.alert.warn{border-color:#fde68a;background:#fffbeb}
+.foot{font-size:10px;color:var(--sub);margin-top:20px;line-height:1.7}
+details.more summary{font-size:11px;color:var(--blue);cursor:pointer;margin-top:6px;list-style:none}
+.tag{font-size:9.5px;background:#f3f4f6;border-radius:5px;padding:1px 6px;margin-right:4px;color:var(--sub)}
+#lock{font-size:11px;color:#94a3b8;float:right;background:none;border:0}
+</style>
+</head>
+<body>
+<header><button id="lock" onclick="lock()">PIN再入力</button><h1>📈 株ダッシュボード</h1><div class="sub" id="gen">読み込み中…</div></header>
+<main id="app"></main>
+<script>
+const $=id=>document.getElementById(id);
+const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const yen=n=>n==null?'-':Math.round(n).toLocaleString();
+const pct=v=>v==null?'-':(v>0?'+':'')+(+v).toFixed(1)+'%';
+const cls=v=>v>0?'pos':v<0?'neg':'';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function decrypt(pin,blob){
+ const enc=new TextEncoder();
+ const km=await crypto.subtle.importKey('raw',enc.encode(pin),'PBKDF2',false,['deriveKey']);
+ const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:b64(blob.salt),iterations:200000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['decrypt']);
+ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64(blob.nonce)},key,b64(blob.data));
+ return JSON.parse(new TextDecoder().decode(pt));
+}
+function lock(){localStorage.removeItem('pin');location.reload()}
+
+function pinForm(msg){
+ $('app').innerHTML=`<div class="pin-box"><div style="font-size:13px">暗証番号（PIN）を入力</div>
+  <input id="pin" type="password" inputmode="text" autocomplete="off">
+  <div class="err">${esc(msg||'')}</div><button onclick="tryPin()">開く</button></div>`;
+ $('pin').focus();
+}
+async function tryPin(){
+ const pin=$('pin').value.trim();if(!pin)return;
+ try{const d=await decrypt(pin,BLOB);localStorage.setItem('pin',pin);render(d);}
+ catch(e){pinForm('PINが違います');}
+}
+
+function candCard(c){
+ const p=c.plan||{},deep=c.deep;
+ return `<div class="card">
+  <div class="row"><span class="ttl">${esc(c.name)}</span><span class="code">${esc(c.ticker)}</span>
+   <span class="badge b-${esc(c.grade)}">${esc(c.grade)}・${c.score}点</span></div>
+  <div class="row" style="margin-top:4px"><span class="px">${yen(c.price)}円</span>
+   <span class="${cls(c.day_pct)}" style="font-size:12px">${pct(c.day_pct)}</span>
+   <span class="tag">${esc(c.strategy)}</span><span class="tag">RSI ${c.rsi??'-'}</span><span class="tag">${esc(c.source)}</span></div>
+  <div class="meta">${(c.rationale||[]).map(esc).join('・')||'-'}</div>
+  <div class="plan"><b>プラン</b>: 分割 ${(p.entries||[]).map(yen).join(' / ')}円
+   ／ 損切り <b>${yen(p.stop)}円</b> ／ 目標 ${yen(p.target1)}→${yen(p.target2)}円
+   ／ ${p.lot||0}株 ／ ${esc(p.period||'')}<br>NISA: ${esc(p.nisa||'-')}</div>
+  ${deep?`<div class="deep"><span class="v">🔬 精密分析: ${esc(deep.verdict)}</span><br>${esc(deep.summary||'')}
+   ${deep.invalidation?`<br>撤退条件: ${esc(deep.invalidation)}`:''}
+   <details class="more"><summary>反証を見る</summary>${(deep.counter||[]).map(x=>'・'+esc(x)).join('<br>')}</details></div>`:''}
+ </div>`;
+}
+function holdCard(h){
+ return `<div class="card">
+  <div class="row"><span class="ttl">${esc(h.name)}</span><span class="code">${esc(h.ticker)}</span>
+   <span class="badge ${h.level==='danger'?'b-C':h.level==='buy'?'b-A':'b-B'}">${esc(h.action)}</span></div>
+  <div class="row" style="margin-top:4px"><span class="px">${yen(h.price)}円</span>
+   <span class="${cls(h.day_pct)}" style="font-size:12px">${pct(h.day_pct)}</span>
+   <span class="tag">${esc(h.account)}</span><span class="tag">RSI ${h.rsi??'-'}</span></div>
+  <div class="meta">評価 ${yen(h.value)}円（${h.qty}株）／ 損益 <b class="${cls(h.pl)}">${h.pl>0?'+':''}${yen(h.pl)}円（${pct(h.pl_pct)}）</b><br>
+   週${pct(h.w1_pct)}・月${pct(h.m1_pct)} ／ 参考損切り ${yen(h.stop)}円</div>
+ </div>`;
+}
+function render(D){
+ $('gen').textContent='最終更新 '+D.generated_at+'（自動更新は平日1日3回）';
+ const pf=D.portfolio||{};
+ const buys=(D.candidates||[]).filter(c=>c.grade!=='C');
+ $('app').innerHTML=`
+  <div class="stats">
+   <div class="stat"><b>${yen((pf.total_value+ (D.cash||0))/10000)}<small>万</small></b><span>総資産</span></div>
+   <div class="stat"><b class="${cls(pf.total_pl)}">${pf.total_pl>0?'+':''}${yen(pf.total_pl/10000)}<small>万</small></b><span>含み損益 ${pct(pf.pl_pct)}</span></div>
+   <div class="stat"><b class="${cls(pf.day_change)}">${pf.day_change>0?'+':''}${yen(pf.day_change/10000)}<small>万</small></b><span>本日増減</span></div>
+   <div class="stat"><b>${pf.positions}<small>/8</small></b><span>建玉</span></div>
+  </div>
+  <div class="mkt">${(D.market||[]).map(m=>`<div><b>${yen(m.price)}</b>${esc(m.name)} <span class="${cls(m.day_pct)}">${pct(m.day_pct)}</span></div>`).join('')}</div>
+  ${D.head?`<div class="card" style="margin-top:10px"><div style="font-size:11.5px;line-height:1.7"><b>本日の総括（${esc(D.head.bias||'-')}）</b><br>${esc(D.head.text||'')}</div></div>`:''}
+  <h2>🤖 AI推奨候補 <span class="cnt">${buys.length}件（C評価は非表示・提案であり助言ではない）</span></h2>
+  ${buys.map(candCard).join('')||'<div class="card meta">基準を満たす候補なし</div>'}
+  <h2>💼 保有銘柄 <span class="cnt">${(D.holdings||[]).length}銘柄・現金 ${yen(D.cash)}円</span></h2>
+  ${(D.holdings||[]).map(holdCard).join('')}
+  ${(D.alerts||[]).length?`<h2>⚠ アラート</h2>${D.alerts.slice(0,8).map(a=>`<div class="alert ${esc(a.level)}">${esc(a.ts)} ${esc(a.text)}</div>`).join('')}`:''}
+  <div class="foot">${esc(D.risk_rule||'')}<br>AIの出力は全て提案。採用・発注の判断はあなたのみに帰属します。閲覧専用（操作はPC版で）。</div>`;
+}
+
+let BLOB=null;
+(async()=>{
+ try{
+  const r=await fetch('data.enc.json?t='+Date.now());
+  BLOB=await r.json();
+  $('gen').textContent='最終更新 '+(BLOB.generated_at||'-');
+  const pin=localStorage.getItem('pin');
+  if(pin){try{render(await decrypt(pin,BLOB));return}catch(e){}}
+  pinForm();
+ }catch(e){$('app').innerHTML='<div class="card meta">データ未発行です。GitHub Actionsを一度実行してください。</div>'}
+})();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
