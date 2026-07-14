@@ -48,7 +48,7 @@ UNIVERSE = {
  "8766.T":"東京海上HD","8316.T":"三井住友FG","8411.T":"みずほFG","2914.T":"JT",
  "3382.T":"セブン&アイHD","9983.T":"ファーストリテイリング","4661.T":"OLC","6594.T":"ニデック",
  "6981.T":"村田製作所","6752.T":"パナソニックHD","5401.T":"日本製鉄","9101.T":"日本郵船",
- "8802.T":"三菱地所","1605.T":"INPEX","9613.T":"NTTデータG","4901.T":"富士フイルム",
+ "8802.T":"三菱地所","1605.T":"INPEX","4901.T":"富士フイルム",
  "6503.T":"三菱電機","7011.T":"三菱重工業","6146.T":"ディスコ","6857.T":"アドバンテスト",
 }
 INDICES = {"^N225":"日経平均","USDJPY=X":"ドル円","^GSPC":"S&P500","^SOX":"SOX指数"}
@@ -63,7 +63,7 @@ def f(x, nd=2):
         return None
 
 def tick(p):
-    if p is None: return None
+    if p is None or (isinstance(p, float) and math.isnan(p)): return None
     if p >= 10000: return round(p / 10) * 10
     if p >= 5000:  return round(p / 5) * 5
     return round(p)
@@ -145,8 +145,12 @@ def fetch_all(tickers, holdings, demo):
     for tk in tickers:
         try:
             sub = df[tk].dropna(how="all") if len(tickers) > 1 else df.dropna(how="all")
+            sub = sub.ffill().dropna(subset=["Close", "High", "Low"])  # 歯抜け・上場廃止対策
             if len(sub) < 5: continue
-            out[tk] = {"close": sub["Close"].tolist(), "high": sub["High"].tolist(),
+            closes = sub["Close"].tolist()
+            if math.isnan(closes[-1]):
+                print(f"[warn] {tk}: 最新値なし（上場廃止/取得失敗の可能性）→ 除外"); continue
+            out[tk] = {"close": closes, "high": sub["High"].tolist(),
                        "low": sub["Low"].tolist(), "vol": sub["Volume"].fillna(0).tolist()}
         except Exception as e:
             print(f"[warn] {tk}: {e}")

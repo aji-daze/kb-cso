@@ -16,7 +16,20 @@ def main():
     if not pin:
         raise SystemExit("環境変数 DATA_PIN が未設定です（GitHub Secretsに追加してください）")
 
-    d = engine.update(False)
+    # Yahoo側の一時エラーに備えて最大3回リトライ
+    import time, traceback
+    d = None
+    for attempt in range(3):
+        try:
+            d = engine.update(False)
+            break
+        except Exception:
+            traceback.print_exc()
+            if attempt < 2:
+                print(f"リトライします（{attempt + 2}/3回目・60秒待機）")
+                time.sleep(60)
+    if d is None:
+        raise SystemExit("3回失敗のため中断（次回スケジュールで再試行されます）")
 
     # スマホ版に必要な項目だけ抜粋（軽量化）
     payload = {
