@@ -16,6 +16,8 @@ body{font-family:-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;backgro
 header{background:var(--navy);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5}
 header h1{font-size:15px;font-weight:700}
 header .sub{font-size:10.5px;color:#94a3b8;margin-top:2px}
+.hbtn{font-size:11px;color:#94a3b8;background:none;border:1px solid #334155;border-radius:7px;padding:3px 9px;float:right;margin-left:6px}
+.hbtn:active{color:#fff}
 main{padding:12px;max-width:640px;margin:0 auto}
 .pin-box{margin:60px auto;max-width:300px;text-align:center}
 .pin-box input{width:100%;padding:12px;font-size:18px;text-align:center;border:1px solid var(--line);border-radius:10px;margin:10px 0}
@@ -41,16 +43,22 @@ h2 .cnt{font-size:10px;color:var(--sub);font-weight:400}
 .plan b{color:var(--navy)}
 .deep{margin-top:7px;font-size:11px;line-height:1.6;border-left:3px solid var(--purple);padding-left:8px}
 .deep .v{font-weight:700}
+.deep .when{font-size:9.5px;color:var(--sub);font-weight:400}
+.deep .old{color:var(--amber);font-weight:700}
 .alert{font-size:11px;padding:7px 10px;border-radius:8px;margin-bottom:5px;background:var(--card);border:1px solid var(--line)}
 .alert.danger{border-color:#fecaca;background:#fef2f2}.alert.warn{border-color:#fde68a;background:#fffbeb}
 .foot{font-size:10px;color:var(--sub);margin-top:20px;line-height:1.7}
 details.more summary{font-size:11px;color:var(--blue);cursor:pointer;margin-top:6px;list-style:none}
 .tag{font-size:9.5px;background:#f3f4f6;border-radius:5px;padding:1px 6px;margin-right:4px;color:var(--sub)}
-#lock{font-size:11px;color:#94a3b8;float:right;background:none;border:0}
+#upnote{text-align:center;font-size:10px;color:var(--sub);margin-top:14px}
 </style>
 </head>
 <body>
-<header><button id="lock" onclick="lock()">PIN再入力</button><h1>📈 株ダッシュボード</h1><div class="sub" id="gen">読み込み中…</div></header>
+<header>
+ <button class="hbtn" onclick="lock()">PIN</button>
+ <button class="hbtn" onclick="load(false)">🔄 更新</button>
+ <h1>📈 株ダッシュボード</h1><div class="sub" id="gen">読み込み中…</div>
+</header>
 <main id="app"></main>
 <script>
 const $=id=>document.getElementById(id);
@@ -60,6 +68,25 @@ const pct=v=>v==null?'-':(v>0?'+':'')+(+v).toFixed(1)+'%';
 const cls=v=>v>0?'pos':v<0?'neg':'';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+let LAST='';           // 表示中データの generated_at
+const POLL_MS=5*60*1000; // 画面の自動再読込間隔: 5分
+
+function parseTs(s){ // "YYYY-MM-DD HH:MM:SS"（JST）
+ if(!s)return null;const m=s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+ return m?new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5]):null;
+}
+function ago(s){
+ const t=parseTs(s);if(!t)return'';
+ const mn=Math.floor((Date.now()-t)/60000);
+ if(mn<1)return'たった今';if(mn<60)return mn+'分前';
+ const h=Math.floor(mn/60);if(h<24)return h+'時間前';
+ return Math.floor(h/24)+'日前';
+}
+function genLine(){
+ $('gen').textContent=LAST?`データ ${LAST}（${ago(LAST)}）・平日8:30-15:30に30分毎更新`:'-';
+}
+setInterval(genLine,60000);
+
 async function decrypt(pin,blob){
  const enc=new TextEncoder();
  const km=await crypto.subtle.importKey('raw',enc.encode(pin),'PBKDF2',false,['deriveKey']);
@@ -67,22 +94,49 @@ async function decrypt(pin,blob){
  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64(blob.nonce)},key,b64(blob.data));
  return JSON.parse(new TextDecoder().decode(pt));
 }
-function lock(){localStorage.removeItem('pin');location.reload()}
+function lock(){localStorage.removeItem('pin');LAST='';location.reload()}
 
-function pinForm(msg){
+function pinForm(msg,blob){
  $('app').innerHTML=`<div class="pin-box"><div style="font-size:13px">暗証番号（PIN）を入力</div>
-  <input id="pin" type="password" inputmode="text" autocomplete="off">
+  <input id="pin" type="password" autocomplete="off">
   <div class="err">${esc(msg||'')}</div><button onclick="tryPin()">開く</button></div>`;
- $('pin').focus();
+ window._blob=blob;$('pin').focus();
 }
 async function tryPin(){
  const pin=$('pin').value.trim();if(!pin)return;
- try{const d=await decrypt(pin,BLOB);localStorage.setItem('pin',pin);render(d);}
- catch(e){pinForm('PINが違います');}
+ try{const d=await decrypt(pin,window._blob);localStorage.setItem('pin',pin);LAST=window._blob.generated_at;genLine();render(d);}
+ catch(e){pinForm('PINが違います',window._blob);}
 }
 
+// ---- データ取得（自動更新の中枢）----
+// auto=true: 定期ポーリング/復帰時。generated_atが変わった時だけ再描画
+async function load(auto){
+ let blob;
+ try{
+  const r=await fetch('data.enc.json?t='+Date.now(),{cache:'no-store'});
+  blob=await r.json();
+ }catch(e){if(!auto)$('app').innerHTML='<div class="card meta">通信エラー。電波状況を確認して🔄を押してください。</div>';return}
+ const pin=localStorage.getItem('pin');
+ if(!pin){pinForm('',blob);LAST=blob.generated_at||'';genLine();return}
+ if(auto&&blob.generated_at===LAST){genLine();return} // 変化なし
+ try{const d=await decrypt(pin,blob);LAST=blob.generated_at||'';genLine();render(d);}
+ catch(e){pinForm('PINが違います（変更された可能性）',blob);}
+}
+setInterval(()=>load(true),POLL_MS);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load(true)}); // アプリ復帰時に即更新
+
+function deepBox(deep){
+ if(!deep)return'';
+ const t=parseTs(deep.analyzed_at);
+ const days=t?Math.floor((Date.now()-t)/86400000):null;
+ const old=days!=null&&days>=7?` <span class="old">⚠${days}日前の分析・要更新</span>`:'';
+ return `<div class="deep"><span class="v">🔬 精密分析: ${esc(deep.verdict)}</span>
+  <span class="when">（${esc(deep.analyzed_at||'日時不明')}時点・${esc(deep.model||'-')}）${old}</span><br>${esc(deep.summary||'')}
+  ${deep.invalidation?`<br>撤退条件: ${esc(deep.invalidation)}`:''}
+  <details class="more"><summary>反証を見る</summary>${(deep.counter||[]).map(x=>'・'+esc(x)).join('<br>')}</details></div>`;
+}
 function candCard(c){
- const p=c.plan||{},deep=c.deep;
+ const p=c.plan||{};
  return `<div class="card">
   <div class="row"><span class="ttl">${esc(c.name)}</span><span class="code">${esc(c.ticker)}</span>
    <span class="badge b-${esc(c.grade)}">${esc(c.grade)}・${c.score}点</span></div>
@@ -93,9 +147,7 @@ function candCard(c){
   <div class="plan"><b>プラン</b>: 分割 ${(p.entries||[]).map(yen).join(' / ')}円
    ／ 損切り <b>${yen(p.stop)}円</b> ／ 目標 ${yen(p.target1)}→${yen(p.target2)}円
    ／ ${p.lot||0}株 ／ ${esc(p.period||'')}<br>NISA: ${esc(p.nisa||'-')}</div>
-  ${deep?`<div class="deep"><span class="v">🔬 精密分析: ${esc(deep.verdict)}</span><br>${esc(deep.summary||'')}
-   ${deep.invalidation?`<br>撤退条件: ${esc(deep.invalidation)}`:''}
-   <details class="more"><summary>反証を見る</summary>${(deep.counter||[]).map(x=>'・'+esc(x)).join('<br>')}</details></div>`:''}
+  ${deepBox(c.deep)}
  </div>`;
 }
 function holdCard(h){
@@ -110,7 +162,6 @@ function holdCard(h){
  </div>`;
 }
 function render(D){
- $('gen').textContent='最終更新 '+D.generated_at+'（自動更新は平日1日3回）';
  const pf=D.portfolio||{};
  const buys=(D.candidates||[]).filter(c=>c.grade!=='C');
  $('app').innerHTML=`
@@ -122,25 +173,16 @@ function render(D){
   </div>
   <div class="mkt">${(D.market||[]).map(m=>`<div><b>${yen(m.price)}</b>${esc(m.name)} <span class="${cls(m.day_pct)}">${pct(m.day_pct)}</span></div>`).join('')}</div>
   ${D.head?`<div class="card" style="margin-top:10px"><div style="font-size:11.5px;line-height:1.7"><b>本日の総括（${esc(D.head.bias||'-')}）</b><br>${esc(D.head.text||'')}</div></div>`:''}
-  <h2>🤖 AI推奨候補 <span class="cnt">${buys.length}件（C評価は非表示・提案であり助言ではない）</span></h2>
+  <h2>🤖 AI推奨候補 <span class="cnt">${buys.length}件・${esc(D.generated_at||'')}時点（C評価は非表示・提案であり助言ではない）</span></h2>
   ${buys.map(candCard).join('')||'<div class="card meta">基準を満たす候補なし</div>'}
   <h2>💼 保有銘柄 <span class="cnt">${(D.holdings||[]).length}銘柄・現金 ${yen(D.cash)}円</span></h2>
   ${(D.holdings||[]).map(holdCard).join('')}
   ${(D.alerts||[]).length?`<h2>⚠ アラート</h2>${D.alerts.slice(0,8).map(a=>`<div class="alert ${esc(a.level)}">${esc(a.ts)} ${esc(a.text)}</div>`).join('')}`:''}
+  <div id="upnote">画面は5分毎+アプリ復帰時に自動再読込。データ生成は平日8:30〜15:30の30分毎<br>精密分析はPC側で実行した時点のもの（各候補に日時表示）</div>
   <div class="foot">${esc(D.risk_rule||'')}<br>AIの出力は全て提案。採用・発注の判断はあなたのみに帰属します。閲覧専用（操作はPC版で）。</div>`;
 }
 
-let BLOB=null;
-(async()=>{
- try{
-  const r=await fetch('data.enc.json?t='+Date.now());
-  BLOB=await r.json();
-  $('gen').textContent='最終更新 '+(BLOB.generated_at||'-');
-  const pin=localStorage.getItem('pin');
-  if(pin){try{render(await decrypt(pin,BLOB));return}catch(e){}}
-  pinForm();
- }catch(e){$('app').innerHTML='<div class="card meta">データ未発行です。GitHub Actionsを一度実行してください。</div>'}
-})();
+load(false);
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
 </script>
 </body>
