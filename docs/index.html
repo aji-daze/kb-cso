@@ -57,6 +57,7 @@ details.more summary{font-size:11px;color:var(--blue);cursor:pointer;margin-top:
 <header>
  <button class="hbtn" onclick="lock()">PIN</button>
  <button class="hbtn" onclick="load(false)">🔄 更新</button>
+ <button class="hbtn" id="regenBtn" onclick="regen()">⚡再生成</button>
  <h1>📈 株ダッシュボード</h1><div class="sub" id="gen">読み込み中…</div>
 </header>
 <main id="app"></main>
@@ -180,6 +181,33 @@ function render(D){
   ${(D.alerts||[]).length?`<h2>⚠ アラート</h2>${D.alerts.slice(0,8).map(a=>`<div class="alert ${esc(a.level)}">${esc(a.ts)} ${esc(a.text)}</div>`).join('')}`:''}
   <div id="upnote">画面は5分毎+アプリ復帰時に自動再読込。データ生成は平日8:30〜15:30の30分毎<br>精密分析はPC側で実行した時点のもの（各候補に日時表示）</div>
   <div class="foot">${esc(D.risk_rule||'')}<br>AIの出力は全て提案。採用・発注の判断はあなたのみに帰属します。閲覧専用（操作はPC版で）。</div>`;
+}
+
+// ---- スマホからデータ再生成（GitHub Actionsを起動）----
+const OWNER=location.hostname.split('.')[0]||'aji-daze';
+const REPO=location.pathname.split('/').filter(Boolean)[0]||'kb-cso';
+async function regen(){
+ let t=localStorage.getItem('gh_token');
+ if(!t){
+  t=prompt('初回のみGitHubトークンが必要です。\n作り方: GitHub→Settings→Developer settings→Fine-grained tokens→Generate new token→Repository accessで '+REPO+' のみ選択→PermissionsのActionsを Read and write→Generate。\nトークン(github_pat_…)を貼り付け:');
+  if(!t)return;t=t.trim();localStorage.setItem('gh_token',t);
+ }
+ const btn=$('regenBtn');btn.textContent='⏳起動中…';btn.disabled=true;
+ try{
+  const r=await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/update.yml/dispatches`,{
+   method:'POST',
+   headers:{'Authorization':'Bearer '+t,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},
+   body:JSON.stringify({ref:'main'})});
+  if(r.status===204){
+   btn.textContent='⏳生成中…';
+   // 30秒毎に最大8分、新データが出たら自動反映
+   let n=0;const iv=setInterval(async()=>{await load(true);n++;
+    if(n>16||($('gen').textContent.includes('たった今'))){clearInterval(iv);btn.textContent='⚡再生成';btn.disabled=false;}},30000);
+  }else if(r.status===401||r.status===403){
+   localStorage.removeItem('gh_token');alert('トークンが無効です（期限切れ/権限不足）。もう一度⚡を押して新しいトークンを入力してください。');
+   btn.textContent='⚡再生成';btn.disabled=false;
+  }else{alert('起動失敗: HTTP '+r.status);btn.textContent='⚡再生成';btn.disabled=false;}
+ }catch(e){alert('通信エラー: '+e.message);btn.textContent='⚡再生成';btn.disabled=false;}
 }
 
 load(false);
