@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュして、電波がなくても起動できるようにする。
 // 曲のデータは IndexedDB 側に入っているのでここでは扱わない。
-const VERSION = 'music-v1';
+const VERSION = 'music-v2';
 const SHELL = [
   './',
   './index.html',
@@ -12,6 +12,10 @@ const SHELL = [
   './js/player.js',
   './js/drive.js',
   './js/art.js',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

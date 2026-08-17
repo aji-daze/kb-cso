@@ -1,5 +1,4 @@
 {
-  "id": "kb-music",
   "name": "ミュージック",
   "short_name": "ミュージック",
   "description": "端末や Google ドライブの曲をオフラインで聴くプレーヤー",
@@ -10,18 +9,10 @@
   "background_color": "#0b0b0d",
   "theme_color": "#0b0b0d",
   "lang": "ja",
+  "dir": "ltr",
   "icons": [
-    {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='42' fill='%230b0b0d'/%3E%3Cpath d='M132 44v72a24 24 0 11-14-21.8V70.5l-46 11.2v54.3a24 24 0 11-14-21.8V64z' fill='%23f0a45c'/%3E%3C/svg%3E",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%230b0b0d'/%3E%3Cpath d='M128 56v64a20 20 0 11-12-18.3V78l-38 9.2v45.6a20 20 0 11-12-18.3V72z' fill='%23f0a45c'/%3E%3C/svg%3E",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
