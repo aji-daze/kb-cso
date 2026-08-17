@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.3';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -646,7 +646,7 @@ function setupMediaSession() {
     if (d.fastSeek && audio.fastSeek) audio.fastSeek(d.seekTime);
     else audio.currentTime = d.seekTime;
   });
-  set('stop', () => audio.pause());
+  set('stop', () => stopPlayback());
 }
 
 async function togglePlay(force) {
@@ -691,6 +691,41 @@ function prev() {
     state.qi--;
     loadCurrent(true);
   } else audio.currentTime = 0;
+}
+
+// ■ 再生を終わらせる。一時停止と違って、頭に戻して表示も通知も片付ける。
+function stopPlayback() {
+  audio.pause();
+  try {
+    audio.currentTime = 0;
+  } catch {}
+  audio.removeAttribute('src');
+  audio.load(); // これでメディア通知が消える
+  if (state.objectUrl) {
+    URL.revokeObjectURL(state.objectUrl);
+    state.objectUrl = null;
+  }
+  state.queue = [];
+  state.base = [];
+  state.qi = -1;
+  state.ctxLabel = '';
+
+  P.cancelSleep();
+  clearTimeout(saveTimer);
+  db.setSetting('lastPlayback', null); // 次に開いたときは何も鳴っていない状態から
+
+  $('#mini').hidden = true;
+  if ($('#sheetNow').classList.contains('open')) popNav();
+
+  if ('mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.playbackState = 'none';
+      navigator.mediaSession.metadata = null;
+    } catch {}
+  }
+  $('#miniBar').firstElementChild.style.width = '0';
+  highlightPlaying();
+  syncControls();
 }
 
 function toggleShuffle() {
@@ -1548,6 +1583,7 @@ function wire() {
   $('#mini').addEventListener('click', (e) => {
     if (e.target.closest('#miniPlay')) return togglePlay();
     if (e.target.closest('#miniNext')) return next();
+    if (e.target.closest('#miniStop')) return stopPlayback();
     openSheet('sheetNow');
   });
 
@@ -1558,6 +1594,7 @@ function wire() {
   $('#btnShuffle').onclick = toggleShuffle;
   $('#btnRepeat').onclick = cycleRepeat;
   $('#nowQueue').onclick = showQueue;
+  $('#nowStop').onclick = stopPlayback;
   document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => popNav()));
   $('#dialogWrap').querySelector('.backdrop').onclick = () => closeDialog();
 
