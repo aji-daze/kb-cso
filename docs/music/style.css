@@ -282,13 +282,13 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bord
 .eq-band .v { font-size: 11px; color: var(--acc); font-variant-numeric: tabular-nums; }
 .eq-band .hz { font-size: 10.5px; color: var(--sub); }
 .eq-band input[type=range] {
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
   writing-mode: vertical-lr;
   direction: rtl;
   width: 26px; flex: 1;
 }
-.eq-band input[type=range]::-webkit-slider-runnable-track { width: 3px; height: auto; }
+.eq-band input[type=range]::-webkit-slider-runnable-track { width: 3px; height: 100%; }
+.eq-band input[type=range]::-moz-range-track { width: 3px; height: 100%; }
+.eq-band input[type=range]::-webkit-slider-thumb { margin-top: 0; margin-left: -5.5px; }
 
 /* ダイアログ */
 #dialogWrap { position: fixed; inset: 0; z-index: 20; display: grid; place-items: end center; }

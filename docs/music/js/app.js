@@ -1274,6 +1274,8 @@ async function renderSettings() {
 }
 
 /* ============================ イコライザ ============================ */
+let eqPreset = '—';
+
 function openEq() {
   openSheet('sheetEq');
   renderEq();
@@ -1287,7 +1289,7 @@ function renderEq() {
     <div class="item" data-act="toggle"><div class="txt"><div class="t">イコライザ</div><div class="s">オフのほうが安定して鳴ります</div></div>
       <div class="switch ${on ? 'on' : ''}"></div></div>
     <div class="item"><div class="txt"><div class="t">プリセット</div></div>
-      <select id="preset">${['—', ...Object.keys(P.EQ_PRESETS)].map((k) => `<option>${k}</option>`).join('')}</select></div>
+      <select id="preset">${['—', ...Object.keys(P.EQ_PRESETS)].map((k) => `<option${k === eqPreset ? ' selected' : ''}>${k}</option>`).join('')}</select></div>
     <div class="eq-wrap" style="${on ? '' : 'opacity:.4;pointer-events:none'}">
       ${P.EQ_BANDS.map(
         (hz, i) => `<div class="eq-band">
@@ -1314,15 +1316,21 @@ function renderEq() {
       const v = +s.value;
       $('#v' + i, body).textContent = (v > 0 ? '+' : '') + v;
       P.setEqGain(i, v);
+      if (eqPreset !== '—') {
+        eqPreset = '—';
+        $('#preset', body).value = '—';
+      }
     };
   });
   $('#preset', body).onchange = (e) => {
     const p = P.EQ_PRESETS[e.target.value];
     if (!p) return;
+    eqPreset = e.target.value;
     P.setEqGains(p);
     renderEq();
   };
   $('#eqReset', body).onclick = () => {
+    eqPreset = 'フラット';
     P.setEqGains([0, 0, 0, 0, 0]);
     renderEq();
   };
