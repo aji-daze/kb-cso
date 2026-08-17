@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -1345,19 +1345,72 @@ async function installFlow() {
 
   const warn = inApp
     ? `<div style="color:var(--acc);margin-bottom:10px">いまアプリ内ブラウザで開いています。メニューから「ブラウザで開く」を選んでから、もう一度お試しください。</div>`
+    : !swOk
+    ? `<div style="color:var(--acc);margin-bottom:10px">オフライン用の準備がまだ終わっていません。ページを一度再読み込みしてから、もう一度お試しください。</div>`
     : '';
+
+  const diag = await installDiagnostics();
 
   openDialog(
     `<h3>ホーム画面に追加する</h3>
      <div class="pad" style="font-size:13px;line-height:1.9">
        ${warn}${steps}
-       <div class="muted" style="margin-top:14px;font-size:11.5px">
-         オフライン用の準備: ${swOk ? '完了' : 'まだ（一度ページを再読み込みしてください）'}
-       </div>
+     </div>
+     <div class="pad">
+       <button class="btn full" id="indiag">うまくいかないときの状態を見る</button>
+     </div>
+     <div class="pad" id="indiagbody" hidden style="font-size:11.5px;line-height:1.8">
+       ${diag
+         .map(([k, v]) => `<div style="display:flex;gap:8px"><span class="muted" style="width:8.5em;flex:none">${esc(k)}</span><span style="word-break:break-all">${esc(v)}</span></div>`)
+         .join('')}
      </div>
      <div class="actions"><button class="btn full" id="insc">閉じる</button></div>`,
-    (root) => ($('#insc', root).onclick = closeDialog)
+    (root) => {
+      $('#insc', root).onclick = closeDialog;
+      $('#indiag', root).onclick = () => {
+        const b = $('#indiagbody', root);
+        b.hidden = !b.hidden;
+      };
+    }
   );
+}
+
+// インストールできないときに、どこで引っかかっているかを見るための情報
+async function installDiagnostics() {
+  const ua = navigator.userAgent;
+  const rows = [];
+  rows.push(['表示モード', isStandalone() ? 'アプリとして起動中' : 'ブラウザのタブ']);
+
+  let reg = null;
+  try {
+    reg = await navigator.serviceWorker.getRegistration();
+  } catch {}
+  rows.push([
+    'オフライン準備',
+    navigator.serviceWorker.controller ? '完了（このページを制御中）' : reg ? '登録済み・未制御（再読み込みで有効）' : '未登録',
+  ]);
+
+  try {
+    const r = await fetch('manifest.json', { cache: 'no-store' });
+    if (r.ok) {
+      const m = await r.json();
+      const icons = m.icons || [];
+      const big = icons.filter((i) => String(i.type || '').includes('png') && parseInt(i.sizes, 10) >= 192);
+      rows.push(['manifest', '読み込みOK']);
+      rows.push(['アイコン', `${icons.length}件 / 192px以上のPNG ${big.length}件`]);
+    } else {
+      rows.push(['manifest', 'エラー ' + r.status]);
+    }
+  } catch {
+    rows.push(['manifest', '取得できません']);
+  }
+
+  rows.push(['インストール要求', installPrompt ? '受け取り済み' : 'まだ来ていない']);
+  const inApp = /(FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger)/i.test(ua);
+  rows.push(['ブラウザ', inApp ? 'アプリ内ブラウザ' : /CriOS/.test(ua) ? 'iOS版Chrome' : /Chrome\//.test(ua) ? 'Chrome系' : 'その他']);
+  rows.push(['アプリ版', APP_VERSION]);
+  rows.push(['UA', ua]);
+  return rows;
 }
 
 /* ============================ イコライザ ============================ */
@@ -1702,10 +1755,30 @@ async function init() {
   await restorePlayback();
   db.persist();
 
-  if ('serviceWorker' in navigator) {
-    try {
-      await navigator.serviceWorker.register('sw.js');
-    } catch {}
+  setupServiceWorker();
+}
+
+// 新しい版を入れたとき、古いキャッシュを掴んだままにならないようにする
+async function setupServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return; // 初回登録時は入れ替えではないので何もしない
+    reloading = true;
+    if (!audio.paused) {
+      toast('新しい版があります。次に開いたときに切り替わります', 4000);
+      return;
+    }
+    location.reload();
+  });
+
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+    reg.update().catch(() => {});
+  } catch (e) {
+    console.warn('Service Worker を登録できませんでした', e);
   }
 }
 
