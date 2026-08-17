@@ -5,7 +5,26 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
+
+/* ---- ホーム画面へのインストール ----
+   Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
+   設定画面のボタンから出せるようにする。iPhone はこのイベントが無いので手順を案内する。 */
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  if (document.querySelector('#sheetSettings.open')) renderSettings();
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  toast('ホーム画面に追加しました');
+  if (document.querySelector('#sheetSettings.open')) renderSettings();
+});
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
 
 /* ============================ 小道具 ============================ */
 const $ = (s, r = document) => r.querySelector(s);
@@ -1199,7 +1218,18 @@ async function renderSettings() {
   const autoArt = db.setting('autoArt', true);
   const totalSize = state.tracks.reduce((s, t) => s + (t.size || 0), 0);
 
+  const installed = isStandalone();
+  const installSub = installed
+    ? 'ホーム画面のアイコンから起動しています'
+    : installPrompt
+    ? 'タップするとホーム画面に追加できます'
+    : '追加のしかたを表示します';
+
   body.innerHTML = `
+    <div class="sec">アプリとして使う</div>
+    <div class="item" data-act="install"><svg style="color:${installed ? 'var(--acc)' : 'var(--sub)'}"><use href="#i-install"/></svg>
+      <div class="txt"><div class="t">${installed ? 'インストール済み' : 'ホーム画面に追加'}</div><div class="s">${installSub}</div></div></div>
+
     <div class="sec">曲を取り込む</div>
     <div class="item" data-act="pickFiles"><svg style="color:var(--sub)"><use href="#i-note"/></svg>
       <div class="txt"><div class="t">端末・microSD から選ぶ</div><div class="s">ファイルを選んでアプリ内に保存します</div></div></div>
@@ -1238,7 +1268,8 @@ async function renderSettings() {
       return;
     }
     n.onclick = async () => {
-      if (act === 'pickFiles') $('#filePick').click();
+      if (act === 'install') await installFlow();
+      else if (act === 'pickFiles') $('#filePick').click();
       else if (act === 'pickDir') $('#dirPick').click();
       else if (act === 'drive') openDriveSheet();
       else if (act === 'toggleArt') {
@@ -1271,6 +1302,62 @@ async function renderSettings() {
       }
     };
   });
+}
+
+async function installFlow() {
+  if (isStandalone()) {
+    toast('すでにホーム画面のアイコンから起動しています');
+    return;
+  }
+  if (installPrompt) {
+    const p = installPrompt;
+    installPrompt = null;
+    try {
+      p.prompt();
+      const { outcome } = await p.userChoice;
+      if (outcome !== 'accepted') {
+        installPrompt = p; // 断られたらまた出せるように戻す
+        toast('追加をやめました');
+      }
+    } catch {
+      installPrompt = p;
+    }
+    renderSettings();
+    return;
+  }
+
+  // イベントが来ない環境（iPhone や、アプリ内ブラウザなど）向けの案内
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inApp = /(FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger)/i.test(ua);
+  const swOk = !!navigator.serviceWorker.controller;
+
+  const steps = ios
+    ? `<b>Safari</b> でこのページを開き<br>
+       1. 下（または上）の <b>共有ボタン</b>（□に↑）をタップ<br>
+       2. メニューを下にたどって <b>「ホーム画面に追加」</b><br>
+       3. 追加されたアイコンから起動する<br><br>
+       ※ Chrome アプリではなく Safari で開く必要があります。`
+    : `<b>Chrome</b> でこのページを開き<br>
+       1. 右上の <b>⋮</b>（メニュー）をタップ<br>
+       2. <b>「アプリをインストール」</b> または <b>「ホーム画面に追加」</b><br>
+       3. 追加されたアイコンから起動する`;
+
+  const warn = inApp
+    ? `<div style="color:var(--acc);margin-bottom:10px">いまアプリ内ブラウザで開いています。メニューから「ブラウザで開く」を選んでから、もう一度お試しください。</div>`
+    : '';
+
+  openDialog(
+    `<h3>ホーム画面に追加する</h3>
+     <div class="pad" style="font-size:13px;line-height:1.9">
+       ${warn}${steps}
+       <div class="muted" style="margin-top:14px;font-size:11.5px">
+         オフライン用の準備: ${swOk ? '完了' : 'まだ（一度ページを再読み込みしてください）'}
+       </div>
+     </div>
+     <div class="actions"><button class="btn full" id="insc">閉じる</button></div>`,
+    (root) => ($('#insc', root).onclick = closeDialog)
+  );
 }
 
 /* ============================ イコライザ ============================ */
