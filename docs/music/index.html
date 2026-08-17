@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="ミュージック">
+<meta name="theme-color" content="#0b0b0d">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230b0b0d'/%3E%3Cpath d='M18 4v10.6a2.9 2.9 0 11-1.7-2.6V7.4l-8.6 2.1v6.9a2.9 2.9 0 11-1.7-2.6V6.6z' fill='%23f0a45c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<title>ミュージック</title>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4.5h3.6v15H7zM13.4 4.5H17v15h-3.6z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 5h2.2v14H7zm13 0v14l-10-7z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M14.8 5H17v14h-2.2zM4 5l10 7-10 7z"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8.5h-2.1c-1 0-1.7.4-2.4 1.4l-.9 1.3-1.3-1.9.6-.9C11.9 6.7 13.2 6 14.9 6H17zm0 10l4 4-4 4v-2.5h-2.1c-1.7 0-3-.7-3.9-2.1l-3-4.3c-.6-.9-1.3-1.3-2.3-1.3H3V9h2.7c1.7 0 3 .7 3.9 2.1l3 4.3c.6.9 1.3 1.3 2.3 1.3H17z"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M7 6h10v2.5L21 5l-4-3.5V4H5v7h2zm10 12H7v-2.5L3 19l4 3.5V20h12v-7h-2z"/></symbol>
+  <symbol id="i-repeat1" viewBox="0 0 24 24"><path d="M7 6h10v2.5L21 5l-4-3.5V4H5v7h2zm10 12H7v-2.5L3 19l4 3.5V20h12v-7h-2zM11.4 8.6h1.4v6h-1.4v-4.5l-1.3.5V9.4z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 015.9 12.1l4.3 4.3-1.4 1.4-4.3-4.3A7.5 7.5 0 1110.5 3zm0 2a5.5 5.5 0 100 11 5.5 5.5 0 000-11z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 15.4a3.4 3.4 0 110-6.8 3.4 3.4 0 010 6.8zm7.4-2a7.8 7.8 0 000-2.8l2-1.5-2-3.4-2.3 1a7.6 7.6 0 00-2.4-1.4L14.4 3H9.6l-.3 2.3a7.6 7.6 0 00-2.4 1.4l-2.3-1-2 3.4 2 1.5a7.8 7.8 0 000 2.8l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 002.4 1.4l.3 2.3h4.8l.3-2.3a7.6 7.6 0 002.4-1.4l2.3 1 2-3.4z"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M6.5 19a4.5 4.5 0 01-.6-8.96 6 6 0 0111.6-1.1A4.25 4.25 0 0117.5 19zm5.5-9l-3.5 4H11v3h2v-3h2.5z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15.4 4.4L14 3l-9 9 9 9 1.4-1.4L7.8 12z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M19.6 8.4L18.2 7 12 13.2 5.8 7 4.4 8.4l7.6 7.6z"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21s-8-4.9-8-10.2A4.8 4.8 0 0112 7.7a4.8 4.8 0 018 3.1C20 16.1 12 21 12 21z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 4.5a1.9 1.9 0 110 3.8 1.9 1.9 0 010-3.8zm0 5.6a1.9 1.9 0 110 3.8 1.9 1.9 0 010-3.8zm0 5.6a1.9 1.9 0 110 3.8 1.9 1.9 0 010-3.8z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24"><path d="M9 1.5h6v2H9zM12 5a8.5 8.5 0 108.5 8.5A8.5 8.5 0 0012 5zm.9 9.1h-4v-1.8h2.2V8.5h1.8z"/></symbol>
+  <symbol id="i-eq" viewBox="0 0 24 24"><path d="M5 3h2v6H5zm0 8h2v10H5zm7-8h2v13h-2zm0 15h2v3h-2zm7-15h2v3h-2zm0 5h2v13h-2z"/></symbol>
+  <symbol id="i-speed" viewBox="0 0 24 24"><path d="M12 4a9 9 0 00-7.9 13.3l1.7-1a7 7 0 1112.4 0l1.7 1A9 9 0 0012 4zm4.2 4.4l-4.6 3.2a1.6 1.6 0 102 2.2z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14L7.5 14.5H4zm11.5-1.2a5 5 0 010 7.4l-1.3-1.5a3 3 0 000-4.4zm2.4-2.7a8.5 8.5 0 010 12.8l-1.3-1.5a6.5 6.5 0 000-9.8z"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M18.3 7.1l-1.4-1.4-4.9 4.9-4.9-4.9-1.4 1.4 4.9 4.9-4.9 4.9 1.4 1.4 4.9-4.9 4.9 4.9 1.4-1.4-4.9-4.9z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6.5l2 2.5H21V19H3z"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M19 3v11.6a3.4 3.4 0 11-2-3.1V7.4l-7 1.7v8a3.4 3.4 0 11-2-3.1V6z"/></symbol>
+  <symbol id="i-img" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M3 4h18v16H3zm2 2v12h14V6zm1.8 10.5h10.4l-3.3-4.4-2.5 3.2-1.8-2.1z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M9 3h6l1 1.5h4v2H4v-2h4zM5.5 8h13l-1 13h-11z"/></symbol>
+  <symbol id="i-queue" viewBox="0 0 24 24"><path d="M3 5h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm15-9v8.1a2.9 2.9 0 101.7 2.6V8h2V6z"/></symbol>
+</svg>
+
+<div id="main">
+  <header class="topbar">
+    <button class="icon" id="btnBack" hidden aria-label="戻る"><svg><use href="#i-back"/></svg></button>
+    <h1 id="mainTitle">ミュージック</h1>
+    <button class="icon" id="btnSearch" aria-label="検索"><svg><use href="#i-search"/></svg></button>
+    <button class="icon" id="btnSettings" aria-label="設定"><svg><use href="#i-settings"/></svg></button>
+  </header>
+
+  <div id="searchWrap" hidden>
+    <input id="q" type="search" placeholder="曲・アルバム・アーティストを検索" autocomplete="off">
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="songs" class="on">曲</button>
+    <button data-tab="albums">アルバム</button>
+    <button data-tab="artists">アーティスト</button>
+    <button data-tab="playlists">プレイリスト</button>
+  </nav>
+
+  <main id="view"></main>
+</div>
+
+<div id="mini" hidden>
+  <div class="mini-art"><img id="miniArt" alt=""><svg class="ph"><use href="#i-note"/></svg></div>
+  <div class="mini-txt">
+    <div id="miniTitle">—</div>
+    <div id="miniSub"></div>
+  </div>
+  <button class="icon lg" id="miniPlay" aria-label="再生"><svg><use href="#i-play"/></svg></button>
+  <button class="icon lg" id="miniNext" aria-label="次へ"><svg><use href="#i-next"/></svg></button>
+  <div id="miniBar"><span></span></div>
+</div>
+
+<!-- 再生中画面 -->
+<section id="sheetNow" class="sheet">
+  <header class="topbar">
+    <button class="icon" data-close aria-label="閉じる"><svg><use href="#i-down"/></svg></button>
+    <h1 id="nowFrom">再生中</h1>
+    <button class="icon" id="nowQueue" aria-label="再生キュー"><svg><use href="#i-queue"/></svg></button>
+  </header>
+  <div class="now-body">
+    <div class="now-art"><img id="nowArt" alt=""><svg class="ph"><use href="#i-note"/></svg></div>
+    <div class="now-meta">
+      <div id="nowTitle">—</div>
+      <div id="nowSub"></div>
+    </div>
+    <div class="now-tools">
+      <button class="tool" id="tSpeed"><svg><use href="#i-speed"/></svg><span>1.0x</span></button>
+      <button class="tool" id="tEq"><svg><use href="#i-eq"/></svg><span>EQ</span></button>
+      <button class="tool" id="tFav"><svg><use href="#i-heart"/></svg><span>お気に入り</span></button>
+      <button class="tool" id="tAdd"><svg><use href="#i-plus"/></svg><span>追加</span></button>
+      <button class="tool" id="tTimer"><svg><use href="#i-timer"/></svg><span>タイマー</span></button>
+      <button class="tool" id="tVol"><svg><use href="#i-vol"/></svg><span>音量</span></button>
+    </div>
+    <div id="volWrap" hidden><input id="vol" type="range" min="0" max="100" value="100"></div>
+    <div class="seek">
+      <span id="curTime">0:00</span>
+      <input id="seek" type="range" min="0" max="1000" value="0">
+      <span id="durTime">0:00</span>
+    </div>
+    <div class="controls">
+      <button class="icon" id="btnShuffle" aria-label="シャッフル"><svg><use href="#i-shuffle"/></svg></button>
+      <button class="icon xl" id="btnPrev" aria-label="前へ"><svg><use href="#i-prev"/></svg></button>
+      <button id="btnPlay" class="play" aria-label="再生"><svg><use href="#i-play"/></svg></button>
+      <button class="icon xl" id="btnNext" aria-label="次へ"><svg><use href="#i-next"/></svg></button>
+      <button class="icon" id="btnRepeat" aria-label="リピート"><svg><use href="#i-repeat"/></svg></button>
+    </div>
+  </div>
+</section>
+
+<!-- 設定 -->
+<section id="sheetSettings" class="sheet">
+  <header class="topbar">
+    <button class="icon" data-close aria-label="閉じる"><svg><use href="#i-back"/></svg></button>
+    <h1>設定</h1>
+  </header>
+  <div class="sheet-body" id="settingsBody"></div>
+</section>
+
+<!-- イコライザ -->
+<section id="sheetEq" class="sheet">
+  <header class="topbar">
+    <button class="icon" data-close aria-label="閉じる"><svg><use href="#i-back"/></svg></button>
+    <h1>イコライザ</h1>
+  </header>
+  <div class="sheet-body" id="eqBody"></div>
+</section>
+
+<!-- Google ドライブ -->
+<section id="sheetDrive" class="sheet">
+  <header class="topbar">
+    <button class="icon" data-close aria-label="閉じる"><svg><use href="#i-back"/></svg></button>
+    <h1 id="driveTitle">Google ドライブ</h1>
+  </header>
+  <div class="sheet-body" id="driveBody"></div>
+</section>
+
+<div id="dialogWrap" hidden>
+  <div class="backdrop" data-dismiss></div>
+  <div class="dialog" id="dialog"></div>
+</div>
+
+<div id="progress" hidden>
+  <div class="panel">
+    <div id="progText">処理中…</div>
+    <div class="pbar"><span id="progBar"></span></div>
+    <button id="progCancel" class="btn ghost">中止</button>
+  </div>
+</div>
+
+<input type="file" id="filePick" accept="audio/*,.mp3,.m4a,.flac,.aac,.wav,.ogg,.opus" multiple hidden>
+<input type="file" id="dirPick" webkitdirectory directory multiple hidden>
+
+<div id="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
