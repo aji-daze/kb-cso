@@ -332,6 +332,43 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; bord
   box-shadow: 0 6px 20px rgba(0,0,0,.4);
 }
 
+/* ---------- 複数選択 ---------- */
+body.select-mode #tabs { display: none; }
+body.select-mode #mini { display: none; }
+#topbarSelect h1 { flex: 1; font-size: 15px; }
+#topbarSelect .btn { font-size: 12.5px; padding: 8px 10px; flex: none; }
+
+.row .chk {
+  display: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1.5px solid var(--sub); flex: none;
+  align-items: center; justify-content: center; color: transparent;
+}
+body.select-mode .row .chk { display: flex; }
+.row.sel { background: var(--surface); }
+.row.sel .chk { background: var(--acc); border-color: var(--acc); color: #16130f; }
+.row.sel .chk svg { width: 14px; height: 14px; }
+
+#selectBar {
+  position: fixed; left: 8px; right: 8px;
+  bottom: calc(8px + var(--safe-b));
+  height: var(--mini);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  align-items: stretch;
+  z-index: 6;
+  overflow: hidden;
+}
+.sbtn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; font-size: 10.5px; color: var(--tx);
+}
+.sbtn svg { width: 19px; height: 19px; }
+.sbtn:active { background: var(--surface2); }
+.sbtn.danger { color: var(--danger); }
+
 /* ジャケット候補 */
 .art-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 4px 18px 14px; }
 .art-grid button { border-radius: 8px; overflow: hidden; background: var(--surface2); }
