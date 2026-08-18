@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.1.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -191,6 +191,8 @@ const state = {
   repeat: 'off', // off | all | one
   objectUrl: null,
   ctxLabel: '',
+  selectMode: false, // 複数選択モード
+  selected: new Set(), // 選択中の曲ID
 };
 
 const route = () => state.routes[state.routes.length - 1];
@@ -331,9 +333,16 @@ function render() {
   else if (r.name === 'artist') renderArtistDetail(r.key);
   else if (r.name === 'folder') renderFolderDetail(r.key);
   else if (r.name === 'playlist') renderPlaylistDetail(r.key);
+  syncSelectUI();
 }
 
 function pushRoute(r) {
+  if (state.selectMode) {
+    // 選択モード中に画面遷移が起きるときは、まず選択を解除してから遷移する
+    exitSelectMode();
+    setTimeout(() => pushRoute(r), 0);
+    return;
+  }
   state.routes.push(r);
   pushNav(() => {
     state.routes.pop();
@@ -349,6 +358,7 @@ function emptyState(msg) {
 function songRowHTML(t, i, opts = {}) {
   const sub = [t.artist, t.album].filter(Boolean).join(' · ');
   return `<div class="row" data-act="play" data-id="${t.id}" data-i="${i}">
+    <div class="chk"><svg><use href="#i-check"/></svg></div>
     ${opts.num ? `<div class="num">${t.trackNo || i + 1}</div>` : ''}
     <div class="txt"><div class="t">${esc(t.title)}</div><div class="s">${esc(sub || '不明')}${t.duration ? ' · ' + fmtTime(t.duration) : ''}</div></div>
     ${t.favorite ? '<svg style="width:14px;height:14px;color:var(--acc);flex:none"><use href="#i-heart"/></svg>' : ''}
@@ -412,7 +422,7 @@ function renderSongs() {
   view.appendChild(head);
   const box = document.createElement('div');
   view.appendChild(box);
-  mountChunked(box, list, (t, i) => songRowHTML(t, i));
+  mountChunked(box, list, (t, i) => songRowHTML(t, i), 120, syncSelectUI);
   box.dataset.ctx = 'songs';
 }
 
@@ -554,6 +564,7 @@ function renderFolderDetail(key) {
     <div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
+      ${g.tracks.length ? `<button class="btn" data-act="folderAlbum" data-key="${esc(key)}">このフォルダをアルバムにする</button>` : ''}
       <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲 · ${fmtLong(total)}</span>
     </div>
     ${g.tracks.length ? g.tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
@@ -877,6 +888,7 @@ function trackMenu(id) {
   if (!t) return;
   menuDialog(t.title, [
     { label: '再生', icon: 'play', run: () => playSingle(t) },
+    { label: '選択する', run: () => enterSelectMode(id) },
     { label: '次に再生', icon: 'queue', run: () => insertNext(t.id) },
     { label: 'キューの最後に追加', icon: 'plus', run: () => { state.queue.push(t.id); state.base.push(t.id); toast('キューに追加しました'); } },
     { label: t.favorite ? 'お気に入りから外す' : 'お気に入りに追加', icon: 'heart', run: () => toggleFav(t) },
@@ -944,6 +956,158 @@ async function deleteTracks(ids, name) {
   await loadLibrary();
   render();
   toast('削除しました');
+}
+
+/* ============================ 複数選択 ============================ */
+function enterSelectMode(id) {
+  state.selectMode = true;
+  state.selected = new Set(id ? [id] : []);
+  pushNav(() => {
+    state.selectMode = false;
+    state.selected = new Set();
+    syncSelectUI();
+  });
+  syncSelectUI();
+}
+
+function exitSelectMode() {
+  if (state.selectMode) popNav(); // pushNav で登録した後始末（上の関数）を戻る操作として実行する
+}
+
+function toggleSelect(id) {
+  if (state.selected.has(id)) state.selected.delete(id);
+  else state.selected.add(id);
+  if (state.selected.size === 0) {
+    exitSelectMode();
+    return;
+  }
+  syncSelectUI();
+}
+
+// 選択モードの見た目（上部バー・下部アクションバー・各行のチェック）をまとめて同期する。
+// render() の最後や、選択の増減のたびに呼ぶ。選択モードでないときはただ後片付けするだけ。
+function syncSelectUI() {
+  document.body.classList.toggle('select-mode', state.selectMode);
+  $('#topbar').hidden = state.selectMode;
+  $('#topbarSelect').hidden = !state.selectMode;
+  $('#selectBar').hidden = !state.selectMode;
+  if (state.selectMode) $('#selTitle').textContent = `${state.selected.size}曲を選択中`;
+  document.querySelectorAll('#view .row[data-id]').forEach((row) => {
+    row.classList.toggle('sel', state.selected.has(row.dataset.id));
+  });
+}
+
+/* ---- 曲IDの配列を、指定したアルバム名にまとめる共通処理 ----
+   選択モードの「アルバムにまとめる」、アルバム詳細の「アルバム名を変える」「別のアルバムに統合」、
+   フォルダ詳細の「このフォルダをアルバムにする」は、すべてここを通る。
+   albumArtist を渡したときだけ選択曲の albumArtist を上書きする（渡さなければ曲ごとの値のまま）。 */
+async function moveTracksToAlbum(ids, albumName, albumArtist) {
+  const name = String(albumName || '').trim();
+  if (!name) return null;
+  const targets = ids.map((id) => state.byId.get(id)).filter(Boolean);
+  if (!targets.length) return null;
+
+  // albumKey はアーティスト名込みで作られるので、まとめる曲のアルバムアーティストを
+  // 揃えないと「同じアルバム名なのに別アルバム」になってしまう。
+  if (albumArtist === undefined) {
+    const artists = [...new Set(targets.map((t) => String(t.albumArtist || t.artist || '').trim()).filter(Boolean))];
+    albumArtist = artists.length === 1 ? artists[0] : artists.length === 0 ? '' : 'さまざまなアーティスト';
+  }
+  for (const t of targets) {
+    t.album = name;
+    t.albumArtist = albumArtist;
+  }
+  const oldArtIds = targets.map((t) => t.artId);
+  for (const t of targets) t.albumKey = albumKeyOf(t);
+  const newKey = targets[0].albumKey; // 通常は全曲が同じアルバム名・アーティストになるので同じキーになる
+
+  // ジャケットの引き継ぎ: 移動先にまだ無ければ、選択曲のどれかが持っているものをコピーする
+  if (newKey && !(await db.has('art', newKey))) {
+    for (const oldId of oldArtIds) {
+      if (oldId && oldId !== newKey && (await db.has('art', oldId))) {
+        const blob = await db.get('art', oldId);
+        if (blob) {
+          await db.put('art', blob, newKey);
+          dropArtUrl(newKey);
+        }
+        break;
+      }
+    }
+  }
+
+  for (const t of targets) {
+    t.artId = t.albumKey || null;
+    await db.put('tracks', t);
+  }
+
+  await loadLibrary();
+  render();
+  const cur = currentTrack();
+  if (cur && targets.some((t) => t.id === cur.id)) updateNowUI(state.byId.get(cur.id));
+  return { name, count: targets.length };
+}
+
+async function runMoveToAlbum(ids, name, albumArtist) {
+  const res = await moveTracksToAlbum(ids, name, albumArtist);
+  if (!res) return;
+  exitSelectMode(); // 用が済んだら選択モードから抜ける（選択中はタブが隠れているため）
+  toast(`${res.count}曲を「${res.name}」にまとめました`);
+}
+
+// 「アルバムにまとめる」「別のアルバムに統合」共通のダイアログ。既存アルバムから選ぶか、新しい名前を入力する。
+function chooseAlbumDialog(ids, { title = 'アルバムにまとめる', excludeKey } = {}) {
+  const groups = groupAlbums().filter((g) => g.key !== excludeKey);
+  const opts = [
+    {
+      label: '＋ 新しいアルバム名を入力',
+      icon: 'plus',
+      run: async () => {
+        const name = await promptDialog('アルバム名', '', '例）青の記録');
+        if (!name) return;
+        await runMoveToAlbum(ids, name, undefined);
+      },
+    },
+    ...groups.map((g) => ({
+      label: `${g.album}（${g.artist}・${g.tracks.length}曲）`,
+      // 統合先の曲も対象に含めることで、両者のアルバムアーティストが必ず揃う
+      run: () => runMoveToAlbum([...new Set([...ids, ...g.tracks.map((t) => t.id)])], g.album, undefined),
+    })),
+  ];
+  menuDialog(title, opts);
+}
+
+async function folderToAlbum(folderKey) {
+  const g = groupFolders().find((x) => x.key === folderKey);
+  if (!g || !g.tracks.length) return;
+  const initial = g.key === NONE_FOLDER ? '' : folderNameParts(g.folder).name;
+  const name = await promptDialog('アルバム名', initial, '例）青の記録');
+  if (!name) return;
+  await runMoveToAlbum(g.tracks.map((t) => t.id), name, undefined);
+}
+
+async function moveTracksArtist(ids, name) {
+  const targets = ids.map((id) => state.byId.get(id)).filter(Boolean);
+  for (const t of targets) {
+    const oldKey = t.albumKey;
+    t.artist = name;
+    t.artistKey = norm(name);
+    t.albumKey = albumKeyOf(t);
+    if (t.artId === oldKey && t.artId !== t.albumKey) t.artId = t.albumKey || null;
+    await db.put('tracks', t);
+  }
+  await loadLibrary();
+  render();
+  const cur = currentTrack();
+  if (cur && targets.some((t) => t.id === cur.id)) updateNowUI(state.byId.get(cur.id));
+}
+
+async function renameArtistDialog(ids) {
+  const first = state.byId.get(ids[0]);
+  const name = await promptDialog('アーティスト名', first ? first.artist : '', '例）新しい名前');
+  if (!name) return;
+  await moveTracksArtist(ids, name);
+  exitSelectMode();
+  toast(`${ids.length}曲のアーティストを「${name}」に変更しました`);
 }
 
 /* ============================ プレイリスト ============================ */
@@ -1615,8 +1779,14 @@ function wire() {
   $('#tabs').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
     if (!b) return;
-    state.routes = [{ name: b.dataset.tab }];
-    render();
+    const go = () => {
+      state.routes = [{ name: b.dataset.tab }];
+      render();
+    };
+    if (state.selectMode) {
+      exitSelectMode();
+      setTimeout(go, 0); // 選択解除（popNav の非同期な後始末）を待ってから切り替える
+    } else go();
   });
 
   $('#btnBack').onclick = () => popNav();
@@ -1642,12 +1812,67 @@ function wire() {
     }, 180);
   });
 
+  // 曲行の長押しで複数選択モードに入る（タッチ・マウス両対応）
+  const lp = { timer: 0, id: null, moved: false, x: 0, y: 0, suppressClick: false };
+  const cancelLongPress = () => { clearTimeout(lp.timer); lp.timer = 0; };
+  view.addEventListener('pointerdown', (e) => {
+    const row = e.target.closest('.row[data-id]');
+    if (!row) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    lp.id = row.dataset.id;
+    lp.moved = false;
+    lp.x = e.clientX;
+    lp.y = e.clientY;
+    cancelLongPress();
+    lp.timer = setTimeout(() => {
+      lp.timer = 0;
+      if (lp.moved) return;
+      lp.suppressClick = true;
+      if (state.selectMode) toggleSelect(lp.id);
+      else enterSelectMode(lp.id);
+    }, 500);
+  });
+  view.addEventListener('pointermove', (e) => {
+    if (!lp.timer) return;
+    if (Math.abs(e.clientX - lp.x) > 8 || Math.abs(e.clientY - lp.y) > 8) cancelLongPress();
+  });
+  view.addEventListener('pointerup', cancelLongPress);
+  view.addEventListener('pointercancel', cancelLongPress);
+  view.addEventListener('pointerleave', cancelLongPress, true);
+
+  // 複数選択モードの上部バー・下部アクションバー
+  $('#btnSelClose').onclick = () => exitSelectMode();
+  $('#btnSelAll').onclick = () => {
+    const { tracks } = currentListTracks();
+    state.selected = new Set(tracks.map((t) => t.id));
+    syncSelectUI();
+  };
+  $('#selectBar').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const ids = [...state.selected];
+    if (!ids.length) return;
+    const act = b.dataset.act;
+    if (act === 'selAlbum') chooseAlbumDialog(ids);
+    else if (act === 'selArtist') renameArtistDialog(ids);
+    else if (act === 'selPlaylist') addToPlaylistDialog(ids);
+    else if (act === 'selDelete') {
+      deleteTracks(ids, `${ids.length}曲`).then(() => {
+        state.selected = new Set([...state.selected].filter((id) => state.byId.has(id)));
+        if (state.selected.size === 0) exitSelectMode();
+        else syncSelectUI();
+      });
+    }
+  });
+
   // 一覧のタップ
   view.addEventListener('click', (e) => {
     const n = e.target.closest('[data-act]');
     if (!n) return;
     const act = n.dataset.act;
     if (act === 'play') {
+      if (lp.suppressClick) { lp.suppressClick = false; return; } // 長押しで選択モードに入った直後のクリックは無視
+      if (state.selectMode) { toggleSelect(n.dataset.id); return; }
       const { tracks, label } = currentListTracks();
       const i = tracks.findIndex((t) => t.id === n.dataset.id);
       playContext(tracks, i < 0 ? 0 : i, label);
@@ -1660,6 +1885,7 @@ function wire() {
     else if (act === 'newpl') newPlaylist();
     else if (act === 'findart') findArtDialog(n.dataset.key);
     else if (act === 'albummenu') albumMenu(n.dataset.key);
+    else if (act === 'folderAlbum') folderToAlbum(n.dataset.key);
     else if (act === 'playall') {
       const { tracks, label } = currentListTracks();
       playContext(tracks, 0, label);
@@ -1838,6 +2064,18 @@ function albumMenu(key) {
   if (!g) return;
   menuDialog(g.album, [
     { label: 'プレイリストに追加', icon: 'plus', run: () => addToPlaylistDialog(g.tracks.map((t) => t.id)) },
+    {
+      label: 'アルバム名を変える',
+      run: async () => {
+        const name = await promptDialog('アルバム名', g.album);
+        if (!name) return;
+        await runMoveToAlbum(g.tracks.map((t) => t.id), name, undefined);
+      },
+    },
+    {
+      label: '別のアルバムに統合',
+      run: () => chooseAlbumDialog(g.tracks.map((t) => t.id), { title: '別のアルバムに統合', excludeKey: g.key }),
+    },
     { label: 'ジャケットを探す', icon: 'img', run: () => findArtDialog(key) },
     {
       label: 'ジャケットを消す',

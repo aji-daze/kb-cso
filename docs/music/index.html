@@ -45,14 +45,22 @@
   <symbol id="i-img" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M3 4h18v16H3zm2 2v12h14V6zm1.8 10.5h10.4l-3.3-4.4-2.5 3.2-1.8-2.1z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M9 3h6l1 1.5h4v2H4v-2h4zM5.5 8h13l-1 13h-11z"/></symbol>
   <symbol id="i-queue" viewBox="0 0 24 24"><path d="M3 5h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm15-9v8.1a2.9 2.9 0 101.7 2.6V8h2V6z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M9.5 16.2L5.3 12l-1.4 1.4 5.6 5.6L20.1 8.4l-1.4-1.4z"/></symbol>
 </svg>
 
 <div id="main">
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <button class="icon" id="btnBack" hidden aria-label="戻る"><svg><use href="#i-back"/></svg></button>
     <h1 id="mainTitle">ミュージック</h1>
     <button class="icon" id="btnSearch" aria-label="検索"><svg><use href="#i-search"/></svg></button>
     <button class="icon" id="btnSettings" aria-label="設定"><svg><use href="#i-settings"/></svg></button>
+  </header>
+
+  <!-- 複数選択モード中はこちらに差し替わる -->
+  <header class="topbar" id="topbarSelect" hidden>
+    <button class="icon" id="btnSelClose" aria-label="選択を解除"><svg><use href="#i-close"/></svg></button>
+    <h1 id="selTitle">0曲を選択中</h1>
+    <button class="btn ghost" id="btnSelAll">すべて選択</button>
   </header>
 
   <div id="searchWrap" hidden>
@@ -80,6 +88,14 @@
   <button class="icon lg" id="miniNext" aria-label="次へ"><svg><use href="#i-next"/></svg></button>
   <button class="icon lg" id="miniStop" aria-label="停止"><svg><use href="#i-stop"/></svg></button>
   <div id="miniBar"><span></span></div>
+</div>
+
+<!-- 複数選択モード中の操作バー -->
+<div id="selectBar" hidden>
+  <button class="sbtn" data-act="selAlbum"><svg><use href="#i-note"/></svg><span>アルバムにまとめる</span></button>
+  <button class="sbtn" data-act="selArtist"><svg><use href="#i-settings"/></svg><span>アーティスト変更</span></button>
+  <button class="sbtn" data-act="selPlaylist"><svg><use href="#i-plus"/></svg><span>追加</span></button>
+  <button class="sbtn danger" data-act="selDelete"><svg><use href="#i-trash"/></svg><span>削除</span></button>
 </div>
 
 <!-- 再生中画面 -->
