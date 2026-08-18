@@ -31,7 +31,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const norm = (s) => String(s || '').trim().normalize('NFKC').toLowerCase();
-const jcmp = (a, b) => String(a || '').localeCompare(String(b || ''), 'ja');
+const collator = new Intl.Collator('ja'); // 数千曲を並べ替えるので、都度 localeCompare より速い比較器を使う
+const jcmp = (a, b) => collator.compare(String(a || ''), String(b || ''));
 const NONE_FOLDER = '__none__'; // フォルダなしの曲をまとめるキー
 
 function fmtTime(sec) {
@@ -272,7 +273,31 @@ function tryFlushLibraryRefresh() {
   if (Date.now() - lastLibRefresh < LIB_REFRESH_GAP) return;
   libRefreshQueued = false;
   lastLibRefresh = Date.now();
-  loadLibrary().then(render);
+  sortTracksIfNeeded();
+  render();
+}
+
+/* ---- 取り込み中の一覧更新 ----
+   以前はまとめ書きのたびに loadLibrary()（＝全曲を読み直し）していたが、
+   これは曲数に比例して重くなり、数千曲では取り込みが進まなくなる。
+   書いた中身は手元にあるので、追加分だけを足す。並べ替えは描画の直前にまとめて行う。 */
+let tracksDirty = false;
+
+function appendTracksToState(tracks) {
+  let n = 0;
+  for (const t of tracks) {
+    if (state.byId.has(t.id)) continue;
+    state.byId.set(t.id, t);
+    state.tracks.push(t);
+    n++;
+  }
+  if (n) tracksDirty = true;
+}
+
+function sortTracksIfNeeded() {
+  if (!tracksDirty) return;
+  tracksDirty = false;
+  state.tracks.sort((a, b) => jcmp(a.title, b.title));
 }
 
 function groupAlbums(tracks = state.tracks) {
@@ -1328,19 +1353,37 @@ async function importFiles(files, source = 'local') {
   // 2つの呼び出しが両方とも上のガードを通り抜けてしまう（await の前まではどちらも同期的に進むため）。
   importRunning = true;
   try {
+    if (!(await confirmEnoughSpace(list))) return;
     await importFilesInner(list, source);
   } finally {
     importRunning = false; // 正常終了時は hideImportBar() で既に false になっているが、例外時の保険として必ず解放する
   }
 }
 
+// 取り込みは SD の曲を端末内にコピーするので、ライブラリが大きいと保存上限に当たる。
+// 始める前に数字を出して確かめてもらう（見積もれないときは黙って進める）。
+async function confirmEnoughSpace(list) {
+  const need = list.reduce((n, f) => n + (f.size || 0), 0);
+  const est = await db.estimate();
+  if (!est || !est.quota) return true;
+  const free = est.quota - (est.usage || 0);
+  if (need < free * 0.9) return true;
+  return confirmDialog(
+    `選んだ曲は ${fmtSize(need)} ですが、このアプリに残っている空きは ${fmtSize(free)} です。` +
+      `途中で容量が尽きると、そこまでの曲だけが取り込まれます。このまま続けますか？`,
+    '続ける'
+  );
+}
+
 async function importFilesInner(list, source) {
+  const startCount = state.tracks.length; // 実際に増えた曲数は、最後に数え直して求める
   const known = new Set(state.tracks.map((t) => t.fp));
   // ジャケットの既存キーは取り込み開始時に1回だけまとめて取得しておく（1曲ごとに db.has() を呼ばない）
   const existingArt = new Set(await db.getAllKeys('art'));
   let added = 0,
     skipped = 0,
     done = 0;
+  let importFailure = null; // 書き込みに失敗したらここに入れて、以降のバッチを試さない
   const total = list.length;
   showImportBar(`取り込み中 0 / ${total}`);
   // 許可を尋ねるが、取り込み自体はそれを待たずに始める
@@ -1358,9 +1401,18 @@ async function importFilesInner(list, source) {
   let flushChain = Promise.resolve(); // まとめ書きは重ならないよう直列に鎖でつなぐ
   const flushBatch = (items) => {
     flushChain = flushChain
-      .then(() => db.addTracks(items))
-      .then(() => queueLibraryRefresh()) // まとめ書きが済むたびに一覧へ反映を予約する
-      .catch((e) => console.error('まとめ書き失敗', e));
+      .then(() => (importFailure ? null : db.addTracks(items)))
+      .then(() => {
+        if (importFailure) return;
+        appendTracksToState(items.map((it) => it.track)); // 追加分だけ手元に足す（全件読み直しはしない）
+        queueLibraryRefresh();
+      })
+      .catch((e) => {
+        // 保存容量が尽きた場合など。黙って握りつぶすと「曲が欠けたのに成功に見える」ので、ここで止める
+        importFailure = e;
+        progCancelled = true;
+        console.error('まとめ書き失敗', e);
+      });
     return flushChain;
   };
   const maybeFlush = (force = false) => {
@@ -1449,32 +1501,43 @@ async function importFilesInner(list, source) {
   clearInterval(refreshRetryTimer);
 
   hideImportBar();
-  await loadLibrary();
+  await loadLibrary(); // 取り込みが終わったところで一度だけ整合を取る
   render();
-  const cancelled = progCancelled;
-  const summary = cancelled
-    ? `中止しました（${added}曲を追加）`
-    : `${added}曲を追加${skipped ? `（${skipped}曲は取り込み済み）` : ''}`;
-  toast(summary);
-  finishImportNotification(cancelled ? '取り込みを中止しました' : '取り込み完了', summary);
-  if (added && db.setting('autoArt', true)) fetchMissingArt(true);
+  added = Math.max(0, state.tracks.length - startCount); // 書けなかった分を含めない実数
+
+  const failed = !!importFailure;
+  const quotaFull = failed && /quota|storage/i.test(`${importFailure.name || ''} ${importFailure.message || ''}`);
+  const cancelled = progCancelled && !failed;
+  let summary;
+  if (quotaFull) summary = `端末の空き容量が足りず中断しました（${added}曲を追加）`;
+  else if (failed) summary = `保存に失敗して中断しました（${added}曲を追加）`;
+  else if (cancelled) summary = `中止しました（${added}曲を追加）`;
+  else summary = `${added}曲を追加${skipped ? `（${skipped}曲は取り込み済み）` : ''}`;
+
+  toast(failed || cancelled ? `${summary}。同じフォルダを選び直すと、残りだけが追加されます` : summary, 6000);
+  finishImportNotification(failed ? '取り込みを中断しました' : cancelled ? '取り込みを中止しました' : '取り込み完了', summary);
+
+  // 取り込み直後の自動ジャケット取得は、対象が多いと延々と続いて「終わらない」ように見えるので控える
+  if (added && !failed && db.setting('autoArt', true)) fetchMissingArt(true, 40);
 }
 
 /* ---- ジャケットをネットから探す ---- */
-async function fetchMissingArt(silent = false) {
+async function fetchMissingArt(silent = false, maxTargets = 0) {
   if (!navigator.onLine) {
     if (!silent) toast('オフラインです');
     return;
   }
-  const groups = groupAlbums();
-  const targets = [];
-  for (const g of groups) {
-    if (g.artId && (await db.has('art', g.artId))) continue;
-    if (!g.album || g.album === '不明なアルバム') continue;
-    targets.push(g);
-  }
+  // 既存のジャケットは1回だけまとめて取得する（アルバムごとに db.has() を呼ぶと数百枚で重くなる）
+  const haveArt = new Set(await db.getAllKeys('art'));
+  const targets = groupAlbums().filter((g) => g.album && g.album !== '不明なアルバム' && !(g.artId && haveArt.has(g.artId)));
   if (!targets.length) {
     if (!silent) toast('不足しているジャケットはありません');
+    return;
+  }
+  // 自動実行で対象が多すぎるときは走らせない。1枚ずつネットに問い合わせるので、
+  // 数百枚あると延々と続き「終わらない」ように見えてしまう。
+  if (maxTargets && targets.length > maxTargets) {
+    toast(`ジャケット未設定が${targets.length}枚あります。設定から「まとめて取得」で取り込めます`, 6000);
     return;
   }
   // 自動実行のときは画面を塞がず、裏でゆっくり探す
