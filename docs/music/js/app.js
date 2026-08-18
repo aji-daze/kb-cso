@@ -32,6 +32,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const norm = (s) => String(s || '').trim().normalize('NFKC').toLowerCase();
 const jcmp = (a, b) => String(a || '').localeCompare(String(b || ''), 'ja');
+const NONE_FOLDER = '__none__'; // フォルダなしの曲をまとめるキー
 
 function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) sec = 0;
@@ -265,7 +266,36 @@ function groupArtists(tracks = state.tracks) {
 function filtered() {
   const q = norm(state.query);
   if (!q) return state.tracks;
-  return state.tracks.filter((t) => norm(t.title).includes(q) || norm(t.artist).includes(q) || norm(t.album).includes(q));
+  return state.tracks.filter(
+    (t) => norm(t.title).includes(q) || norm(t.artist).includes(q) || norm(t.album).includes(q) || norm(t.folder || '').includes(q)
+  );
+}
+
+// フォルダのフルパス（末尾の名前 / それより上位のパス）に分ける
+function folderNameParts(folder) {
+  const parts = String(folder || '').split('/').filter(Boolean);
+  const name = parts.pop() || folder || '';
+  return { name, parent: parts.join('/') };
+}
+
+function folderLabel(g) {
+  return g.key === NONE_FOLDER ? '未分類' : folderNameParts(g.folder).name;
+}
+
+// フォルダごとに曲をまとめる。既存トラックには folder が無いことがあるので t.folder || '' で扱う
+function groupFolders(tracks = state.tracks) {
+  const m = new Map();
+  for (const t of tracks) {
+    const folder = t.folder || '';
+    const key = folder ? t.folderKey || norm(folder) : NONE_FOLDER;
+    if (!m.has(key)) m.set(key, { key, folder, tracks: [] });
+    m.get(key).tracks.push(t);
+  }
+  const list = [...m.values()];
+  list.forEach((g) => g.tracks.sort((a, b) => String(a.fileName || '').localeCompare(String(b.fileName || ''), 'ja', { numeric: true })));
+  // フルパス昇順。未分類は最後。
+  list.sort((a, b) => (a.key === NONE_FOLDER ? 1 : b.key === NONE_FOLDER ? -1 : jcmp(a.folder, b.folder)));
+  return list;
 }
 
 function builtinPlaylist(key) {
@@ -295,9 +325,11 @@ function render() {
     if (r.name === 'songs') renderSongs();
     else if (r.name === 'albums') renderAlbums();
     else if (r.name === 'artists') renderArtists();
+    else if (r.name === 'folders') renderFolders();
     else renderPlaylists();
   } else if (r.name === 'album') renderAlbumDetail(r.key);
   else if (r.name === 'artist') renderArtistDetail(r.key);
+  else if (r.name === 'folder') renderFolderDetail(r.key);
   else if (r.name === 'playlist') renderPlaylistDetail(r.key);
 }
 
@@ -416,6 +448,33 @@ function renderArtists() {
   );
 }
 
+function renderFolders() {
+  const groups = groupFolders(filtered());
+  const real = groups.filter((g) => g.key !== NONE_FOLDER);
+  if (!real.length) {
+    view.innerHTML = emptyState(
+      state.query
+        ? '見つかりませんでした'
+        : 'フォルダの情報がありません。<br>設定の「フォルダごと取り込む」から取り込むと、フォルダ構成のまま分類されます。'
+    );
+    return;
+  }
+  const box = document.createElement('div');
+  view.appendChild(box);
+  mountChunked(box, groups, (g) => {
+    if (g.key === NONE_FOLDER) {
+      return `<div class="row" data-act="folder" data-key="${NONE_FOLDER}">
+        <div class="txt"><div class="t">未分類</div><div class="s">${g.tracks.length}曲</div></div>
+      </div>`;
+    }
+    const { name, parent } = folderNameParts(g.folder);
+    const sub = [parent, `${g.tracks.length}曲`].filter(Boolean).join(' · ');
+    return `<div class="row" data-act="folder" data-key="${esc(g.key)}">
+      <div class="txt"><div class="t">${esc(name)}</div><div class="s">${esc(sub)}</div></div>
+    </div>`;
+  });
+}
+
 function renderPlaylists() {
   const built = [
     { key: 'fav', name: 'お気に入り', n: state.tracks.filter((t) => t.favorite).length },
@@ -486,6 +545,21 @@ function renderArtistDetail(key) {
   view.dataset.ctx = JSON.stringify({ type: 'artist', key });
 }
 
+function renderFolderDetail(key) {
+  const g = groupFolders().find((x) => x.key === key);
+  if (!g) return (view.innerHTML = emptyState('フォルダが見つかりません'));
+  $('#mainTitle').textContent = folderLabel(g);
+  const total = g.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+  view.innerHTML = `
+    <div class="detail-actions" style="padding:14px">
+      <button class="btn primary" data-act="playall">再生</button>
+      <button class="btn" data-act="shuffleall">シャッフル</button>
+      <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲 · ${fmtLong(total)}</span>
+    </div>
+    ${g.tracks.length ? g.tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
+  view.dataset.ctx = JSON.stringify({ type: 'folder', key });
+}
+
 function renderPlaylistDetail(key) {
   const b = builtinPlaylist(key);
   const pl = b ? null : state.playlists.find((p) => p.id === key);
@@ -515,6 +589,10 @@ function currentListTracks() {
   if (r.name === 'artist') {
     const g = groupArtists().find((x) => x.key === r.key);
     return { tracks: g ? g.tracks : [], label: g ? g.name : '' };
+  }
+  if (r.name === 'folder') {
+    const g = groupFolders().find((x) => x.key === r.key);
+    return { tracks: g ? g.tracks : [], label: g ? folderLabel(g) : '' };
   }
   if (r.name === 'playlist') {
     const b = builtinPlaylist(r.key);
@@ -726,6 +804,7 @@ function stopPlayback() {
   $('#miniBar').firstElementChild.style.width = '0';
   highlightPlaying();
   syncControls();
+  applyUpdateIfPossible();
 }
 
 function toggleShuffle() {
@@ -937,6 +1016,15 @@ function fingerprint(name, size) {
   return `${name}|${size}`;
 }
 
+// webkitRelativePath からフォルダのフルパスを取り出す（個別選択やドライブ取り込みでは空文字）
+// 例: "Music/邦楽/青の記録/01.mp3" → "Music/邦楽/青の記録"
+function folderOfPath(relPath) {
+  if (!relPath) return '';
+  const parts = String(relPath).split('/');
+  parts.pop(); // ファイル名を除く
+  return parts.join('/');
+}
+
 async function importFiles(files, source = 'local') {
   const list = [...files].filter((f) => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|m4b)$/i.test(f.name));
   if (!list.length) {
@@ -960,6 +1048,7 @@ async function importFiles(files, source = 'local') {
       const tags = await readTags(f);
       const duration = await readDuration(f);
       const id = uid();
+      const folder = folderOfPath(f.webkitRelativePath || '');
       const track = {
         id,
         fp,
@@ -974,6 +1063,8 @@ async function importFiles(files, source = 'local') {
         size: f.size,
         mime: f.type || '',
         fileName: f.name,
+        folder,
+        folderKey: norm(folder),
         source,
         driveId: f.driveId || null,
         addedAt: Date.now(),
@@ -1563,6 +1654,7 @@ function wire() {
     } else if (act === 'menu') trackMenu(n.dataset.id);
     else if (act === 'album') pushRoute({ name: 'album', key: n.dataset.key });
     else if (act === 'artist') pushRoute({ name: 'artist', key: n.dataset.key });
+    else if (act === 'folder') pushRoute({ name: 'folder', key: n.dataset.key });
     else if (act === 'playlist') pushRoute({ name: 'playlist', key: n.dataset.key });
     else if (act === 'plmenu') playlistMenu(n.dataset.key);
     else if (act === 'newpl') newPlaylist();
@@ -1653,6 +1745,7 @@ function wire() {
     syncControls();
     savePlayback();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    scheduleUpdateCheck();
   });
   audio.addEventListener('ended', () => {
     if (state.repeat === 'one') {
@@ -1661,6 +1754,7 @@ function wire() {
       return;
     }
     next(true);
+    scheduleUpdateCheck();
   });
   let tick = 0;
   audio.addEventListener('timeupdate', () => {
@@ -1758,6 +1852,48 @@ function albumMenu(key) {
   ]);
 }
 
+/* ============================ バックグラウンド更新 ============================ */
+// 新しい版が来ても、再生中やダイアログ表示中に急に切り替わると困るので、
+// 安全なタイミングになるまで保留してから location.reload() する。
+let swReg = null;
+let updatePending = false; // 新しい版が来ていて、適用待ち
+let updateReloading = false; // 二重に reload しないためのガード
+let lastUpdateCheck = 0;
+const UPDATE_CHECK_VISIBLE_GAP = 5 * 60 * 1000; // 表示に戻ったとき、前回確認から5分以上なら確認する
+const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // 開いている間は60分ごとに確認する
+
+// いま新しい版を適用してよい状態か（再生中でなく、シート／ダイアログ／進捗表示も出ていない）
+function canApplyUpdateNow() {
+  if (!audio.paused) return false;
+  if (document.querySelector('.sheet.open')) return false;
+  if (!$('#dialogWrap').hidden) return false;
+  if (!$('#progress').hidden) return false;
+  return true;
+}
+
+// 保留中の更新があり、かつ今が安全なタイミングなら適用する
+function applyUpdateIfPossible() {
+  if (!updatePending || updateReloading) return;
+  if (!canApplyUpdateNow()) return;
+  updateReloading = true;
+  sessionStorage.setItem('kbmusic-updated', '1'); // 次の起動時に一度だけ知らせる
+  location.reload();
+}
+
+// 曲が次へ切り替わる一瞬は audio.paused が true になるため、そこで更新を適用すると
+// アルバム再生の途中で music が止まってしまう。少し置いてから状態を見直す。
+let updateSettleTimer = 0;
+function scheduleUpdateCheck() {
+  if (!updatePending || updateReloading) return;
+  clearTimeout(updateSettleTimer);
+  updateSettleTimer = setTimeout(applyUpdateIfPossible, 1500);
+}
+
+function checkForUpdate() {
+  lastUpdateCheck = Date.now();
+  if (swReg) swReg.update().catch(() => {});
+}
+
 /* ============================ 起動 ============================ */
 async function restorePlayback() {
   const last = db.setting('lastPlayback', null);
@@ -1792,31 +1928,39 @@ async function init() {
   await restorePlayback();
   db.persist();
 
+  if (sessionStorage.getItem('kbmusic-updated')) {
+    sessionStorage.removeItem('kbmusic-updated');
+    toast('新しい版に更新しました');
+  }
+
   setupServiceWorker();
 }
 
-// 新しい版を入れたとき、古いキャッシュを掴んだままにならないようにする
+// 新しい版を入れたとき、古いキャッシュを掴んだままにならないよう、裏で確認して安全なときに切り替える
 async function setupServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   const hadController = !!navigator.serviceWorker.controller;
-  let reloading = false;
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || reloading) return; // 初回登録時は入れ替えではないので何もしない
-    reloading = true;
-    if (!audio.paused) {
-      toast('新しい版があります。次に開いたときに切り替わります', 4000);
-      return;
-    }
-    location.reload();
+    if (!hadController || updateReloading) return; // 初回登録時は入れ替えではないので何もしない
+    updatePending = true;
+    applyUpdateIfPossible(); // 今すぐ適用できなければ保留し、あとで再生終了・停止・表示復帰時に再判定する
   });
 
   try {
-    const reg = await navigator.serviceWorker.register('sw.js');
-    reg.update().catch(() => {});
+    swReg = await navigator.serviceWorker.register('sw.js');
+    checkForUpdate(); // 起動時に1回確認
   } catch (e) {
     console.warn('Service Worker を登録できませんでした', e);
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    applyUpdateIfPossible();
+    if (Date.now() - lastUpdateCheck > UPDATE_CHECK_VISIBLE_GAP) checkForUpdate();
+  });
+
+  setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL);
 }
 
 init();
