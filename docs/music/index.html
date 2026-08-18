@@ -90,6 +90,15 @@
   <div id="miniBar"><span></span></div>
 </div>
 
+<!-- 取り込み中の帯（画面を塞がない進捗表示） -->
+<div id="importBar" hidden>
+  <div class="ib-row">
+    <span id="importText">取り込み中</span>
+    <button id="importCancel" class="btn ghost sm">中止</button>
+  </div>
+  <div class="ib-track"><span id="importBarFill"></span></div>
+</div>
+
 <!-- 複数選択モード中の操作バー -->
 <div id="selectBar" hidden>
   <button class="sbtn" data-act="selAlbum"><svg><use href="#i-note"/></svg><span>アルバムにまとめる</span></button>

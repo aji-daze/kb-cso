@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュして、電波がなくても起動できるようにする。
 // 曲のデータは IndexedDB 側に入っているのでここでは扱わない。
-const VERSION = 'music-v5';
+const VERSION = 'music-v6';
 const SHELL = [
   './',
   './index.html',
@@ -69,6 +69,19 @@ self.addEventListener('fetch', (e) => {
         .then((res) => save(req, res))
         .catch(() => hit);
       return hit || fresh;
+    })
+  );
+});
+
+// 取り込みの進捗・完了通知をタップしたら、開いているタブがあればそれを前面に出し、無ければ新しく開く
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) return c.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./');
     })
   );
 });
