@@ -92,6 +92,27 @@ export async function addTrack(track, blob, art) {
   });
 }
 
+// 複数トラック分（メタ + 実体 + ジャケット）を1つのトランザクションでまとめて書く。
+// items: [{ track, blob, art }] 。art は無くてもよい。
+export async function addTracks(items) {
+  if (!items.length) return;
+  const db = await openDB();
+  const t = db.transaction(['tracks', 'blobs', 'art'], 'readwrite');
+  const tracks = t.objectStore('tracks');
+  const blobs = t.objectStore('blobs');
+  const art = t.objectStore('art');
+  for (const { track, blob, art: artBlob } of items) {
+    tracks.put(track);
+    blobs.put(blob, track.id);
+    if (artBlob) art.put(artBlob, track.artId);
+  }
+  return new Promise((res, rej) => {
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+
 export async function deleteTracks(ids) {
   const db = await openDB();
   const t = db.transaction(['tracks', 'blobs'], 'readwrite');

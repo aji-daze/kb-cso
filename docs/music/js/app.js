@@ -1,6 +1,6 @@
 // 画面まわりと全体の制御。
 import * as db from './db.js';
-import { readTags, readDuration } from './tags.js';
+import { readTags, readDuration, readDurationFast } from './tags.js';
 import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
@@ -1189,6 +1189,9 @@ function folderOfPath(relPath) {
   return parts.join('/');
 }
 
+const IMPORT_CONCURRENCY = 4; // 同時に処理するファイル数
+const IMPORT_BATCH_SIZE = 15; // このトラック数ごとに1トランザクションでまとめて書く
+
 async function importFiles(files, source = 'local') {
   const list = [...files].filter((f) => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|m4b)$/i.test(f.name));
   if (!list.length) {
@@ -1196,61 +1199,103 @@ async function importFiles(files, source = 'local') {
     return;
   }
   const known = new Set(state.tracks.map((t) => t.fp));
+  // ジャケットの既存キーは取り込み開始時に1回だけまとめて取得しておく（1曲ごとに db.has() を呼ばない）
+  const existingArt = new Set(await db.getAllKeys('art'));
   let added = 0,
-    skipped = 0;
+    skipped = 0,
+    done = 0;
+  const total = list.length;
   showProgress('取り込み中…');
-  for (let i = 0; i < list.length; i++) {
-    if (progCancelled) break;
-    const f = list[i];
-    setProgress(i / list.length, `${i + 1} / ${list.length}\n${f.name}`);
-    const fp = f.driveId ? 'drive:' + f.driveId : fingerprint(f.name, f.size);
-    if (known.has(fp)) {
-      skipped++;
-      continue;
-    }
-    try {
-      const tags = await readTags(f);
-      const duration = await readDuration(f);
-      const id = uid();
-      const folder = folderOfPath(f.webkitRelativePath || '');
-      const track = {
-        id,
-        fp,
-        title: tags.title || f.name,
-        artist: tags.artist || '',
-        album: tags.album || '',
-        albumArtist: tags.albumArtist || '',
-        trackNo: tags.trackNo || 0,
-        year: tags.year || '',
-        genre: tags.genre || '',
-        duration,
-        size: f.size,
-        mime: f.type || '',
-        fileName: f.name,
-        folder,
-        folderKey: norm(folder),
-        source,
-        driveId: f.driveId || null,
-        addedAt: Date.now(),
-        playCount: 0,
-        lastPlayed: 0,
-        favorite: false,
-        artId: null,
-      };
-      track.albumKey = albumKeyOf(track);
-      track.artistKey = norm(track.artist);
-      track.artId = track.albumKey || 'track:' + id;
-      let artBlob = null;
-      if (tags.picture && !(await db.has('art', track.artId))) artBlob = tags.picture;
-      // 元ファイルを消したり SD を抜いても再生できるよう、中身をコピーして保存する
-      const stored = new Blob([await f.arrayBuffer()], { type: f.type || 'audio/mpeg' });
-      await db.addTrack(track, stored, artBlob);
-      known.add(fp);
-      added++;
-    } catch (e) {
-      console.error('取り込み失敗', f.name, e);
+
+  const pending = []; // まだ DB に書いていない { track, blob, art }
+  let flushChain = Promise.resolve(); // まとめ書きは重ならないよう直列に鎖でつなぐ
+  const flushBatch = (items) => {
+    flushChain = flushChain.then(() => db.addTracks(items)).catch((e) => console.error('まとめ書き失敗', e));
+    return flushChain;
+  };
+  const maybeFlush = (force = false) => {
+    if (!pending.length) return Promise.resolve();
+    if (!force && pending.length < IMPORT_BATCH_SIZE) return Promise.resolve();
+    const items = pending.splice(0, pending.length);
+    return flushBatch(items);
+  };
+
+  let nextIndex = 0;
+  const bump = (f) => {
+    done++;
+    setProgress(done / total, `${done} / ${total}\n${f.name}`);
+  };
+
+  async function worker() {
+    while (true) {
+      if (progCancelled) return;
+      const i = nextIndex++;
+      if (i >= total) return;
+      const f = list[i];
+      const fp = f.driveId ? 'drive:' + f.driveId : fingerprint(f.name, f.size);
+      if (known.has(fp)) {
+        skipped++;
+        bump(f);
+        continue;
+      }
+      known.add(fp); // 同期的に確保するので、同時実行でも二重取り込みにならない
+      try {
+        const tags = await readTags(f);
+        let duration = await readDurationFast(f);
+        if (!duration) duration = await readDuration(f); // ヘッダから求まらなかったときだけ <audio> にフォールバック
+        const id = uid();
+        const folder = folderOfPath(f.webkitRelativePath || '');
+        const track = {
+          id,
+          fp,
+          title: tags.title || f.name,
+          artist: tags.artist || '',
+          album: tags.album || '',
+          albumArtist: tags.albumArtist || '',
+          trackNo: tags.trackNo || 0,
+          year: tags.year || '',
+          genre: tags.genre || '',
+          duration,
+          size: f.size,
+          mime: f.type || '',
+          fileName: f.name,
+          folder,
+          folderKey: norm(folder),
+          source,
+          driveId: f.driveId || null,
+          addedAt: Date.now(),
+          playCount: 0,
+          lastPlayed: 0,
+          favorite: false,
+          artId: null,
+        };
+        track.albumKey = albumKeyOf(track);
+        track.artistKey = norm(track.artist);
+        track.artId = track.albumKey || 'track:' + id;
+        let artBlob = null;
+        if (tags.picture && !existingArt.has(track.artId)) {
+          artBlob = tags.picture;
+          existingArt.add(track.artId); // 同じ取り込み内で同アルバムの2曲目以降は重ねて書かない
+        }
+        // 元ファイルを消したり SD を抜いても再生できるよう、file.slice() で参照を確定させて保存する
+        // （実験で確認済み: File/Blob は IndexedDB に入れた時点で内容が保存され、元ファイル削除後も読み出せる。
+        //   arrayBuffer() でファイル全体を JS メモリにコピーする必要はない）
+        const stored = f.slice(0, f.size, f.type || 'audio/mpeg');
+        pending.push({ track, blob: stored, art: artBlob });
+        added++;
+        await maybeFlush(false);
+      } catch (e) {
+        console.error('取り込み失敗', f.name, e);
+      }
+      bump(f);
     }
   }
+
+  const workers = Array.from({ length: Math.min(IMPORT_CONCURRENCY, total) }, () => worker());
+  await Promise.all(workers);
+  await maybeFlush(true);
+  await flushChain;
+
   hideProgress();
   await loadLibrary();
   render();
