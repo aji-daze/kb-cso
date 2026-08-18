@@ -1,11 +1,11 @@
 // 画面まわりと全体の制御。
 import * as db from './db.js';
-import { readTags, readDuration } from './tags.js';
+import { readTags, readDuration, readDurationFast } from './tags.js';
 import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -163,7 +163,9 @@ function confirmDialog(title, okLabel = 'OK', danger = false) {
   });
 }
 
-/* ---- 進捗表示 ---- */
+/* ---- 進捗表示 ----
+   画面全体を覆うパネル。ドライブのフォルダ走査やジャケットの一括取得など、
+   短時間で終わる処理で使う。曲の取り込みはこちらを使わず #importBar（下の帯）を使う。 */
 let progCancelled = false;
 function showProgress(text) {
   progCancelled = false;
@@ -175,6 +177,25 @@ function setProgress(ratio, text) {
   if (text != null) $('#progText').textContent = text;
 }
 const hideProgress = () => ($('#progress').hidden = true);
+
+/* ---- 取り込みの帯 ----
+   画面を塞がずに、ミニプレーヤーの上（無ければ画面下）に出る細い帯。
+   取り込み中も他の画面操作ができるよう、こちらは #progress のパネルを使わない。 */
+let importRunning = false; // 二重に取り込みが走らないようにするガード
+function showImportBar(text) {
+  progCancelled = false;
+  importRunning = true;
+  $('#importBar').hidden = false;
+  setImportBar(0, text);
+}
+function setImportBar(ratio, text) {
+  $('#importBarFill').style.width = Math.max(0, Math.min(1, ratio)) * 100 + '%';
+  if (text != null) $('#importText').textContent = text;
+}
+function hideImportBar() {
+  importRunning = false;
+  $('#importBar').hidden = true;
+}
 
 /* ============================ 状態 ============================ */
 const state = {
@@ -226,6 +247,32 @@ async function loadLibrary() {
   state.byId = new Map(state.tracks.map((t) => [t.id, t]));
   state.playlists = await db.getAll('playlists');
   state.playlists.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+/* ---- ライブラリの間引き更新 ----
+   取り込み中、まとめ書きが済むたびに一覧へ反映したいが、毎回全再描画すると重いし、
+   複数選択モード・ダイアログ・シートが開いているときに再描画すると操作の邪魔になる。
+   そこで「反映したい」という予約だけ立てておき、都合のよいタイミングでまとめて反映する。 */
+let libRefreshQueued = false;
+let lastLibRefresh = 0;
+const LIB_REFRESH_GAP = 2000; // これより短い間隔では再描画しない
+
+function uiBusyForRefresh() {
+  return state.selectMode || !$('#dialogWrap').hidden || !!document.querySelector('.sheet.open');
+}
+
+function queueLibraryRefresh() {
+  libRefreshQueued = true;
+  tryFlushLibraryRefresh();
+}
+
+function tryFlushLibraryRefresh() {
+  if (!libRefreshQueued) return;
+  if (uiBusyForRefresh()) return; // 操作中は見送る。後で（次のまとめ書きや定期リトライで）また試す
+  if (Date.now() - lastLibRefresh < LIB_REFRESH_GAP) return;
+  libRefreshQueued = false;
+  lastLibRefresh = Date.now();
+  loadLibrary().then(render);
 }
 
 function groupAlbums(tracks = state.tracks) {
@@ -1189,72 +1236,227 @@ function folderOfPath(relPath) {
   return parts.join('/');
 }
 
+const IMPORT_CONCURRENCY = 4; // 同時に処理するファイル数
+const IMPORT_BATCH_SIZE = 15; // このトラック数ごとに1トランザクションでまとめて書く
+
+/* ---- 取り込み中の通知 ----
+   ページ自体がバックグラウンドで凍結されることがあるので、Service Worker の登録経由で出す
+   （new Notification() は Android では使えない）。通知が使えない環境では黙って諦める。 */
+const IMPORT_NOTIF_TAG = 'import-progress';
+let lastImportNotifAt = 0;
+const IMPORT_NOTIF_GAP = 1000; // 進捗通知の更新間隔（間引き）
+
+function importNotifyEnabled() {
+  return db.setting('importNotify', true);
+}
+
+// 許可も拒否もされていなければ尋ねる。取り込みはユーザー操作から始まるので呼んでよい。
+// 拒否されている・API が無い場合は何もせず false を返す（呼び出し側はアプリ内の帯だけで進める）。
+async function ensureNotifyPermission() {
+  if (!importNotifyEnabled()) return false;
+  if (typeof Notification === 'undefined') return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  try {
+    return (await Notification.requestPermission()) === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+async function swRegistration() {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    return (await navigator.serviceWorker.getRegistration()) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function showAppNotification(title, opts) {
+  if (!importNotifyEnabled()) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const reg = await swRegistration();
+  if (!reg) return;
+  try {
+    await reg.showNotification(title, opts);
+  } catch (e) {
+    console.warn('通知を表示できませんでした', e);
+  }
+}
+
+// 進捗通知の更新は1秒に1回程度に間引く（毎曲更新すると重い）
+function updateImportNotification(done, total) {
+  const now = Date.now();
+  if (now - lastImportNotifAt < IMPORT_NOTIF_GAP) return;
+  lastImportNotifAt = now;
+  showAppNotification('取り込み中', {
+    tag: IMPORT_NOTIF_TAG,
+    body: `${done} / ${total} 曲`,
+    silent: true,
+    renotify: false,
+    requireInteraction: true,
+  });
+}
+
+async function closeImportNotification() {
+  const reg = await swRegistration();
+  if (!reg) return;
+  try {
+    const list = await reg.getNotifications({ tag: IMPORT_NOTIF_TAG });
+    list.forEach((n) => n.close());
+  } catch {}
+}
+
+async function finishImportNotification(title, body) {
+  await closeImportNotification();
+  await showAppNotification(title, { body, requireInteraction: false, silent: false, renotify: false });
+}
+
 async function importFiles(files, source = 'local') {
   const list = [...files].filter((f) => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|flac|wav|ogg|oga|opus|m4b)$/i.test(f.name));
   if (!list.length) {
     toast('音声ファイルが見つかりませんでした');
     return;
   }
+  if (importRunning) {
+    // 取り込み中に同じフォルダをもう一度取り込もうとした場合などのガード。二重に走らせない。
+    toast('取り込み中です');
+    return;
+  }
+  // ここで同期的に確定させる。この下のどこかで最初に await を挟むと、ほぼ同時に呼ばれた
+  // 2つの呼び出しが両方とも上のガードを通り抜けてしまう（await の前まではどちらも同期的に進むため）。
+  importRunning = true;
+  try {
+    await importFilesInner(list, source);
+  } finally {
+    importRunning = false; // 正常終了時は hideImportBar() で既に false になっているが、例外時の保険として必ず解放する
+  }
+}
+
+async function importFilesInner(list, source) {
   const known = new Set(state.tracks.map((t) => t.fp));
+  // ジャケットの既存キーは取り込み開始時に1回だけまとめて取得しておく（1曲ごとに db.has() を呼ばない）
+  const existingArt = new Set(await db.getAllKeys('art'));
   let added = 0,
-    skipped = 0;
-  showProgress('取り込み中…');
-  for (let i = 0; i < list.length; i++) {
-    if (progCancelled) break;
-    const f = list[i];
-    setProgress(i / list.length, `${i + 1} / ${list.length}\n${f.name}`);
-    const fp = f.driveId ? 'drive:' + f.driveId : fingerprint(f.name, f.size);
-    if (known.has(fp)) {
-      skipped++;
-      continue;
-    }
-    try {
-      const tags = await readTags(f);
-      const duration = await readDuration(f);
-      const id = uid();
-      const folder = folderOfPath(f.webkitRelativePath || '');
-      const track = {
-        id,
-        fp,
-        title: tags.title || f.name,
-        artist: tags.artist || '',
-        album: tags.album || '',
-        albumArtist: tags.albumArtist || '',
-        trackNo: tags.trackNo || 0,
-        year: tags.year || '',
-        genre: tags.genre || '',
-        duration,
-        size: f.size,
-        mime: f.type || '',
-        fileName: f.name,
-        folder,
-        folderKey: norm(folder),
-        source,
-        driveId: f.driveId || null,
-        addedAt: Date.now(),
-        playCount: 0,
-        lastPlayed: 0,
-        favorite: false,
-        artId: null,
-      };
-      track.albumKey = albumKeyOf(track);
-      track.artistKey = norm(track.artist);
-      track.artId = track.albumKey || 'track:' + id;
-      let artBlob = null;
-      if (tags.picture && !(await db.has('art', track.artId))) artBlob = tags.picture;
-      // 元ファイルを消したり SD を抜いても再生できるよう、中身をコピーして保存する
-      const stored = new Blob([await f.arrayBuffer()], { type: f.type || 'audio/mpeg' });
-      await db.addTrack(track, stored, artBlob);
-      known.add(fp);
-      added++;
-    } catch (e) {
-      console.error('取り込み失敗', f.name, e);
+    skipped = 0,
+    done = 0;
+  const total = list.length;
+  showImportBar(`取り込み中 0 / ${total}`);
+  // 許可を尋ねるが、取り込み自体はそれを待たずに始める
+  // （requestPermission() は環境によっては解決が遅れることがあり、取り込みを止めたくない）。
+  let notifyOn = false;
+  ensureNotifyPermission()
+    .then((v) => (notifyOn = v))
+    .catch(() => {});
+
+  // 取り込み中、選択モードやダイアログでライブラリの再読み込みが見送られたままにならないよう、
+  // 定期的にリトライする（実際の反映は queueLibraryRefresh 側の間引き・busy 判定に従う）
+  const refreshRetryTimer = setInterval(tryFlushLibraryRefresh, 700);
+
+  const pending = []; // まだ DB に書いていない { track, blob, art }
+  let flushChain = Promise.resolve(); // まとめ書きは重ならないよう直列に鎖でつなぐ
+  const flushBatch = (items) => {
+    flushChain = flushChain
+      .then(() => db.addTracks(items))
+      .then(() => queueLibraryRefresh()) // まとめ書きが済むたびに一覧へ反映を予約する
+      .catch((e) => console.error('まとめ書き失敗', e));
+    return flushChain;
+  };
+  const maybeFlush = (force = false) => {
+    if (!pending.length) return Promise.resolve();
+    if (!force && pending.length < IMPORT_BATCH_SIZE) return Promise.resolve();
+    const items = pending.splice(0, pending.length);
+    return flushBatch(items);
+  };
+
+  let nextIndex = 0;
+  const bump = (f) => {
+    done++;
+    setImportBar(done / total, `取り込み中 ${done} / ${total}`);
+    if (notifyOn) updateImportNotification(done, total);
+  };
+
+  async function worker() {
+    while (true) {
+      if (progCancelled) return;
+      const i = nextIndex++;
+      if (i >= total) return;
+      const f = list[i];
+      const fp = f.driveId ? 'drive:' + f.driveId : fingerprint(f.name, f.size);
+      if (known.has(fp)) {
+        skipped++;
+        bump(f);
+        continue;
+      }
+      known.add(fp); // 同期的に確保するので、同時実行でも二重取り込みにならない
+      try {
+        const tags = await readTags(f);
+        let duration = await readDurationFast(f);
+        if (!duration) duration = await readDuration(f); // ヘッダから求まらなかったときだけ <audio> にフォールバック
+        const id = uid();
+        const folder = folderOfPath(f.webkitRelativePath || '');
+        const track = {
+          id,
+          fp,
+          title: tags.title || f.name,
+          artist: tags.artist || '',
+          album: tags.album || '',
+          albumArtist: tags.albumArtist || '',
+          trackNo: tags.trackNo || 0,
+          year: tags.year || '',
+          genre: tags.genre || '',
+          duration,
+          size: f.size,
+          mime: f.type || '',
+          fileName: f.name,
+          folder,
+          folderKey: norm(folder),
+          source,
+          driveId: f.driveId || null,
+          addedAt: Date.now(),
+          playCount: 0,
+          lastPlayed: 0,
+          favorite: false,
+          artId: null,
+        };
+        track.albumKey = albumKeyOf(track);
+        track.artistKey = norm(track.artist);
+        track.artId = track.albumKey || 'track:' + id;
+        let artBlob = null;
+        if (tags.picture && !existingArt.has(track.artId)) {
+          artBlob = tags.picture;
+          existingArt.add(track.artId); // 同じ取り込み内で同アルバムの2曲目以降は重ねて書かない
+        }
+        // 元ファイルを消したり SD を抜いても再生できるよう、file.slice() で参照を確定させて保存する
+        // （実験で確認済み: File/Blob は IndexedDB に入れた時点で内容が保存され、元ファイル削除後も読み出せる。
+        //   arrayBuffer() でファイル全体を JS メモリにコピーする必要はない）
+        const stored = f.slice(0, f.size, f.type || 'audio/mpeg');
+        pending.push({ track, blob: stored, art: artBlob });
+        added++;
+        await maybeFlush(false);
+      } catch (e) {
+        console.error('取り込み失敗', f.name, e);
+      }
+      bump(f);
     }
   }
-  hideProgress();
+
+  const workers = Array.from({ length: Math.min(IMPORT_CONCURRENCY, total) }, () => worker());
+  await Promise.all(workers);
+  await maybeFlush(true);
+  await flushChain;
+  clearInterval(refreshRetryTimer);
+
+  hideImportBar();
   await loadLibrary();
   render();
-  toast(`${added}曲を追加${skipped ? `（${skipped}曲は取り込み済み）` : ''}`);
+  const cancelled = progCancelled;
+  const summary = cancelled
+    ? `中止しました（${added}曲を追加）`
+    : `${added}曲を追加${skipped ? `（${skipped}曲は取り込み済み）` : ''}`;
+  toast(summary);
+  finishImportNotification(cancelled ? '取り込みを中止しました' : '取り込み完了', summary);
   if (added && db.setting('autoArt', true)) fetchMissingArt(true);
 }
 
@@ -1506,6 +1708,7 @@ async function renderSettings() {
   const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
   const unplug = db.setting('unplug', 'pause');
   const autoArt = db.setting('autoArt', true);
+  const importNotify = db.setting('importNotify', true);
   const totalSize = state.tracks.reduce((s, t) => s + (t.size || 0), 0);
 
   const installed = isStandalone();
@@ -1527,6 +1730,8 @@ async function renderSettings() {
       <div class="txt"><div class="t">フォルダごと取り込む</div><div class="s">端末によっては使えないことがあります</div></div></div>
     <div class="item" data-act="drive"><svg style="color:var(--sub)"><use href="#i-cloud"/></svg>
       <div class="txt"><div class="t">Google ドライブから取り込む</div><div class="s">初回だけクライアントIDの設定が必要です</div></div></div>
+    <div class="item" data-act="toggleImportNotify"><div class="txt"><div class="t">取り込みの進捗を通知に出す</div><div class="s">ホーム画面に追加していると、通知欄でも進み具合を確認できます</div></div>
+      <div class="switch ${importNotify ? 'on' : ''}"></div></div>
 
     <div class="sec">ジャケット</div>
     <div class="item" data-act="toggleArt"><div class="txt"><div class="t">取り込んだら自動で探す</div><div class="s">タグに画像がない曲だけ、ネットから検索します</div></div>
@@ -1564,6 +1769,9 @@ async function renderSettings() {
       else if (act === 'drive') openDriveSheet();
       else if (act === 'toggleArt') {
         await db.setSetting('autoArt', !db.setting('autoArt', true));
+        renderSettings();
+      } else if (act === 'toggleImportNotify') {
+        await db.setSetting('importNotify', !db.setting('importNotify', true));
         renderSettings();
       } else if (act === 'fetchArt') await fetchMissingArt();
       else if (act === 'eq') openEq();
@@ -1961,6 +2169,10 @@ function wire() {
     progCancelled = true;
     toast('中止しています…');
   };
+  $('#importCancel').onclick = () => {
+    progCancelled = true;
+    toast('中止しています…');
+  };
 
   // audio のイベント
   audio.addEventListener('play', () => {
@@ -2106,6 +2318,7 @@ function canApplyUpdateNow() {
   if (document.querySelector('.sheet.open')) return false;
   if (!$('#dialogWrap').hidden) return false;
   if (!$('#progress').hidden) return false;
+  if (importRunning) return false; // 取り込み中に reload すると取り込みが止まってしまう
   return true;
 }
 

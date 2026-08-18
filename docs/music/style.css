@@ -81,8 +81,8 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
 
 .tabs {
   display: flex;
-  gap: 4px;
-  padding: 0 8px;
+  gap: 2px;
+  padding: 0 6px;
   height: var(--tabs);
   align-items: center;
   position: sticky;
@@ -95,8 +95,8 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   color: var(--sub);
-  font-size: 14px;
-  padding: 6px 12px;
+  font-size: 13.5px;
+  padding: 6px 9px;
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -186,6 +186,26 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
 #miniStop:active, #nowStop:active { color: var(--tx); }
 #miniBar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
 #miniBar span { display: block; height: 100%; width: 0; background: var(--acc); }
+
+/* ---------- 取り込み中の帯（画面を塞がない進捗表示） ---------- */
+/* ミニプレーヤーと重ならないよう、出ているときはその上に積む。両方出ているときは縦に並ぶ。 */
+#importBar {
+  position: fixed;
+  left: 8px; right: 8px;
+  bottom: calc(8px + var(--safe-b));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px 11px;
+  z-index: 6;
+}
+#mini:not([hidden]) ~ #importBar { bottom: calc(var(--mini) + 16px + var(--safe-b)); }
+body.select-mode #importBar { bottom: calc(var(--mini) + 16px + var(--safe-b)); } /* 選択モード中は下部の操作バーの上に */
+.ib-row { display: flex; align-items: center; gap: 10px; }
+#importText { flex: 1; font-size: 12.5px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn.sm { padding: 6px 10px; font-size: 12px; flex: none; }
+.ib-track { height: 3px; background: var(--line); border-radius: 3px; margin-top: 9px; overflow: hidden; }
+.ib-track span { display: block; height: 100%; width: 0; background: var(--acc); transition: width .2s; }
 
 /* ---------- シート ---------- */
 .sheet {

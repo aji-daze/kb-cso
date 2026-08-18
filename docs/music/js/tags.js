@@ -311,8 +311,9 @@ export async function readTags(file) {
   return out;
 }
 
-// 音声の長さは audio 要素に読ませるのが一番確実
-export function readDuration(blob) {
+// 音声の長さは audio 要素に読ませるのが一番確実だが、1曲ごとに時間がかかる（最大8秒）うえ直列。
+// readDurationFast() でヘッダを直接解析できたときはこちらを使わずに済ませる（フォールバック用に残す）。
+export function readDuration(blob, timeoutMs = 3000) {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const a = new Audio();
@@ -321,7 +322,7 @@ export function readDuration(blob) {
       a.removeAttribute('src');
       resolve(v);
     };
-    const timer = setTimeout(() => done(0), 8000);
+    const timer = setTimeout(() => done(0), timeoutMs);
     a.preload = 'metadata';
     a.onloadedmetadata = () => {
       clearTimeout(timer);
@@ -333,4 +334,196 @@ export function readDuration(blob) {
     };
     a.src = url;
   });
+}
+
+// ---------- 長さの高速判定（<audio> を使わず、ファイルのヘッダから直接算出） ----------
+const MP3_BITRATES = {
+  1: {
+    1: [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+    2: [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+    3: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  },
+  2: {
+    1: [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+    2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+    3: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+  },
+};
+const MP3_SAMPLE_RATES = {
+  1: [44100, 48000, 32000],
+  2: [22050, 24000, 16000],
+  2.5: [11025, 12000, 8000],
+};
+
+// ID3v2 タグのバイト数（ヘッダ+本体+フッター）。無ければ 0。
+async function id3v2Size(reader) {
+  const head = await reader.bytes(0, 10);
+  if (head.length < 10 || str(head, 0, 3) !== 'ID3') return 0;
+  let size = 10 + syncsafe(head, 6);
+  if (head[5] & 0x10) size += 10; // 拡張フッター(ID3v2.4)
+  return size;
+}
+
+// MPEG フレームヘッダを探して version/layer/bitrate/samplerate/channelMode を返す
+function parseFrameHeader(h) {
+  if (h.length < 4 || h[0] !== 0xff || (h[1] & 0xe0) !== 0xe0) return null;
+  const verBits = (h[1] >> 3) & 3;
+  const layerBits = (h[1] >> 1) & 3;
+  if (verBits === 1 || layerBits === 0) return null; // reserved
+  const version = verBits === 3 ? 1 : verBits === 2 ? 2 : 2.5;
+  const layer = layerBits === 3 ? 1 : layerBits === 2 ? 2 : 3;
+  const bitrateIdx = (h[2] >> 4) & 0xf;
+  const sampleIdx = (h[2] >> 2) & 3;
+  if (bitrateIdx === 0 || bitrateIdx === 15 || sampleIdx === 3) return null;
+  const padding = (h[2] >> 1) & 1;
+  const channelMode = (h[3] >> 6) & 3;
+  const bitrateVerKey = version === 1 ? 1 : 2;
+  const bitrate = MP3_BITRATES[bitrateVerKey][layer][bitrateIdx]; // kbps
+  const sampleRate = MP3_SAMPLE_RATES[version][sampleIdx];
+  if (!bitrate || !sampleRate) return null;
+  return { version, layer, bitrate, sampleRate, padding, isMono: channelMode === 3 };
+}
+
+async function readMp3DurationFast(reader) {
+  const tagEnd = await id3v2Size(reader);
+  const searchLen = Math.min(reader.file.size - tagEnd, 65536);
+  if (searchLen < 4) return null;
+  const buf = await reader.bytes(tagEnd, searchLen);
+  let idx = -1;
+  let fh = null;
+  for (let i = 0; i + 4 <= buf.length; i++) {
+    if (buf[i] === 0xff && (buf[i + 1] & 0xe0) === 0xe0) {
+      const h = parseFrameHeader(buf.subarray(i, i + 4));
+      if (h) {
+        idx = i;
+        fh = h;
+        break;
+      }
+    }
+  }
+  if (idx < 0 || !fh) return null;
+  const frameStart = tagEnd + idx;
+  const samplesPerFrame = fh.layer === 1 ? 384 : fh.layer === 2 ? 1152 : fh.version === 1 ? 1152 : 576;
+
+  // 最初のフレーム内に Xing/Info/VBRI（VBR のフレーム数情報）があれば、それを最優先する
+  const sideInfo = fh.version === 1 ? (fh.isMono ? 17 : 32) : fh.isMono ? 9 : 17;
+  const vbrTag = await reader.bytes(frameStart + 4 + sideInfo, 4);
+  const vbrTagStr = str(vbrTag, 0, Math.min(4, vbrTag.length));
+  if (vbrTagStr === 'Xing' || vbrTagStr === 'Info') {
+    const flagsBuf = await reader.bytes(frameStart + 4 + sideInfo + 4, 4);
+    if (flagsBuf.length === 4 && be32(flagsBuf, 0) & 0x1) {
+      const framesBuf = await reader.bytes(frameStart + 4 + sideInfo + 8, 4);
+      if (framesBuf.length === 4) {
+        const numFrames = be32(framesBuf, 0);
+        if (numFrames > 0) return (numFrames * samplesPerFrame) / fh.sampleRate;
+      }
+    }
+  } else {
+    // VBRI は常にフレーム先頭から 32 バイト後（side info の位置に関わらず）
+    const vbriTag = await reader.bytes(frameStart + 4 + 32, 4);
+    if (str(vbriTag, 0, Math.min(4, vbriTag.length)) === 'VBRI') {
+      const framesBuf = await reader.bytes(frameStart + 4 + 32 + 14, 4);
+      if (framesBuf.length === 4) {
+        const numFrames = be32(framesBuf, 0);
+        if (numFrames > 0) return (numFrames * samplesPerFrame) / fh.sampleRate;
+      }
+    }
+  }
+
+  // VBR ヘッダが無ければ CBR とみなして概算する
+  const dataSize = reader.file.size - frameStart;
+  if (dataSize <= 0) return null;
+  return (dataSize * 8) / (fh.bitrate * 1000);
+}
+
+async function readMp4DurationFast(reader) {
+  const head = await reader.bytes(0, 12);
+  if (head.length < 8 || str(head, 4, 4) !== 'ftyp') return null;
+  const findChild = async (start, end, name) => {
+    let p = start;
+    while (p + 8 <= end) {
+      const h = await reader.bytes(p, 8);
+      if (h.length < 8) return null;
+      let size = be32(h, 0);
+      let headerLen = 8;
+      const type = str(h, 4, 4);
+      if (size === 1) {
+        const ext = await reader.bytes(p + 8, 8);
+        if (ext.length < 8) return null;
+        size = be32(ext, 4);
+        headerLen = 16;
+      }
+      if (size < 8) return null;
+      if (type === name) return { start: p + headerLen, end: Math.min(p + size, end) };
+      p += size;
+    }
+    return null;
+  };
+  const moov = await findChild(0, reader.file.size, 'moov');
+  if (!moov) return null;
+  const mvhd = await findChild(moov.start, moov.end, 'mvhd');
+  if (!mvhd) return null;
+  const b = await reader.bytes(mvhd.start, 32);
+  if (b.length < 4) return null;
+  const version = b[0];
+  if (version === 1) {
+    if (b.length < 32) return null;
+    const timescale = be32(b, 20);
+    const duration = be32(b, 24) * 4294967296 + be32(b, 28);
+    return timescale ? duration / timescale : null;
+  }
+  if (b.length < 20) return null;
+  const timescale = be32(b, 12);
+  const duration = be32(b, 16);
+  return timescale ? duration / timescale : null;
+}
+
+async function readFlacDurationFast(reader) {
+  const head = await reader.bytes(0, 4);
+  if (str(head, 0, 4) !== 'fLaC') return null;
+  let p = 4;
+  for (let i = 0; i < 64; i++) {
+    const h = await reader.bytes(p, 4);
+    if (h.length < 4) break;
+    const last = (h[0] & 0x80) !== 0;
+    const type = h[0] & 0x7f;
+    const size = be24(h, 1);
+    const start = p + 4;
+    if (type === 0) {
+      const b = await reader.bytes(start, size);
+      if (b.length < 18) return null;
+      const sampleRate = (b[10] << 12) | (b[11] << 4) | (b[12] >> 4);
+      const totalSamples = (b[13] & 0x0f) * 4294967296 + be32(b, 14);
+      return sampleRate ? totalSamples / sampleRate : null;
+    }
+    p = start + size;
+    if (last) break;
+  }
+  return null;
+}
+
+// ヘッダ解析だけで長さを求める。求まらなければ null（呼び出し側で readDuration にフォールバックする）。
+export async function readDurationFast(file) {
+  const reader = new Reader(file);
+  try {
+    const head = await reader.bytes(0, 12);
+    if (head.length >= 8 && str(head, 4, 4) === 'ftyp') {
+      const d = await readMp4DurationFast(reader);
+      if (d && isFinite(d) && d > 0) return d;
+      return null;
+    }
+    if (head.length >= 4 && str(head, 0, 4) === 'fLaC') {
+      const d = await readFlacDurationFast(reader);
+      if (d && isFinite(d) && d > 0) return d;
+      return null;
+    }
+    if (head.length >= 3 && (str(head, 0, 3) === 'ID3' || (head[0] === 0xff && (head[1] & 0xe0) === 0xe0))) {
+      const d = await readMp3DurationFast(reader);
+      if (d && isFinite(d) && d > 0) return d;
+      return null;
+    }
+  } catch (e) {
+    console.warn('長さの高速判定に失敗', file.name, e);
+  }
+  return null;
 }
