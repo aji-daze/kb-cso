@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -31,7 +31,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const norm = (s) => String(s || '').trim().normalize('NFKC').toLowerCase();
-const jcmp = (a, b) => String(a || '').localeCompare(String(b || ''), 'ja');
+const collator = new Intl.Collator('ja'); // 数千曲を並べ替えるので、都度 localeCompare より速い比較器を使う
+const jcmp = (a, b) => collator.compare(String(a || ''), String(b || ''));
 const NONE_FOLDER = '__none__'; // フォルダなしの曲をまとめるキー
 
 function fmtTime(sec) {
@@ -272,7 +273,31 @@ function tryFlushLibraryRefresh() {
   if (Date.now() - lastLibRefresh < LIB_REFRESH_GAP) return;
   libRefreshQueued = false;
   lastLibRefresh = Date.now();
-  loadLibrary().then(render);
+  sortTracksIfNeeded();
+  render();
+}
+
+/* ---- 取り込み中の一覧更新 ----
+   以前はまとめ書きのたびに loadLibrary()（＝全曲を読み直し）していたが、
+   これは曲数に比例して重くなり、数千曲では取り込みが進まなくなる。
+   書いた中身は手元にあるので、追加分だけを足す。並べ替えは描画の直前にまとめて行う。 */
+let tracksDirty = false;
+
+function appendTracksToState(tracks) {
+  let n = 0;
+  for (const t of tracks) {
+    if (state.byId.has(t.id)) continue;
+    state.byId.set(t.id, t);
+    state.tracks.push(t);
+    n++;
+  }
+  if (n) tracksDirty = true;
+}
+
+function sortTracksIfNeeded() {
+  if (!tracksDirty) return;
+  tracksDirty = false;
+  state.tracks.sort((a, b) => jcmp(a.title, b.title));
 }
 
 function groupAlbums(tracks = state.tracks) {
@@ -1328,19 +1353,103 @@ async function importFiles(files, source = 'local') {
   // 2つの呼び出しが両方とも上のガードを通り抜けてしまう（await の前まではどちらも同期的に進むため）。
   importRunning = true;
   try {
+    if (!(await confirmEnoughSpace(list))) return;
     await importFilesInner(list, source);
   } finally {
     importRunning = false; // 正常終了時は hideImportBar() で既に false になっているが、例外時の保険として必ず解放する
   }
 }
 
+/* ============================ 被り曲の判定 ============================
+   同じ曲が二重に入るのを防ぐ。判断材料は2つ。
+   1. 曲名・アーティストが同じで、長さもほぼ同じ → 同じ曲とみなす（別ファイルでも弾ける）
+   2. ファイルサイズが同じものがあるときだけ、中身の指紋（先頭と末尾のハッシュ）を比べる
+      → ファイル名が違うだけの複製を弾ける。全体を読まないので軽い */
+
+function metaKeyOf(t) {
+  return norm(t.title) + '|' + norm(t.artist);
+}
+
+// 先頭と末尾の 64KB だけを読んで指紋を作る（ファイル全体は読まない）
+async function contentSig(blob) {
+  if (!crypto.subtle) return null;
+  const n = Math.min(65536, blob.size);
+  const head = new Uint8Array(await blob.slice(0, n).arrayBuffer());
+  const tail = new Uint8Array(await blob.slice(Math.max(0, blob.size - n)).arrayBuffer());
+  const buf = new Uint8Array(head.length + tail.length);
+  buf.set(head, 0);
+  buf.set(tail, head.length);
+  const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  return blob.size + ':' + Array.from(dig.slice(0, 12), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 既存の曲の指紋は、必要になったときだけ作って覚えておく（サイズが一致したときしか呼ばれない）。
+// この取り込みで入れたばかりでまだ DB に書けていない曲は、手元の File から読む。
+async function sigOfTrack(t, runFiles) {
+  if (t.sig) return t.sig;
+  try {
+    const hint = runFiles && runFiles.get(t.id);
+    const blob = hint || (await db.get('blobs', t.id));
+    if (!blob) return null;
+    t.sig = await contentSig(blob);
+    if (t.sig && !hint) await db.put('tracks', t); // 既に保存済みの曲なら覚えさせておく
+    return t.sig;
+  } catch {
+    return null;
+  }
+}
+
+// 取り込み中に使う索引をまとめて作る
+function buildDupIndex(tracks) {
+  const byMeta = new Map(); // 「曲名|アーティスト」→ 長さの一覧
+  const bySize = new Map(); // サイズ → その大きさの曲
+  const sigs = new Set();
+  for (const t of tracks) {
+    const mk = metaKeyOf(t);
+    if (!byMeta.has(mk)) byMeta.set(mk, []);
+    byMeta.get(mk).push(t.duration || 0);
+    if (t.size) {
+      if (!bySize.has(t.size)) bySize.set(t.size, []);
+      bySize.get(t.size).push(t);
+    }
+    if (t.sig) sigs.add(t.sig);
+  }
+  return { byMeta, bySize, sigs };
+}
+
+// 長さは端末やタグの違いで数秒ずれることがあるので、少し幅を持たせる
+function sameSong(durations, d) {
+  return durations.some((x) => Math.abs((x || 0) - (d || 0)) <= 2);
+}
+
+// 取り込みは SD の曲を端末内にコピーするので、ライブラリが大きいと保存上限に当たる。
+// 始める前に数字を出して確かめてもらう（見積もれないときは黙って進める）。
+async function confirmEnoughSpace(list) {
+  const need = list.reduce((n, f) => n + (f.size || 0), 0);
+  const est = await db.estimate();
+  if (!est || !est.quota) return true;
+  const free = est.quota - (est.usage || 0);
+  if (need < free * 0.9) return true;
+  return confirmDialog(
+    `選んだ曲は ${fmtSize(need)} ですが、このアプリに残っている空きは ${fmtSize(free)} です。` +
+      `途中で容量が尽きると、そこまでの曲だけが取り込まれます。このまま続けますか？`,
+    '続ける'
+  );
+}
+
 async function importFilesInner(list, source) {
+  const startCount = state.tracks.length; // 実際に増えた曲数は、最後に数え直して求める
   const known = new Set(state.tracks.map((t) => t.fp));
+  const dupSkip = db.setting('dupSkip', true); // 被り曲を自動で飛ばすか
+  const dup = buildDupIndex(state.tracks);
+  const runFiles = new Map(); // この取り込みで入れた曲の id → File（指紋を作るときの読み元）
+  let dupped = 0;
   // ジャケットの既存キーは取り込み開始時に1回だけまとめて取得しておく（1曲ごとに db.has() を呼ばない）
   const existingArt = new Set(await db.getAllKeys('art'));
   let added = 0,
     skipped = 0,
     done = 0;
+  let importFailure = null; // 書き込みに失敗したらここに入れて、以降のバッチを試さない
   const total = list.length;
   showImportBar(`取り込み中 0 / ${total}`);
   // 許可を尋ねるが、取り込み自体はそれを待たずに始める
@@ -1358,9 +1467,18 @@ async function importFilesInner(list, source) {
   let flushChain = Promise.resolve(); // まとめ書きは重ならないよう直列に鎖でつなぐ
   const flushBatch = (items) => {
     flushChain = flushChain
-      .then(() => db.addTracks(items))
-      .then(() => queueLibraryRefresh()) // まとめ書きが済むたびに一覧へ反映を予約する
-      .catch((e) => console.error('まとめ書き失敗', e));
+      .then(() => (importFailure ? null : db.addTracks(items)))
+      .then(() => {
+        if (importFailure) return;
+        appendTracksToState(items.map((it) => it.track)); // 追加分だけ手元に足す（全件読み直しはしない）
+        queueLibraryRefresh();
+      })
+      .catch((e) => {
+        // 保存容量が尽きた場合など。黙って握りつぶすと「曲が欠けたのに成功に見える」ので、ここで止める
+        importFailure = e;
+        progCancelled = true;
+        console.error('まとめ書き失敗', e);
+      });
     return flushChain;
   };
   const maybeFlush = (force = false) => {
@@ -1394,6 +1512,39 @@ async function importFilesInner(list, source) {
         const tags = await readTags(f);
         let duration = await readDurationFast(f);
         if (!duration) duration = await readDuration(f); // ヘッダから求まらなかったときだけ <audio> にフォールバック
+
+        if (dupSkip) {
+          // 1) 曲名・アーティスト・長さがほぼ同じなら、同じ曲とみなす
+          const mk = norm(tags.title || f.name) + '|' + norm(tags.artist || '');
+          const seen = dup.byMeta.get(mk);
+          if (seen && sameSong(seen, duration)) {
+            dupped++;
+            bump(f);
+            continue;
+          }
+          // 2) 同じサイズの曲があるときだけ、中身の指紋を比べる（無ければ読まない）
+          const sameSize = dup.bySize.get(f.size);
+          if (sameSize && sameSize.length) {
+            const sig = await contentSig(f);
+            if (sig) {
+              let hit = dup.sigs.has(sig);
+              if (!hit) {
+                for (const other of sameSize) {
+                  if ((await sigOfTrack(other, runFiles)) === sig) {
+                    dup.sigs.add(sig);
+                    hit = true;
+                    break;
+                  }
+                }
+              }
+              if (hit) {
+                dupped++;
+                bump(f);
+                continue;
+              }
+            }
+          }
+        }
         const id = uid();
         const folder = folderOfPath(f.webkitRelativePath || '');
         const track = {
@@ -1423,6 +1574,15 @@ async function importFilesInner(list, source) {
         track.albumKey = albumKeyOf(track);
         track.artistKey = norm(track.artist);
         track.artId = track.albumKey || 'track:' + id;
+        if (dupSkip) {
+          // 同じ取り込みの中でも二重に入らないよう、その場で索引に足す
+          const mk = metaKeyOf(track);
+          if (!dup.byMeta.has(mk)) dup.byMeta.set(mk, []);
+          dup.byMeta.get(mk).push(track.duration || 0);
+          if (!dup.bySize.has(track.size)) dup.bySize.set(track.size, []);
+          dup.bySize.get(track.size).push(track);
+          runFiles.set(track.id, f); // 同じサイズの曲が後から来たとき、ここから指紋を作る
+        }
         let artBlob = null;
         if (tags.picture && !existingArt.has(track.artId)) {
           artBlob = tags.picture;
@@ -1449,32 +1609,48 @@ async function importFilesInner(list, source) {
   clearInterval(refreshRetryTimer);
 
   hideImportBar();
-  await loadLibrary();
+  await loadLibrary(); // 取り込みが終わったところで一度だけ整合を取る
   render();
-  const cancelled = progCancelled;
-  const summary = cancelled
-    ? `中止しました（${added}曲を追加）`
-    : `${added}曲を追加${skipped ? `（${skipped}曲は取り込み済み）` : ''}`;
-  toast(summary);
-  finishImportNotification(cancelled ? '取り込みを中止しました' : '取り込み完了', summary);
-  if (added && db.setting('autoArt', true)) fetchMissingArt(true);
+  added = Math.max(0, state.tracks.length - startCount); // 書けなかった分を含めない実数
+
+  const failed = !!importFailure;
+  const quotaFull = failed && /quota|storage/i.test(`${importFailure.name || ''} ${importFailure.message || ''}`);
+  const cancelled = progCancelled && !failed;
+  let summary;
+  if (quotaFull) summary = `端末の空き容量が足りず中断しました（${added}曲を追加）`;
+  else if (failed) summary = `保存に失敗して中断しました（${added}曲を追加）`;
+  else if (cancelled) summary = `中止しました（${added}曲を追加）`;
+  else {
+    const notes = [];
+    if (skipped) notes.push(`${skipped}曲は取り込み済み`);
+    if (dupped) notes.push(`${dupped}曲は同じ曲のため飛ばしました`);
+    summary = `${added}曲を追加${notes.length ? `（${notes.join('・')}）` : ''}`;
+  }
+
+  toast(failed || cancelled ? `${summary}。同じフォルダを選び直すと、残りだけが追加されます` : summary, 6000);
+  finishImportNotification(failed ? '取り込みを中断しました' : cancelled ? '取り込みを中止しました' : '取り込み完了', summary);
+
+  // 取り込み直後の自動ジャケット取得は、対象が多いと延々と続いて「終わらない」ように見えるので控える
+  if (added && !failed && db.setting('autoArt', true)) fetchMissingArt(true, 40);
 }
 
 /* ---- ジャケットをネットから探す ---- */
-async function fetchMissingArt(silent = false) {
+async function fetchMissingArt(silent = false, maxTargets = 0) {
   if (!navigator.onLine) {
     if (!silent) toast('オフラインです');
     return;
   }
-  const groups = groupAlbums();
-  const targets = [];
-  for (const g of groups) {
-    if (g.artId && (await db.has('art', g.artId))) continue;
-    if (!g.album || g.album === '不明なアルバム') continue;
-    targets.push(g);
-  }
+  // 既存のジャケットは1回だけまとめて取得する（アルバムごとに db.has() を呼ぶと数百枚で重くなる）
+  const haveArt = new Set(await db.getAllKeys('art'));
+  const targets = groupAlbums().filter((g) => g.album && g.album !== '不明なアルバム' && !(g.artId && haveArt.has(g.artId)));
   if (!targets.length) {
     if (!silent) toast('不足しているジャケットはありません');
+    return;
+  }
+  // 自動実行で対象が多すぎるときは走らせない。1枚ずつネットに問い合わせるので、
+  // 数百枚あると延々と続き「終わらない」ように見えてしまう。
+  if (maxTargets && targets.length > maxTargets) {
+    toast(`ジャケット未設定が${targets.length}枚あります。設定から「まとめて取得」で取り込めます`, 6000);
     return;
   }
   // 自動実行のときは画面を塞がず、裏でゆっくり探す
@@ -1707,6 +1883,7 @@ async function renderSettings() {
   const quota = est && est.quota ? fmtSize(est.quota) : '—';
   const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
   const unplug = db.setting('unplug', 'pause');
+  const dupSkip = db.setting('dupSkip', true);
   const autoArt = db.setting('autoArt', true);
   const importNotify = db.setting('importNotify', true);
   const totalSize = state.tracks.reduce((s, t) => s + (t.size || 0), 0);
@@ -1732,6 +1909,10 @@ async function renderSettings() {
       <div class="txt"><div class="t">Google ドライブから取り込む</div><div class="s">初回だけクライアントIDの設定が必要です</div></div></div>
     <div class="item" data-act="toggleImportNotify"><div class="txt"><div class="t">取り込みの進捗を通知に出す</div><div class="s">ホーム画面に追加していると、通知欄でも進み具合を確認できます</div></div>
       <div class="switch ${importNotify ? 'on' : ''}"></div></div>
+    <div class="item" data-act="toggleDupSkip"><div class="txt"><div class="t">同じ曲は取り込まない</div><div class="s">曲名・アーティスト・長さが同じもの、中身が同じファイルを飛ばします</div></div>
+      <div class="switch ${dupSkip ? 'on' : ''}"></div></div>
+    <div class="item" data-act="findDups"><svg style="color:var(--sub)"><use href="#i-trash"/></svg>
+      <div class="txt"><div class="t">重複した曲を探す</div><div class="s">すでに入っている被りを見つけて、1曲だけ残して片づけます</div></div></div>
 
     <div class="sec">ジャケット</div>
     <div class="item" data-act="toggleArt"><div class="txt"><div class="t">取り込んだら自動で探す</div><div class="s">タグに画像がない曲だけ、ネットから検索します</div></div>
@@ -1773,7 +1954,11 @@ async function renderSettings() {
       } else if (act === 'toggleImportNotify') {
         await db.setSetting('importNotify', !db.setting('importNotify', true));
         renderSettings();
-      } else if (act === 'fetchArt') await fetchMissingArt();
+      } else if (act === 'toggleDupSkip') {
+        await db.setSetting('dupSkip', !db.setting('dupSkip', true));
+        renderSettings();
+      } else if (act === 'findDups') await findDuplicatesDialog();
+      else if (act === 'fetchArt') await fetchMissingArt();
       else if (act === 'eq') openEq();
       else if (act === 'persist') {
         const ok = await db.persist();
@@ -1909,6 +2094,77 @@ async function installDiagnostics() {
   rows.push(['アプリ版', APP_VERSION]);
   rows.push(['UA', ua]);
   return rows;
+}
+
+// すでに取り込んである曲の中から被りを探して片づける。
+// 残すのは「お気に入り > ファイルが大きい（音質が良いことが多い） > 先に入れた」の順。
+async function findDuplicatesDialog() {
+  const groups = new Map();
+  for (const t of state.tracks) {
+    const mk = metaKeyOf(t);
+    if (!groups.has(mk)) groups.set(mk, []);
+    groups.get(mk).push(t);
+  }
+  const dupSets = [];
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    // 長さが近いものだけを1組とみなす
+    const rest = list.slice().sort((a, b) => (a.duration || 0) - (b.duration || 0));
+    let cur = [rest[0]];
+    for (let i = 1; i < rest.length; i++) {
+      if (Math.abs((rest[i].duration || 0) - (cur[cur.length - 1].duration || 0)) <= 2) cur.push(rest[i]);
+      else {
+        if (cur.length > 1) dupSets.push(cur);
+        cur = [rest[i]];
+      }
+    }
+    if (cur.length > 1) dupSets.push(cur);
+  }
+
+  if (!dupSets.length) {
+    toast('重複した曲は見つかりませんでした');
+    return;
+  }
+  const extra = dupSets.reduce((n, g) => n + g.length - 1, 0);
+  const sample = dupSets
+    .slice(0, 8)
+    .map((g) => `<div style="display:flex;gap:8px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g[0].title)}</span><span class="muted">${g.length}件</span></div>`)
+    .join('');
+
+  openDialog(
+    `<h3>重複した曲</h3>
+     <div class="pad" style="font-size:13px;line-height:1.9">
+       ${dupSets.length}組・あわせて${extra}曲が余分に入っています。<br>
+       <span class="muted" style="font-size:11.5px">各組で1曲だけ残します。お気に入り、次にファイルが大きいものを優先して残します。プレイリストからも取り除かれます。</span>
+       <div style="margin-top:10px;font-size:12px">${sample}${dupSets.length > 8 ? '<div class="muted">…ほか</div>' : ''}</div>
+     </div>
+     <div class="actions"><button class="btn ghost" id="dupNo">閉じる</button><button class="btn danger" id="dupGo">${extra}曲を削除</button></div>`,
+    (root) => {
+      $('#dupNo', root).onclick = closeDialog;
+      $('#dupGo', root).onclick = async () => {
+        closeDialog();
+        const remove = [];
+        for (const g of dupSets) {
+          const sorted = g.slice().sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0) || (b.size || 0) - (a.size || 0) || (a.addedAt || 0) - (b.addedAt || 0));
+          remove.push(...sorted.slice(1).map((t) => t.id));
+        }
+        await db.deleteTracks(remove);
+        const set = new Set(remove);
+        if (set.has(state.queue[state.qi])) stopPlayback();
+        state.queue = state.queue.filter((x) => !set.has(x));
+        state.base = state.base.filter((x) => !set.has(x));
+        for (const pl of state.playlists) {
+          const before = pl.trackIds.length;
+          pl.trackIds = pl.trackIds.filter((x) => !set.has(x));
+          if (pl.trackIds.length !== before) await db.put('playlists', pl);
+        }
+        await loadLibrary();
+        render();
+        renderSettings();
+        toast(`${remove.length}曲の重複を削除しました`);
+      };
+    }
+  );
 }
 
 /* ============================ イコライザ ============================ */
