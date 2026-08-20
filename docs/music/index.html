@@ -107,6 +107,14 @@
   <button class="sbtn danger" data-act="selDelete"><svg><use href="#i-trash"/></svg><span>削除</span></button>
 </div>
 
+<!-- 複数選択モード中の操作バー（フォルダ） -->
+<div id="selectBarFolder" hidden>
+  <button class="sbtn" data-act="selFolderMerge"><svg><use href="#i-folder"/></svg><span>1つにまとめる</span></button>
+  <button class="sbtn" data-act="selFolderAlbum"><svg><use href="#i-note"/></svg><span>アルバムにする</span></button>
+  <button class="sbtn" data-act="selFolderPlaylist"><svg><use href="#i-plus"/></svg><span>追加</span></button>
+  <button class="sbtn danger" data-act="selFolderDelete"><svg><use href="#i-trash"/></svg><span>削除</span></button>
+</div>
+
 <!-- 再生中画面 -->
 <section id="sheetNow" class="sheet">
   <header class="topbar">
@@ -161,6 +169,15 @@
     <h1>イコライザ</h1>
   </header>
   <div class="sheet-body" id="eqBody"></div>
+</section>
+
+<!-- タブの並びと表示 -->
+<section id="sheetTabs" class="sheet">
+  <header class="topbar">
+    <button class="icon" data-close aria-label="閉じる"><svg><use href="#i-back"/></svg></button>
+    <h1>タブの並びと表示</h1>
+  </header>
+  <div class="sheet-body" id="tabsBody"></div>
 </section>
 
 <!-- Google ドライブ -->

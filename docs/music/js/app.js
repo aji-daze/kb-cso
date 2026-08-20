@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.4.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -214,7 +214,8 @@ const state = {
   objectUrl: null,
   ctxLabel: '',
   selectMode: false, // 複数選択モード
-  selected: new Set(), // 選択中の曲ID
+  selectKind: 'song', // 'song' | 'folder' … 選択中の対象の種類
+  selected: new Set(), // 選択中のID（selectKind が 'song' なら曲ID、'folder' ならフォルダキー）
 };
 
 const route = () => state.routes[state.routes.length - 1];
@@ -381,6 +382,27 @@ function builtinPlaylist(key) {
   return null;
 }
 
+/* ============================ タブ（並び替え・表示/非表示） ============================
+   db.setting('tabs', [{ id, on }, …]) に順序＋表示可否を保存する。
+   保存済み設定に無いタブ（アプリ更新で増えた新タブ）は末尾に表示ONで自動的に足す。 */
+const TAB_LABELS = { songs: '曲', albums: 'アルバム', artists: 'アーティスト', folders: 'フォルダ', playlists: 'プレイリスト', favorites: 'お気に入り' };
+const DEFAULT_TABS = Object.keys(TAB_LABELS).map((id) => ({ id, on: true }));
+
+function getTabs() {
+  const saved = db.setting('tabs', null);
+  const list = Array.isArray(saved) && saved.length ? saved.filter((t) => t && TAB_LABELS[t.id]).map((t) => ({ id: t.id, on: !!t.on })) : [];
+  const have = new Set(list.map((t) => t.id));
+  for (const d of DEFAULT_TABS) if (!have.has(d.id)) list.push({ id: d.id, on: true }); // 新しいタブは末尾にON追加
+  return list;
+}
+const visibleTabs = () => getTabs().filter((t) => t.on);
+
+function renderTabsNav() {
+  $('#tabs').innerHTML = visibleTabs()
+    .map((t) => `<button data-tab="${t.id}">${esc(TAB_LABELS[t.id])}</button>`)
+    .join('');
+}
+
 /* ============================ 画面描画 ============================ */
 const view = $('#view');
 
@@ -395,11 +417,13 @@ function render() {
 
   if (isRoot) {
     $('#mainTitle').textContent = 'ミュージック';
+    renderTabsNav();
     [...$('#tabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === r.name));
     if (r.name === 'songs') renderSongs();
     else if (r.name === 'albums') renderAlbums();
     else if (r.name === 'artists') renderArtists();
     else if (r.name === 'folders') renderFolders();
+    else if (r.name === 'favorites') renderFavorites();
     else renderPlaylists();
   } else if (r.name === 'album') renderAlbumDetail(r.key);
   else if (r.name === 'artist') renderArtistDetail(r.key);
@@ -498,9 +522,20 @@ function renderSongs() {
   box.dataset.ctx = 'songs';
 }
 
+// 「アルバム」タブで、曲数がこれ未満のアルバムを一覧から外して隠す（フォルダ側では見える）。
+// 除外中でもトグルで全部表示に切り替えられる（状態は保存しない＝タブを出入りすると元に戻る）。
+let albumsShowAll = false;
+
 function renderAlbums() {
-  const groups = groupAlbums(filtered());
-  if (!groups.length) return (view.innerHTML = emptyState('アルバムがありません'));
+  const all = groupAlbums(filtered());
+  const minTracks = +db.setting('minAlbumTracks', 5) || 1;
+  const groups = albumsShowAll || minTracks <= 1 ? all : all.filter((g) => g.tracks.length >= minTracks);
+  const hidden = all.length - groups.length;
+  if (!groups.length) {
+    view.innerHTML = emptyState('アルバムがありません');
+    if (hidden) view.innerHTML += `<div class="albums-note" data-act="albumsShowAll">${hidden}枚のアルバムを非表示（${minTracks - 1}曲以下）</div>`;
+    return;
+  }
   const grid = document.createElement('div');
   grid.className = 'grid';
   view.appendChild(grid);
@@ -514,6 +549,13 @@ function renderAlbums() {
     30,
     fillArt
   );
+  if (hidden) {
+    const note = document.createElement('div');
+    note.className = 'albums-note';
+    note.dataset.act = 'albumsShowAll';
+    note.textContent = albumsShowAll ? '非表示のアルバムも含めて表示中（タップで元に戻す）' : `${hidden}枚のアルバムを非表示（${minTracks - 1}曲以下）`;
+    view.appendChild(note);
+  }
 }
 
 function renderArtists() {
@@ -545,16 +587,36 @@ function renderFolders() {
   view.appendChild(box);
   mountChunked(box, groups, (g) => {
     if (g.key === NONE_FOLDER) {
-      return `<div class="row" data-act="folder" data-key="${NONE_FOLDER}">
+      return `<div class="row" data-act="folder" data-key="${NONE_FOLDER}" data-id="${NONE_FOLDER}">
+        <div class="chk"><svg><use href="#i-check"/></svg></div>
         <div class="txt"><div class="t">未分類</div><div class="s">${g.tracks.length}曲</div></div>
+        <button class="icon" data-act="foldermenu" data-key="${NONE_FOLDER}"><svg><use href="#i-more"/></svg></button>
       </div>`;
     }
     const { name, parent } = folderNameParts(g.folder);
     const sub = [parent, `${g.tracks.length}曲`].filter(Boolean).join(' · ');
-    return `<div class="row" data-act="folder" data-key="${esc(g.key)}">
+    return `<div class="row" data-act="folder" data-key="${esc(g.key)}" data-id="${esc(g.key)}">
+      <div class="chk"><svg><use href="#i-check"/></svg></div>
       <div class="txt"><div class="t">${esc(name)}</div><div class="s">${esc(sub)}</div></div>
+      <button class="icon" data-act="foldermenu" data-key="${esc(g.key)}"><svg><use href="#i-more"/></svg></button>
     </div>`;
-  });
+  }, 120, syncSelectUI);
+}
+
+function renderFavorites() {
+  const tracks = builtinPlaylist('fav').tracks;
+  if (!tracks.length) {
+    view.innerHTML = emptyState('お気に入りに追加した曲がここに並びます。<br>曲のメニューからハートで追加できます。');
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'detail-actions';
+  head.style.padding = '10px 14px';
+  head.innerHTML = `<button class="btn" data-act="playall">すべて再生</button><button class="btn" data-act="shuffleall">シャッフル再生</button><span class="muted" style="align-self:center;font-size:12px">${tracks.length} 曲</span>`;
+  view.appendChild(head);
+  const box = document.createElement('div');
+  view.appendChild(box);
+  mountChunked(box, tracks, (t, i) => songRowHTML(t, i), 120, syncSelectUI);
 }
 
 function renderPlaylists() {
@@ -682,6 +744,10 @@ function currentListTracks() {
     if (b) return { tracks: b.tracks, label: b.name };
     const pl = state.playlists.find((p) => p.id === r.key);
     return { tracks: pl ? pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean) : [], label: pl ? pl.name : '' };
+  }
+  if (r.name === 'favorites') {
+    const b = builtinPlaylist('fav');
+    return { tracks: b.tracks, label: b.name };
   }
   return { tracks: filtered(), label: state.query ? '検索結果' : 'すべての曲' };
 }
@@ -1041,11 +1107,15 @@ async function deleteTracks(ids, name) {
 }
 
 /* ============================ 複数選択 ============================ */
-function enterSelectMode(id) {
+// kind: 'song'（曲一覧・アルバム/アーティスト/フォルダ/プレイリスト詳細の曲行）
+//     | 'folder'（フォルダ一覧のフォルダ行）
+function enterSelectMode(id, kind = 'song') {
   state.selectMode = true;
+  state.selectKind = kind;
   state.selected = new Set(id ? [id] : []);
   pushNav(() => {
     state.selectMode = false;
+    state.selectKind = 'song';
     state.selected = new Set();
     syncSelectUI();
   });
@@ -1069,11 +1139,13 @@ function toggleSelect(id) {
 // 選択モードの見た目（上部バー・下部アクションバー・各行のチェック）をまとめて同期する。
 // render() の最後や、選択の増減のたびに呼ぶ。選択モードでないときはただ後片付けするだけ。
 function syncSelectUI() {
+  const folderMode = state.selectMode && state.selectKind === 'folder';
   document.body.classList.toggle('select-mode', state.selectMode);
   $('#topbar').hidden = state.selectMode;
   $('#topbarSelect').hidden = !state.selectMode;
-  $('#selectBar').hidden = !state.selectMode;
-  if (state.selectMode) $('#selTitle').textContent = `${state.selected.size}曲を選択中`;
+  $('#selectBar').hidden = !state.selectMode || folderMode;
+  $('#selectBarFolder').hidden = !folderMode;
+  if (state.selectMode) $('#selTitle').textContent = folderMode ? `${state.selected.size}個のフォルダを選択中` : `${state.selected.size}曲を選択中`;
   document.querySelectorAll('#view .row[data-id]').forEach((row) => {
     row.classList.toggle('sel', state.selected.has(row.dataset.id));
   });
@@ -1165,6 +1237,85 @@ async function folderToAlbum(folderKey) {
   const name = await promptDialog('アルバム名', initial, '例）青の記録');
   if (!name) return;
   await runMoveToAlbum(g.tracks.map((t) => t.id), name, undefined);
+}
+
+function folderMenu(key) {
+  const g = groupFolders().find((x) => x.key === key);
+  if (!g) return;
+  menuDialog(folderLabel(g), [
+    { label: '選択する', run: () => enterSelectMode(key, 'folder') },
+    { label: 'プレイリストに追加', icon: 'plus', run: () => addToPlaylistDialog(g.tracks.map((t) => t.id)) },
+    ...(g.tracks.length ? [{ label: 'アルバムにする', icon: 'note', run: () => folderToAlbum(key) }] : []),
+  ]);
+}
+
+// 複数フォルダの曲を1本にまとめる。選んだフォルダIDから曲一覧をまとめて取り出す。
+function folderTracksFromKeys(keys) {
+  const set = new Set(keys);
+  const tracks = [];
+  for (const g of groupFolders()) {
+    if (set.has(g.key)) tracks.push(...g.tracks);
+  }
+  return tracks;
+}
+
+// 選んだフォルダの全曲の folder/folderKey を書き換えて1つのフォルダにまとめる。
+async function mergeFoldersInto(keys, folderName) {
+  const name = String(folderName || '').trim();
+  if (!name) return null;
+  const tracks = folderTracksFromKeys(keys);
+  if (!tracks.length) return null;
+  const key = norm(name);
+  for (const t of tracks) {
+    t.folder = name;
+    t.folderKey = key;
+    await db.put('tracks', t);
+  }
+  await loadLibrary();
+  render();
+  return { name, count: tracks.length };
+}
+
+async function runMergeFolders(keys, folderName) {
+  const res = await mergeFoldersInto(keys, folderName);
+  if (!res) return;
+  exitSelectMode();
+  toast(`${res.count}曲を「${res.name}」にまとめました`);
+}
+
+// 「1つのフォルダにまとめる」ダイアログ。既存フォルダから選ぶか、新しい名前を入力する。
+function mergeFoldersDialog(keys) {
+  const selected = new Set(keys);
+  const selectedGroups = groupFolders().filter((g) => selected.has(g.key));
+  const firstNamed = selectedGroups.find((g) => g.key !== NONE_FOLDER);
+  const others = groupFolders().filter((g) => g.key !== NONE_FOLDER && !selected.has(g.key));
+  const opts = [
+    {
+      label: '＋ 新しいフォルダ名を入力',
+      icon: 'plus',
+      run: async () => {
+        const name = await promptDialog('フォルダ名', firstNamed ? folderNameParts(firstNamed.folder).name : '', '例）お気に入り');
+        if (!name) return;
+        await runMergeFolders(keys, name);
+      },
+    },
+    ...others.map((g) => ({
+      label: `${folderLabel(g)}（${g.tracks.length}曲）`,
+      run: () => runMergeFolders(keys, g.folder),
+    })),
+  ];
+  menuDialog('1つのフォルダにまとめる', opts);
+}
+
+async function folderSelectionToAlbumDialog(keys) {
+  const tracks = folderTracksFromKeys(keys);
+  if (!tracks.length) return;
+  const groups = groupFolders().filter((g) => keys.includes(g.key));
+  const firstNamed = groups.find((g) => g.key !== NONE_FOLDER);
+  const initial = firstNamed ? folderNameParts(firstNamed.folder).name : '';
+  const name = await promptDialog('アルバム名', initial, '例）青の記録');
+  if (!name) return;
+  await runMoveToAlbum(tracks.map((t) => t.id), name, undefined);
 }
 
 async function moveTracksArtist(ids, name) {
@@ -1896,6 +2047,7 @@ async function renderSettings() {
   const dupSkip = db.setting('dupSkip', true);
   const autoArt = db.setting('autoArt', true);
   const importNotify = db.setting('importNotify', true);
+  const minAlbumTracks = +db.setting('minAlbumTracks', 5) || 5;
   const totalSize = state.tracks.reduce((s, t) => s + (t.size || 0), 0);
 
   const installed = isStandalone();
@@ -1923,6 +2075,12 @@ async function renderSettings() {
       <div class="switch ${dupSkip ? 'on' : ''}"></div></div>
     <div class="item" data-act="findDups"><svg style="color:var(--sub)"><use href="#i-trash"/></svg>
       <div class="txt"><div class="t">重複した曲を探す</div><div class="s">すでに入っている被りを見つけて、1曲だけ残して片づけます</div></div></div>
+
+    <div class="sec">アルバム・タブ</div>
+    <div class="item"><div class="txt"><div class="t">アルバムとして扱う最小曲数</div><div class="s">これより少ない曲数のアルバムは「アルバム」タブに出さず、フォルダ側でまとめて見られます</div></div>
+      <select data-act="minAlbumTracks">${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}" ${minAlbumTracks === n ? 'selected' : ''}>${n}曲</option>`).join('')}</select></div>
+    <div class="item" data-act="tabs"><svg style="color:var(--sub)"><use href="#i-folder"/></svg>
+      <div class="txt"><div class="t">タブの並びと表示</div><div class="s">表示するタブや、並ぶ順番を変更します</div></div></div>
 
     <div class="sec">ジャケット</div>
     <div class="item" data-act="toggleArt"><div class="txt"><div class="t">取り込んだら自動で探す</div><div class="s">タグに画像がない曲だけ、ネットから検索します</div></div>
@@ -1953,11 +2111,23 @@ async function renderSettings() {
       n.onchange = () => db.setSetting('unplug', n.value);
       return;
     }
+    if (act === 'minAlbumTracks') {
+      n.onchange = async () => {
+        await db.setSetting('minAlbumTracks', +n.value);
+        albumsShowAll = false;
+        render();
+      };
+      return;
+    }
     n.onclick = async () => {
       if (act === 'install') await installFlow();
       else if (act === 'pickFiles') $('#filePick').click();
       else if (act === 'pickDir') $('#dirPick').click();
       else if (act === 'drive') openDriveSheet();
+      else if (act === 'tabs') {
+        openSheet('sheetTabs');
+        renderTabsSettings();
+      }
       else if (act === 'toggleArt') {
         await db.setSetting('autoArt', !db.setting('autoArt', true));
         renderSettings();
@@ -1993,6 +2163,55 @@ async function renderSettings() {
         renderSettings();
         toast('削除しました');
       }
+    };
+  });
+}
+
+/* ============================ タブの並びと表示 ============================ */
+function renderTabsSettings() {
+  const body = $('#tabsBody');
+  const tabs = getTabs();
+  body.innerHTML =
+    `<div class="sec">タップで表示・非表示、▲▼で並び替えます</div>` +
+    tabs
+      .map(
+        (t, i) => `<div class="item">
+      <div class="txt"><div class="t">${esc(TAB_LABELS[t.id])}</div></div>
+      <button class="icon" data-act="tabUp" data-i="${i}" ${i === 0 ? 'disabled' : ''}><svg style="transform:rotate(180deg)"><use href="#i-down"/></svg></button>
+      <button class="icon" data-act="tabDown" data-i="${i}" ${i === tabs.length - 1 ? 'disabled' : ''}><svg><use href="#i-down"/></svg></button>
+      <div class="switch ${t.on ? 'on' : ''}" data-act="tabToggle" data-i="${i}" style="margin-left:4px"></div>
+    </div>`
+      )
+      .join('');
+
+  body.querySelectorAll('[data-act]').forEach((n) => {
+    n.onclick = async () => {
+      const i = +n.dataset.i;
+      const act = n.dataset.act;
+      const list = getTabs();
+      if (act === 'tabUp') {
+        if (i <= 0) return;
+        [list[i - 1], list[i]] = [list[i], list[i - 1]];
+      } else if (act === 'tabDown') {
+        if (i >= list.length - 1) return;
+        [list[i + 1], list[i]] = [list[i], list[i + 1]];
+      } else if (act === 'tabToggle') {
+        const willOn = !list[i].on;
+        if (!willOn && list.filter((t) => t.on).length <= 1) {
+          toast('最低1つはタブを表示してください');
+          return;
+        }
+        list[i].on = willOn;
+      } else return;
+
+      await db.setSetting('tabs', list);
+      renderTabsSettings();
+      // いま見ているタブが非表示になったら、先頭の表示タブに切り替える
+      if (state.routes.length === 1) {
+        const vis = list.filter((t) => t.on);
+        if (!vis.some((t) => t.id === route().name)) state.routes = [{ name: vis[0] ? vis[0].id : 'songs' }];
+      }
+      render();
     };
   });
 }
@@ -2286,14 +2505,15 @@ function wire() {
     }, 180);
   });
 
-  // 曲行の長押しで複数選択モードに入る（タッチ・マウス両対応）
-  const lp = { timer: 0, id: null, moved: false, x: 0, y: 0, suppressClick: false };
+  // 行の長押しで複数選択モードに入る（タッチ・マウス両対応）。曲行・フォルダ行の両方に対応する。
+  const lp = { timer: 0, id: null, kind: 'song', moved: false, x: 0, y: 0, suppressClick: false };
   const cancelLongPress = () => { clearTimeout(lp.timer); lp.timer = 0; };
   view.addEventListener('pointerdown', (e) => {
     const row = e.target.closest('.row[data-id]');
     if (!row) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     lp.id = row.dataset.id;
+    lp.kind = row.dataset.act === 'folder' ? 'folder' : 'song';
     lp.moved = false;
     lp.x = e.clientX;
     lp.y = e.clientY;
@@ -2302,8 +2522,9 @@ function wire() {
       lp.timer = 0;
       if (lp.moved) return;
       lp.suppressClick = true;
-      if (state.selectMode) toggleSelect(lp.id);
-      else enterSelectMode(lp.id);
+      if (state.selectMode) {
+        if (state.selectKind === lp.kind) toggleSelect(lp.id);
+      } else enterSelectMode(lp.id, lp.kind);
     }, 500);
   });
   view.addEventListener('pointermove', (e) => {
@@ -2317,8 +2538,13 @@ function wire() {
   // 複数選択モードの上部バー・下部アクションバー
   $('#btnSelClose').onclick = () => exitSelectMode();
   $('#btnSelAll').onclick = () => {
-    const { tracks } = currentListTracks();
-    state.selected = new Set(tracks.map((t) => t.id));
+    if (state.selectKind === 'folder') {
+      const groups = groupFolders(filtered());
+      state.selected = new Set(groups.map((g) => g.key));
+    } else {
+      const { tracks } = currentListTracks();
+      state.selected = new Set(tracks.map((t) => t.id));
+    }
     syncSelectUI();
   };
   $('#selectBar').addEventListener('click', (e) => {
@@ -2339,6 +2565,23 @@ function wire() {
     }
   });
 
+  // 複数選択モード（フォルダ）の操作バー
+  $('#selectBarFolder').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const keys = [...state.selected];
+    if (!keys.length) return;
+    const act = b.dataset.act;
+    if (act === 'selFolderMerge') mergeFoldersDialog(keys);
+    else if (act === 'selFolderAlbum') folderSelectionToAlbumDialog(keys);
+    else if (act === 'selFolderPlaylist') addToPlaylistDialog(folderTracksFromKeys(keys).map((t) => t.id));
+    else if (act === 'selFolderDelete') {
+      const ids = folderTracksFromKeys(keys).map((t) => t.id);
+      if (!ids.length) return;
+      deleteTracks(ids, `${keys.length}個のフォルダ`).then(() => exitSelectMode());
+    }
+  });
+
   // 一覧のタップ
   view.addEventListener('click', (e) => {
     const n = e.target.closest('[data-act]');
@@ -2346,20 +2589,26 @@ function wire() {
     const act = n.dataset.act;
     if (act === 'play') {
       if (lp.suppressClick) { lp.suppressClick = false; return; } // 長押しで選択モードに入った直後のクリックは無視
-      if (state.selectMode) { toggleSelect(n.dataset.id); return; }
+      if (state.selectMode && state.selectKind !== 'folder') { toggleSelect(n.dataset.id); return; }
       const { tracks, label } = currentListTracks();
       const i = tracks.findIndex((t) => t.id === n.dataset.id);
       playContext(tracks, i < 0 ? 0 : i, label);
     } else if (act === 'menu') trackMenu(n.dataset.id);
     else if (act === 'album') pushRoute({ name: 'album', key: n.dataset.key });
     else if (act === 'artist') pushRoute({ name: 'artist', key: n.dataset.key });
-    else if (act === 'folder') pushRoute({ name: 'folder', key: n.dataset.key });
+    else if (act === 'folder') {
+      if (lp.suppressClick) { lp.suppressClick = false; return; }
+      if (state.selectMode && state.selectKind === 'folder') { toggleSelect(n.dataset.key); return; }
+      pushRoute({ name: 'folder', key: n.dataset.key });
+    }
+    else if (act === 'foldermenu') folderMenu(n.dataset.key);
     else if (act === 'playlist') pushRoute({ name: 'playlist', key: n.dataset.key });
     else if (act === 'plmenu') playlistMenu(n.dataset.key);
     else if (act === 'newpl') newPlaylist();
     else if (act === 'findart') findArtDialog(n.dataset.key);
     else if (act === 'albummenu') albumMenu(n.dataset.key);
     else if (act === 'folderAlbum') folderToAlbum(n.dataset.key);
+    else if (act === 'albumsShowAll') { albumsShowAll = !albumsShowAll; render(); }
     else if (act === 'playall') {
       const { tracks, label } = currentListTracks();
       playContext(tracks, 0, label);
@@ -2642,6 +2891,10 @@ async function init() {
   $('#vol').value = Math.round(db.setting('volume', 1) * 100);
   if (db.setting('eqOn', false)) P.setEqEnabled(true);
   P.setupUnplugGuard(() => db.setting('unplug', 'pause'));
+
+  // 起動時に開くタブが非表示設定になっていたら、先頭の表示タブを開く
+  const vis = visibleTabs();
+  if (!vis.some((t) => t.id === state.routes[0].name)) state.routes = [{ name: vis[0] ? vis[0].id : 'songs' }];
 
   wire();
   setupMediaSession();

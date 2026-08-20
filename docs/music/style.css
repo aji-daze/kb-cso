@@ -156,6 +156,9 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
 
 .sectitle { padding: 16px 14px 6px; font-size: 12px; color: var(--sub); letter-spacing: .04em; }
 
+.albums-note { padding: 16px 14px 24px; text-align: center; font-size: 12.5px; color: var(--acc); }
+.albums-note:active { opacity: .7; }
+
 /* ---------- ミニプレーヤー ---------- */
 #mini {
   position: fixed;
@@ -369,6 +372,7 @@ body.select-mode .row .chk { display: flex; }
 .row.sel .chk { background: var(--acc); border-color: var(--acc); color: #16130f; }
 .row.sel .chk svg { width: 14px; height: 14px; }
 
+#selectBarFolder,
 #selectBar {
   position: fixed; left: 8px; right: 8px;
   bottom: calc(8px + var(--safe-b));
