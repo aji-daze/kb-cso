@@ -906,15 +906,25 @@ function toggleShuffle() {
   syncControls();
 }
 
+/* 1曲リピートはブラウザ本体の loop に任せる。
+   「終わったら JS で頭に戻して play() し直す」を毎周やると、端末によっては数周で
+   オーディオの再生権を失って止まることがある。loop なら再生が途切れない。
+   ただし「この曲の終わりで停止」を仕掛けているときは、終わりを検知する必要があるので loop は使わない。 */
+function syncLoopFlag() {
+  audio.loop = state.repeat === 'one' && P.sleepState().mode !== 'trackEnd';
+}
+
 function cycleRepeat() {
   state.repeat = state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off';
   db.setSetting('repeat', state.repeat);
+  syncLoopFlag();
   syncControls();
 }
 
 function syncControls() {
   $('#btnShuffle').classList.toggle('on', state.shuffle);
   const rb = $('#btnRepeat');
+  syncLoopFlag();
   rb.classList.toggle('on', state.repeat !== 'off');
   rb.querySelector('use').setAttribute('href', state.repeat === 'one' ? '#i-repeat1' : '#i-repeat');
   const playing = !audio.paused;
@@ -2442,6 +2452,13 @@ function wire() {
     scheduleUpdateCheck();
   });
   audio.addEventListener('ended', () => {
+    // 「この曲の終わりで停止」は、1曲リピートより先に見る。
+    // 後ろに置くと、リピート中は曲が終わっても判定に到達せずタイマーが効かない。
+    if (P.consumeTrackEndSleep()) {
+      audio.pause();
+      toast('スリープタイマーで停止しました');
+      return;
+    }
     if (state.repeat === 'one') {
       audio.currentTime = 0;
       audio.play().catch(() => {});
