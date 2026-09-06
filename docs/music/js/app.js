@@ -766,6 +766,8 @@ function shuffled(ids, firstId) {
 
 function playList(ids, index, label) {
   if (!ids.length) return;
+  skipStreak = 0; // 手動で始め直したら、連続失敗の数え直し
+  nextPrefetch = null;
   state.base = ids.slice();
   state.ctxLabel = label || '';
   if (state.shuffle) {
@@ -778,37 +780,104 @@ function playList(ids, index, label) {
   loadCurrent(true);
 }
 
+/* ---- 曲の切り替えを途切れさせないための仕掛け ----
+   曲送りで音が止まる原因は、次の曲を鳴らすまでの「無音の間」が長いこと。
+   端末はその隙間でオーディオの再生権を手放してしまう。そこで
+   ・次の曲のデータを先に読んでおく（prefetchNext）
+   ・画面の更新より先に鳴らす（ジャケットの読み込みを待たない）
+   ・鳴らし損ねたら一度やり直し、それでも駄目なら次の曲へ送る
+   の3つで隙間を詰め、止まったままにならないようにする。 */
+let nextPrefetch = null; // { id, blob }
+let skipStreak = 0; // 連続で再生に失敗した回数。無限に飛ばし続けないための歯止め
+
+async function prefetchNext() {
+  const id = state.queue[state.qi + 1];
+  if (!id) {
+    nextPrefetch = null;
+    return;
+  }
+  if (nextPrefetch && nextPrefetch.id === id) return;
+  try {
+    const blob = await db.get('blobs', id);
+    if (blob) nextPrefetch = { id, blob };
+  } catch {}
+}
+
+async function tryPlay() {
+  for (let i = 0; i < 2; i++) {
+    try {
+      await P.resumeContext();
+      await audio.play();
+      return true;
+    } catch (e) {
+      // 自動再生が許可されていない場合はやり直しても同じなので、すぐあきらめる
+      if (e && e.name === 'NotAllowedError') return false;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  return false;
+}
+
+// 再生できなかった曲でキューを止めない。次の曲へ送る（連続失敗が続くときだけ停止）
+function skipAfterFailure() {
+  skipStreak++;
+  if (skipStreak > 5) {
+    skipStreak = 0;
+    audio.pause();
+    toast('続けて再生できなかったので止めました');
+    return;
+  }
+  if (state.qi < state.queue.length - 1 || state.repeat === 'all') next(false);
+  else audio.pause();
+}
+
 async function loadCurrent(autoplay, seekTo = 0) {
   const id = state.queue[state.qi];
   const t = state.byId.get(id);
   if (!t) return;
-  const blob = await db.get('blobs', id);
+
+  // 先読みしてあればそれを使う（ここでデータベースを待たずに済む）
+  let blob = nextPrefetch && nextPrefetch.id === id ? nextPrefetch.blob : null;
+  nextPrefetch = null;
   if (!blob) {
-    toast('ファイルの実体が見つかりません');
+    try {
+      blob = await db.get('blobs', id);
+    } catch {}
+  }
+  if (!blob) {
+    toast(`「${t.title}」のファイルが見つかりません`);
+    if (autoplay) skipAfterFailure();
     return;
   }
-  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+
+  const prevUrl = state.objectUrl;
   state.objectUrl = URL.createObjectURL(blob);
   audio.src = state.objectUrl;
+  // 直前の URL は、要素が新しい src に切り替わってから捨てる。
+  // 先に捨てると再生中の資源を取り上げることになり、エラーの元になる
+  if (prevUrl) setTimeout(() => URL.revokeObjectURL(prevUrl), 1000);
   try {
     audio.currentTime = 0;
   } catch {}
   if (seekTo) {
     audio.addEventListener('loadedmetadata', () => { try { audio.currentTime = seekTo; } catch {} }, { once: true });
   }
-  await updateNowUI(t);
+
   if (autoplay) {
-    try {
-      await P.resumeContext();
-      await audio.play();
-    } catch (e) {
-      toast('再生できませんでした');
+    // 画面の更新（ジャケットの読み出し）より先に鳴らす。曲間の無音を最短にするため
+    if (!(await tryPlay())) {
+      await updateNowUI(t);
+      skipAfterFailure();
+      return;
     }
+    skipStreak = 0;
     t.playCount = (t.playCount || 0) + 1;
     t.lastPlayed = Date.now();
     db.put('tracks', t);
   }
+  await updateNowUI(t);
   savePlayback();
+  prefetchNext(); // 次の曲を裏で読んでおく
 }
 
 function currentTrack() {
@@ -938,6 +1007,8 @@ function stopPlayback() {
   state.ctxLabel = '';
 
   P.cancelSleep();
+  nextPrefetch = null;
+  skipStreak = 0;
   clearTimeout(saveTimer);
   db.setSetting('lastPlayback', null); // 次に開いたときは何も鳴っていない状態から
 
@@ -2733,7 +2804,10 @@ function wire() {
     syncTime();
   });
   audio.addEventListener('error', () => {
-    if (audio.src) toast('この曲は再生できませんでした');
+    if (!audio.src) return; // 停止時に src を外したときは無視
+    const t = currentTrack();
+    toast(t ? `「${t.title}」は再生できませんでした` : 'この曲は再生できませんでした');
+    skipAfterFailure(); // 壊れた曲でキューを止めない
   });
 
   P.onChange((type) => {
