@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュして、電波がなくても起動できるようにする。
 // 曲のデータは IndexedDB 側に入っているのでここでは扱わない。
-const VERSION = 'music-v9';
+const VERSION = 'music-v10';
 const SHELL = [
   './',
   './index.html',

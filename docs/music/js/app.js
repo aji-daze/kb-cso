@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -382,6 +382,100 @@ function builtinPlaylist(key) {
   return null;
 }
 
+/* ============================ 一覧の並べ替え ============================
+   フォルダ詳細・曲タブ・アルバム詳細・アーティスト詳細・プレイリスト詳細で共通して使う。
+   画面に出す並びと currentListTracks()（＝再生キューの元）の並びは、必ずこの sortTracks() 経由で
+   揃える。保存は画面ごとに別の設定キーへ、さらに画面内の対象（フォルダキーなど）ごとに覚える。 */
+const SORT_LABELS = {
+  filename: 'ファイル名順',
+  title: '曲名順',
+  artist: 'アーティスト順',
+  album: 'アルバム順',
+  track: 'トラック番号順',
+  playCount: '再生回数順',
+  lastPlayed: '最近再生した順',
+  addedAt: '追加した順',
+  duration: '長さ順',
+  custom: '登録順',
+};
+const SORT_KEYS = ['filename', 'title', 'artist', 'album', 'track', 'playCount', 'lastPlayed', 'addedAt', 'duration'];
+// 選び直したとき、その項目にとって「既定の向き」にする（再生回数・再生日時・追加日は新しい/多い方が先）
+const SORT_DEFAULT_DESC = { playCount: true, lastPlayed: true, addedAt: true };
+
+// 画面ごとの設定キー・並べ替え候補・初期値（＝今までの挙動）
+const SORT_SCREENS = {
+  folder: { store: 'sortByFolder', keys: SORT_KEYS, def: { by: 'filename', desc: false } },
+  songs: { store: 'sortBySongs', keys: SORT_KEYS, def: { by: 'title', desc: false } },
+  album: { store: 'sortByAlbum', keys: SORT_KEYS, def: { by: 'track', desc: false } },
+  artist: { store: 'sortByArtist', keys: SORT_KEYS, def: { by: 'title', desc: false } },
+  // プレイリストだけ「登録順」を持つ。既定はそれ＝並べ替えを足さない（今まで通りの並び）
+  playlist: { store: 'sortByPlaylist', keys: ['custom', ...SORT_KEYS], def: { by: 'custom', desc: false } },
+};
+
+function getSortState(screen, instKey) {
+  const conf = SORT_SCREENS[screen];
+  const map = db.setting(conf.store, {});
+  return (map && map[instKey]) || conf.def;
+}
+
+function setSortState(screen, instKey, val) {
+  const conf = SORT_SCREENS[screen];
+  const map = { ...db.setting(conf.store, {}) };
+  map[instKey] = val;
+  db.setSetting(conf.store, map);
+}
+
+function sortLabel(st) {
+  return `${SORT_LABELS[st.by] || st.by}${st.by === 'custom' ? '' : st.desc ? ' ↓' : ' ↑'}`;
+}
+
+// 並べ替え本体。tracks は書き換えず、並べ替えた新しい配列を返す。
+// custom（登録順）は渡された順のまま。lastPlayed は未再生（0）を向きに関わらず常に最後に置く。
+function sortTracks(tracks, by, desc) {
+  if (!by || by === 'custom') return tracks.slice();
+  const dir = desc ? -1 : 1;
+  const cmpMap = {
+    filename: (a, b) => dir * String(a.fileName || '').localeCompare(String(b.fileName || ''), 'ja', { numeric: true }),
+    title: (a, b) => dir * jcmp(a.title, b.title),
+    artist: (a, b) => dir * jcmp(a.artist, b.artist) || jcmp(a.title, b.title),
+    album: (a, b) => dir * jcmp(a.album, b.album) || (a.trackNo || 999) - (b.trackNo || 999) || jcmp(a.title, b.title),
+    track: (a, b) => dir * ((a.trackNo || 999) - (b.trackNo || 999)) || jcmp(a.title, b.title),
+    playCount: (a, b) => dir * ((a.playCount || 0) - (b.playCount || 0)) || jcmp(a.title, b.title),
+    addedAt: (a, b) => dir * ((a.addedAt || 0) - (b.addedAt || 0)),
+    duration: (a, b) => dir * ((a.duration || 0) - (b.duration || 0)),
+    lastPlayed: (a, b) => {
+      const av = a.lastPlayed || 0, bv = b.lastPlayed || 0;
+      if (!av && !bv) return jcmp(a.title, b.title);
+      if (!av) return 1; // 未再生は常に最後
+      if (!bv) return -1;
+      return dir * (av - bv);
+    },
+  };
+  const cmp = cmpMap[by];
+  if (!cmp) return tracks.slice();
+  return tracks.slice().sort(cmp);
+}
+
+// 並べ替えメニューを開く。同じ項目をもう一度選ぶと昇順/降順が反転する。
+function openSortDialog(screen, instKey) {
+  const conf = SORT_SCREENS[screen];
+  if (!conf) return;
+  const st = getSortState(screen, instKey);
+  const opts = conf.keys.map((by) => {
+    const active = st.by === by;
+    return {
+      label: SORT_LABELS[by] + (active && by !== 'custom' ? (st.desc ? ' ↓' : ' ↑') : ''),
+      sel: active,
+      run: () => {
+        const desc = active ? !st.desc : by === 'custom' ? false : !!SORT_DEFAULT_DESC[by];
+        setSortState(screen, instKey, { by, desc });
+        render();
+      },
+    };
+  });
+  menuDialog('並べ替え', opts);
+}
+
 /* ============================ タブ（並び替え・表示/非表示） ============================
    db.setting('tabs', [{ id, on }, …]) に順序＋表示可否を保存する。
    保存済み設定に無いタブ（アプリ更新で増えた新タブ）は末尾に表示ONで自動的に足す。 */
@@ -511,14 +605,16 @@ function renderSongs() {
       : emptyState('まだ曲がありません。<br>右上の設定から、端末や microSD の曲、<br>または Google ドライブの曲を取り込んでください。');
     return;
   }
+  const st = getSortState('songs', 'all');
+  const sorted = sortTracks(list, st.by, st.desc);
   const head = document.createElement('div');
   head.className = 'detail-actions';
   head.style.padding = '10px 14px';
-  head.innerHTML = `<button class="btn" data-act="playall">すべて再生</button><button class="btn" data-act="shuffleall">シャッフル再生</button><span class="muted" style="align-self:center;font-size:12px">${list.length} 曲</span>`;
+  head.innerHTML = `<button class="btn" data-act="playall">すべて再生</button><button class="btn" data-act="shuffleall">シャッフル再生</button><button class="btn" data-act="sort" data-screen="songs" data-instkey="all">並び: ${esc(sortLabel(st))}</button><span class="muted" style="align-self:center;font-size:12px">${list.length} 曲</span>`;
   view.appendChild(head);
   const box = document.createElement('div');
   view.appendChild(box);
-  mountChunked(box, list, (t, i) => songRowHTML(t, i), 120, syncSelectUI);
+  mountChunked(box, sorted, (t, i) => songRowHTML(t, i), 120, syncSelectUI);
   box.dataset.ctx = 'songs';
 }
 
@@ -647,6 +743,8 @@ function renderAlbumDetail(key) {
   if (!g) return (view.innerHTML = emptyState('アルバムが見つかりません'));
   $('#mainTitle').textContent = g.album;
   const total = g.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+  const st = getSortState('album', key);
+  const tracks = sortTracks(g.tracks, st.by, st.desc);
   view.innerHTML = `
     <div class="detail-head">
       <div class="cover"><img data-art="${esc(g.artId || '')}" alt=""><svg class="ph"><use href="#i-note"/></svg></div>
@@ -656,9 +754,10 @@ function renderAlbumDetail(key) {
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
       <button class="btn" data-act="findart" data-key="${esc(key)}">ジャケット</button>
+      <button class="btn" data-act="sort" data-screen="album" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
       <button class="btn" data-act="albummenu" data-key="${esc(key)}">…</button>
     </div>
-    <div id="albumTracks">${g.tracks.map((t, i) => songRowHTML(t, i, { num: true })).join('')}</div>`;
+    <div id="albumTracks">${tracks.map((t, i) => songRowHTML(t, i, { num: true })).join('')}</div>`;
   fillArt(view);
   view.dataset.ctx = JSON.stringify({ type: 'album', key });
 }
@@ -668,9 +767,12 @@ function renderArtistDetail(key) {
   if (!g) return (view.innerHTML = emptyState('アーティストが見つかりません'));
   $('#mainTitle').textContent = g.name;
   const albums = groupAlbums(g.tracks);
+  const st = getSortState('artist', key);
+  const tracks = sortTracks(g.tracks, st.by, st.desc);
   let html = `<div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
+      <button class="btn" data-act="sort" data-screen="artist" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
       <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲</span>
     </div>`;
   if (albums.length > 1) {
@@ -683,7 +785,7 @@ function renderArtistDetail(key) {
         )
         .join('') + `</div>`;
   }
-  html += `<div class="sectitle">曲</div>` + g.tracks.map((t, i) => songRowHTML(t, i)).join('');
+  html += `<div class="sectitle">曲</div>` + tracks.map((t, i) => songRowHTML(t, i)).join('');
   view.innerHTML = html;
   fillArt(view);
   view.dataset.ctx = JSON.stringify({ type: 'artist', key });
@@ -694,14 +796,17 @@ function renderFolderDetail(key) {
   if (!g) return (view.innerHTML = emptyState('フォルダが見つかりません'));
   $('#mainTitle').textContent = folderLabel(g);
   const total = g.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+  const st = getSortState('folder', key);
+  const tracks = sortTracks(g.tracks, st.by, st.desc);
   view.innerHTML = `
     <div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
+      <button class="btn" data-act="sort" data-screen="folder" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
       ${g.tracks.length ? `<button class="btn" data-act="folderAlbum" data-key="${esc(key)}">このフォルダをアルバムにする</button>` : ''}
       <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲 · ${fmtLong(total)}</span>
     </div>
-    ${g.tracks.length ? g.tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
+    ${tracks.length ? tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
   view.dataset.ctx = JSON.stringify({ type: 'folder', key });
 }
 
@@ -710,13 +815,16 @@ function renderPlaylistDetail(key) {
   const pl = b ? null : state.playlists.find((p) => p.id === key);
   if (!b && !pl) return (view.innerHTML = emptyState('プレイリストが見つかりません'));
   const name = b ? b.name : pl.name;
-  const tracks = b ? b.tracks : pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean);
+  const base = b ? b.tracks : pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean);
+  const st = getSortState('playlist', key);
+  const tracks = sortTracks(base, st.by, st.desc);
   $('#mainTitle').textContent = name;
   const total = tracks.reduce((s, t) => s + (t.duration || 0), 0);
   view.innerHTML = `
     <div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
+      <button class="btn" data-act="sort" data-screen="playlist" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
       ${pl ? `<button class="btn" data-act="plmenu" data-key="${esc(pl.id)}">…</button>` : ''}
       <span class="muted" style="align-self:center;font-size:12px">${tracks.length}曲 · ${fmtLong(total)}</span>
     </div>
@@ -724,32 +832,42 @@ function renderPlaylistDetail(key) {
   view.dataset.ctx = JSON.stringify({ type: 'playlist', key });
 }
 
-// いま画面に出ている曲の並び（再生の文脈）を取り出す
+// いま画面に出ている曲の並び（再生の文脈）を取り出す。並べ替えの設定もここで反映するので、
+// 画面の見た目と再生キューの並びは常に一致する。
 function currentListTracks() {
   const r = route();
   if (r.name === 'album') {
     const g = groupAlbums().find((x) => x.key === r.key);
-    return { tracks: g ? g.tracks : [], label: g ? g.album : '' };
+    if (!g) return { tracks: [], label: '' };
+    const st = getSortState('album', r.key);
+    return { tracks: sortTracks(g.tracks, st.by, st.desc), label: g.album };
   }
   if (r.name === 'artist') {
     const g = groupArtists().find((x) => x.key === r.key);
-    return { tracks: g ? g.tracks : [], label: g ? g.name : '' };
+    if (!g) return { tracks: [], label: '' };
+    const st = getSortState('artist', r.key);
+    return { tracks: sortTracks(g.tracks, st.by, st.desc), label: g.name };
   }
   if (r.name === 'folder') {
     const g = groupFolders().find((x) => x.key === r.key);
-    return { tracks: g ? g.tracks : [], label: g ? folderLabel(g) : '' };
+    if (!g) return { tracks: [], label: '' };
+    const st = getSortState('folder', r.key);
+    return { tracks: sortTracks(g.tracks, st.by, st.desc), label: folderLabel(g) };
   }
   if (r.name === 'playlist') {
     const b = builtinPlaylist(r.key);
-    if (b) return { tracks: b.tracks, label: b.name };
-    const pl = state.playlists.find((p) => p.id === r.key);
-    return { tracks: pl ? pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean) : [], label: pl ? pl.name : '' };
+    const pl = b ? null : state.playlists.find((p) => p.id === r.key);
+    const base = b ? b.tracks : pl ? pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean) : [];
+    const name = b ? b.name : pl ? pl.name : '';
+    const st = getSortState('playlist', r.key);
+    return { tracks: sortTracks(base, st.by, st.desc), label: name };
   }
   if (r.name === 'favorites') {
     const b = builtinPlaylist('fav');
     return { tracks: b.tracks, label: b.name };
   }
-  return { tracks: filtered(), label: state.query ? '検索結果' : 'すべての曲' };
+  const st = getSortState('songs', 'all');
+  return { tracks: sortTracks(filtered(), st.by, st.desc), label: state.query ? '検索結果' : 'すべての曲' };
 }
 
 /* ============================ 再生 ============================ */
@@ -2680,6 +2798,7 @@ function wire() {
     else if (act === 'albummenu') albumMenu(n.dataset.key);
     else if (act === 'folderAlbum') folderToAlbum(n.dataset.key);
     else if (act === 'albumsShowAll') { albumsShowAll = !albumsShowAll; render(); }
+    else if (act === 'sort') openSortDialog(n.dataset.screen, n.dataset.instkey);
     else if (act === 'playall') {
       const { tracks, label } = currentListTracks();
       playContext(tracks, 0, label);
