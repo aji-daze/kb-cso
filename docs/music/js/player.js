@@ -171,20 +171,46 @@ export function fadeOutAndPause(ms = 4000) {
 // 端末によっては効かないので出力デバイスの増減も見張る。
 let lastOutputs = -1;
 
-export function setupUnplugGuard(getMode) {
+// 曲が切り替わった直後は、出力の付け替えで devicechange が飛ぶことがある。
+// そこで数え直すと「減った＝抜けた」と誤判定して再生を止めてしまうので、少しの間は見送る。
+let guardQuietUntil = 0;
+export function quietUnplugGuard(ms = 3000) {
+  guardQuietUntil = Date.now() + ms;
+}
+
+export function setupUnplugGuard(getMode, onLog) {
+  const countOutputs = async () => {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs.filter((d) => d.kind === 'audiooutput').length;
+  };
   const check = async () => {
     const mode = getMode();
     if (mode === 'off' || audio.paused) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    if (Date.now() < guardQuietUntil) {
+      if (onLog) onLog('出力の変化を検知（曲の切り替え直後なので無視）');
+      return;
+    }
     try {
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      const n = devs.filter((d) => d.kind === 'audiooutput').length;
-      if (lastOutputs >= 0 && n < lastOutputs) {
+      const n = await countOutputs();
+      // 0 件は「数えられない」であって「抜けた」ではない。Android は権限が無いと
+      // 出力の一覧をまともに返さないことがあるので、0 は判断材料にしない。
+      if (!(lastOutputs > 0 && n > 0 && n < lastOutputs)) {
+        if (n > 0) lastOutputs = n;
+        return;
+      }
+      // 一瞬の揺れで止めないよう、少し置いてもう一度数える
+      await new Promise((r) => setTimeout(r, 700));
+      const again = await countOutputs();
+      if (again > 0 && again < lastOutputs && !audio.paused) {
+        if (onLog) onLog(`イヤホンが外れたと判断（出力 ${lastOutputs} → ${again}）`);
         if (mode === 'mute') audio.volume = 0;
         else audio.pause();
         emit('unplug');
+      } else if (onLog) {
+        onLog(`出力が減ったが戻った（${lastOutputs} → ${n} → ${again}）ので止めない`);
       }
-      lastOutputs = n;
+      if (again > 0) lastOutputs = again;
     } catch {}
   };
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {

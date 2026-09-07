@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -905,6 +905,19 @@ function playList(ids, index, label) {
    ・画面の更新より先に鳴らす（ジャケットの読み込みを待たない）
    ・鳴らし損ねたら一度やり直し、それでも駄目なら次の曲へ送る
    の3つで隙間を詰め、止まったままにならないようにする。 */
+/* ---- 再生の記録 ----
+   実機でだけ起きる停止の原因を後から追えるよう、直近の出来事を控えておく。
+   設定の「再生の記録を見る」で読める。端末の中だけに置き、どこにも送らない。 */
+const playLog = [];
+function plog(msg) {
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2, '0');
+  const mm = String(t.getMinutes()).padStart(2, '0');
+  const ss = String(t.getSeconds()).padStart(2, '0');
+  playLog.push(`${hh}:${mm}:${ss} ${msg}`);
+  if (playLog.length > 80) playLog.shift();
+}
+
 let nextPrefetch = null; // { id, blob }
 let skipStreak = 0; // 連続で再生に失敗した回数。無限に飛ばし続けないための歯止め
 
@@ -921,19 +934,23 @@ async function prefetchNext() {
   } catch {}
 }
 
+// 'ok' | 'blocked'（端末に再生を止められた）| 'failed'（その曲が鳴らせない）
 async function tryPlay() {
-  for (let i = 0; i < 2; i++) {
+  let last = null;
+  for (let i = 0; i < 3; i++) {
     try {
       await P.resumeContext();
       await audio.play();
-      return true;
+      plog('再生開始' + (i ? `（${i + 1}回目で成功）` : ''));
+      return 'ok';
     } catch (e) {
-      // 自動再生が許可されていない場合はやり直しても同じなので、すぐあきらめる
-      if (e && e.name === 'NotAllowedError') return false;
-      await new Promise((r) => setTimeout(r, 150));
+      last = e;
+      plog(`再生できず: ${e && e.name}｜${(e && e.message) || ''}`.slice(0, 120));
+      if (e && e.name === 'NotAllowedError') return 'blocked';
+      await new Promise((r) => setTimeout(r, 200));
     }
   }
-  return false;
+  return last && last.name === 'NotAllowedError' ? 'blocked' : 'failed';
 }
 
 // 再生できなかった曲でキューを止めない。次の曲へ送る（連続失敗が続くときだけ停止）
@@ -953,6 +970,7 @@ async function loadCurrent(autoplay, seekTo = 0) {
   const id = state.queue[state.qi];
   const t = state.byId.get(id);
   if (!t) return;
+  plog(`読み込み ${state.qi + 1}/${state.queue.length}「${t.title}」`);
 
   // 先読みしてあればそれを使う（ここでデータベースを待たずに済む）
   let blob = nextPrefetch && nextPrefetch.id === id ? nextPrefetch.blob : null;
@@ -982,9 +1000,19 @@ async function loadCurrent(autoplay, seekTo = 0) {
   }
 
   if (autoplay) {
+    P.quietUnplugGuard(); // 切り替え直後の出力の揺れでイヤホン判定が誤爆しないように
     // 画面の更新（ジャケットの読み出し）より先に鳴らす。曲間の無音を最短にするため
-    if (!(await tryPlay())) {
+    const res = await tryPlay();
+    if (res !== 'ok') {
       await updateNowUI(t);
+      // 端末に止められた場合は、曲を飛ばしても同じことの繰り返しになる。
+      // その曲を読み込んだまま待機し、再生ボタンで続けられるようにする。
+      if (res === 'blocked') {
+        plog('端末に再生を止められたため、この曲で待機');
+        toast('端末に再生を止められました。再生ボタンで続けられます');
+        syncControls();
+        return;
+      }
       skipAfterFailure();
       return;
     }
@@ -1060,7 +1088,12 @@ function setupMediaSession() {
     if (d.fastSeek && audio.fastSeek) audio.fastSeek(d.seekTime);
     else audio.currentTime = d.seekTime;
   });
-  set('stop', () => stopPlayback());
+  // Android は音声フォーカスを失ったときや通知が消えたときにも stop を送ってくることがある。
+  // ここで再生セッションごと畳むと、勝手に止まったように見えるので一時停止に留める。
+  set('stop', () => {
+    plog('通知/システムから stop');
+    audio.pause();
+  });
 }
 
 async function togglePlay(force) {
@@ -2284,6 +2317,7 @@ async function renderSettings() {
         <option value="off" ${unplug === 'off' ? 'selected' : ''}>何もしない</option>
       </select></div>
     <div class="item" data-act="eq"><div class="txt"><div class="t">イコライザ</div><div class="s">${P.eqEnabled() ? 'オン' : 'オフ'}</div></div><svg style="color:var(--sub)"><use href="#i-eq"/></svg></div>
+    <div class="item" data-act="playLog"><div class="txt"><div class="t">再生の記録を見る</div><div class="s">勝手に止まったときに、直前に何が起きたかを確かめられます</div></div></div>
 
     <div class="sec">保存</div>
     <div class="item"><div class="txt"><div class="t">曲のデータ</div><div class="s">${state.tracks.length}曲 / ${fmtSize(totalSize)}</div></div></div>
@@ -2309,7 +2343,8 @@ async function renderSettings() {
       return;
     }
     n.onclick = async () => {
-      if (act === 'install') await installFlow();
+      if (act === 'playLog') showPlayLog();
+      else if (act === 'install') await installFlow();
       else if (act === 'pickFiles') $('#filePick').click();
       else if (act === 'pickDir') $('#dirPick').click();
       else if (act === 'drive') openDriveSheet();
@@ -2477,6 +2512,26 @@ async function installFlow() {
 }
 
 // インストールできないときに、どこで引っかかっているかを見るための情報
+// 直近の再生まわりの出来事を並べて見せる。原因の切り分け用。
+function showPlayLog() {
+  const lines = playLog.length ? playLog.slice().reverse() : ['まだ記録がありません'];
+  openDialog(
+    `<h3>再生の記録（新しい順）</h3>
+     <div class="pad" style="font-size:11.5px;line-height:1.9;word-break:break-all">
+       ${lines.map((l) => `<div>${esc(l)}</div>`).join('')}
+     </div>
+     <div class="actions"><button class="btn ghost" id="plClear">記録を消す</button><button class="btn" id="plClose">閉じる</button></div>`,
+    (root) => {
+      $('#plClose', root).onclick = closeDialog;
+      $('#plClear', root).onclick = () => {
+        playLog.length = 0;
+        closeDialog();
+        toast('記録を消しました');
+      };
+    }
+  );
+}
+
 async function installDiagnostics() {
   const ua = navigator.userAgent;
   const rows = [];
@@ -2885,12 +2940,14 @@ function wire() {
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   });
   audio.addEventListener('pause', () => {
+    plog(`一時停止（位置 ${Math.round(audio.currentTime)}秒 / 画面${document.visibilityState === 'visible' ? '表' : '裏'}）`);
     syncControls();
     savePlayback();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     scheduleUpdateCheck();
   });
   audio.addEventListener('ended', () => {
+    plog('曲が終わった');
     // 「この曲の終わりで停止」は、1曲リピートより先に見る。
     // 後ろに置くと、リピート中は曲が終わっても判定に到達せずタイマーが効かない。
     if (P.consumeTrackEndSleep()) {
@@ -2924,14 +2981,20 @@ function wire() {
   });
   audio.addEventListener('error', () => {
     if (!audio.src) return; // 停止時に src を外したときは無視
+    const code = audio.error && audio.error.code;
+    plog(`再生エラー code=${code}`);
+    // 本当に読めない・デコードできない場合だけ次へ送る。
+    // 差し替えの一瞬に出る空振りのエラーで曲を飛ばさないようにする。
+    if (code !== 3 && code !== 4) return;
     const t = currentTrack();
     toast(t ? `「${t.title}」は再生できませんでした` : 'この曲は再生できませんでした');
-    skipAfterFailure(); // 壊れた曲でキューを止めない
+    skipAfterFailure();
   });
 
   P.onChange((type) => {
     if (type === 'sleep') syncControls();
     if (type === 'unplug') toast('イヤホンが外れたので止めました');
+    if (type === 'unplug') plog('イヤホン判定で停止した');
   });
 
   window.addEventListener('online', () => toast('オンラインになりました', 1400));
@@ -3083,7 +3146,7 @@ async function init() {
   P.setVolume(db.setting('volume', 1));
   $('#vol').value = Math.round(db.setting('volume', 1) * 100);
   if (db.setting('eqOn', false)) P.setEqEnabled(true);
-  P.setupUnplugGuard(() => db.setting('unplug', 'pause'));
+  P.setupUnplugGuard(() => db.setting('unplug', 'pause'), plog);
 
   // 起動時に開くタブが非表示設定になっていたら、先頭の表示タブを開く
   const vis = visibleTabs();
