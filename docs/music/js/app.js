@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -353,10 +353,6 @@ function folderNameParts(folder) {
   return { name, parent: parts.join('/') };
 }
 
-function folderLabel(g) {
-  return g.key === NONE_FOLDER ? '未分類' : folderNameParts(g.folder).name;
-}
-
 /* ---- 1曲が複数のフォルダに属せるようにするための小さな道具 ----
    同じ曲を複数のフォルダから取り込んだとき（被り曲として弾く代わりに）曲を1つに保ちつつ
    フォルダだけ複数持たせる。t.folder / t.folderKey は「先頭の1件」を指す形のまま残し、
@@ -406,6 +402,103 @@ function groupFolders(tracks = state.tracks) {
   // フルパス昇順。未分類は最後。
   list.sort((a, b) => (a.key === NONE_FOLDER ? 1 : b.key === NONE_FOLDER ? -1 : jcmp(a.folder, b.folder)));
   return list;
+}
+
+/* ============================ フォルダの階層表示 ============================
+   フォルダのフルパス（"/" 区切り）をそのまま木として辿れるようにする。
+   データの持ち方（t.folders の配列）は変えず、表示のときだけ木として解釈する。 */
+
+// groupFolders() から未分類を除いた「実フォルダ」だけの一覧（キーは常にフルパス文字列）
+function buildFolderGroups(tracks = state.tracks) {
+  return groupFolders(tracks).filter((g) => g.key !== NONE_FOLDER);
+}
+
+// 複数フォルダの実パスに共通する先頭セグメントを返す。
+// どの実フォルダも空文字にならないよう、全部が一致してもフォルダ自身の深さの1つ手前で止める。
+function commonFolderPrefixSegs(paths) {
+  if (!paths.length) return [];
+  const segLists = paths.map((p) => String(p).split('/').filter(Boolean));
+  const minLen = Math.min(...segLists.map((s) => s.length));
+  let n = 0;
+  while (n < minLen && segLists.every((s) => s[n] === segLists[0][n])) n++;
+  if (n >= minLen) n = minLen - 1;
+  return segLists[0].slice(0, n);
+}
+
+// フォルダタブの最初の画面に出す「見えない根っこ」のパス。共通の先頭部分をここに吸収する。
+function folderRootPath(tracks = state.tracks) {
+  const groups = buildFolderGroups(tracks);
+  return commonFolderPrefixSegs(groups.map((g) => g.folder)).join('/');
+}
+
+// 一覧に出すときの見え方に合わせて、共通の先頭部分を落としたパスにする。
+// （フォルダタブが "English" と出しているものを、ダイアログでは "SD/Music/English" と
+//   呼んでいると別物に見えてしまうので、表示は揃えておく）
+function folderDisplayPath(path, tracks = state.tracks) {
+  const root = folderRootPath(tracks);
+  if (root && path.startsWith(root + '/')) return path.slice(root.length + 1);
+  return path;
+}
+
+// 与えたグループ配列（buildFolderGroups の結果）から、重複を除いた曲だけを取り出す
+function uniqueTracksFromGroups(groups) {
+  const seen = new Set();
+  const result = [];
+  for (const g of groups) for (const t of g.tracks) { if (!seen.has(t.id)) { seen.add(t.id); result.push(t); } }
+  return result;
+}
+
+// path 直下の子フォルダ一覧。子ごとに「子フォルダの数」と「配下すべて（孫を含む）のユニークな曲」を添える。
+// path === '' のときは根っこ（folderRootPath の返り値）として扱う。
+function folderChildNames(path, groups) {
+  const prefix = path ? path + '/' : '';
+  const names = []; // 一度出てきた順に集めて、最後に名前順へ並べ替える
+  const seen = new Set();
+  for (const g of groups) {
+    const f = g.folder;
+    if (f === path) continue; // 直下の曲。子フォルダではない
+    if (path && !f.startsWith(prefix)) continue;
+    const rest = path ? f.slice(prefix.length) : f;
+    const name = rest.split('/')[0];
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  names.sort(jcmp);
+  return names;
+}
+
+function folderChildren(path, groups) {
+  return folderChildNames(path, groups).map((name) => {
+    const childPath = path ? `${path}/${name}` : name;
+    return {
+      name,
+      path: childPath,
+      // 孫より下まで数えに行かないよう、子の数は名前だけ数える
+      childCount: folderChildNames(childPath, groups).length,
+      tracks: folderSubtreeTracks(childPath, groups),
+    };
+  });
+}
+
+// path 自身に属す曲だけ（子フォルダの曲は含まない）
+function folderDirectTracks(path, groups) {
+  const g = groups.find((x) => x.folder === path);
+  return g ? g.tracks : [];
+}
+
+// path とその配下すべての曲（子フォルダの中身も含む・重複なし）。
+// フォルダパス順（直下→子フォルダ名順）に並ぶ。
+function folderSubtreeTracks(path, groups) {
+  if (!path) return [];
+  const prefix = path + '/';
+  const sub = groups.filter((g) => g.folder === path || g.folder.startsWith(prefix));
+  return uniqueTracksFromGroups(sub);
+}
+
+// folder が key 自身か、key の配下（子孫）かどうか
+function folderIsUnder(folder, key) {
+  return folder === key || folder.startsWith(key + '/');
 }
 
 function builtinPlaylist(key) {
@@ -703,10 +796,26 @@ function renderArtists() {
   );
 }
 
+// フォルダ1行分のHTML。none:true のとき「未分類」行、それ以外は階層上の1ノード
+// （{ name, path, childCount, tracks }。key は path、無ければ NONE_FOLDER を使う）。
+function folderRowHTML(g) {
+  const key = g.none ? NONE_FOLDER : g.path;
+  const sub = g.none ? `${g.tracks.length}曲` : [g.childCount ? `子フォルダ${g.childCount}個` : '', `${g.tracks.length}曲`].filter(Boolean).join(' · ');
+  return `<div class="row" data-act="folder" data-key="${esc(key)}" data-id="${esc(key)}">
+    <div class="chk"><svg><use href="#i-check"/></svg></div>
+    <div class="txt"><div class="t">${esc(g.name)}</div><div class="s">${esc(sub)}</div></div>
+    <button class="icon" data-act="foldermenu" data-key="${esc(key)}"><svg><use href="#i-more"/></svg></button>
+  </div>`;
+}
+
 function renderFolders() {
-  const groups = groupFolders(filtered());
-  const real = groups.filter((g) => g.key !== NONE_FOLDER);
-  if (!real.length) {
+  const list = filtered();
+  const groups = buildFolderGroups(list);
+  const noneGroup = groupFolders(list).find((g) => g.key === NONE_FOLDER);
+  const rootPath = folderRootPath(list);
+  const children = folderChildren(rootPath, groups);
+  const noneTracks = noneGroup ? noneGroup.tracks : [];
+  if (!children.length && !noneTracks.length) {
     view.innerHTML = emptyState(
       state.query
         ? '見つかりませんでした'
@@ -714,24 +823,11 @@ function renderFolders() {
     );
     return;
   }
+  const rows = children.slice();
+  if (noneTracks.length) rows.push({ name: '未分類', childCount: 0, tracks: noneTracks, none: true });
   const box = document.createElement('div');
   view.appendChild(box);
-  mountChunked(box, groups, (g) => {
-    if (g.key === NONE_FOLDER) {
-      return `<div class="row" data-act="folder" data-key="${NONE_FOLDER}" data-id="${NONE_FOLDER}">
-        <div class="chk"><svg><use href="#i-check"/></svg></div>
-        <div class="txt"><div class="t">未分類</div><div class="s">${g.tracks.length}曲</div></div>
-        <button class="icon" data-act="foldermenu" data-key="${NONE_FOLDER}"><svg><use href="#i-more"/></svg></button>
-      </div>`;
-    }
-    const { name, parent } = folderNameParts(g.folder);
-    const sub = [parent, `${g.tracks.length}曲`].filter(Boolean).join(' · ');
-    return `<div class="row" data-act="folder" data-key="${esc(g.key)}" data-id="${esc(g.key)}">
-      <div class="chk"><svg><use href="#i-check"/></svg></div>
-      <div class="txt"><div class="t">${esc(name)}</div><div class="s">${esc(sub)}</div></div>
-      <button class="icon" data-act="foldermenu" data-key="${esc(g.key)}"><svg><use href="#i-more"/></svg></button>
-    </div>`;
-  }, 120, syncSelectUI);
+  mountChunked(box, rows, (g) => folderRowHTML(g), 120, syncSelectUI);
 }
 
 function renderFavorites() {
@@ -827,21 +923,47 @@ function renderArtistDetail(key) {
 }
 
 function renderFolderDetail(key) {
-  const g = groupFolders().find((x) => x.key === key);
-  if (!g) return (view.innerHTML = emptyState('フォルダが見つかりません'));
-  $('#mainTitle').textContent = folderLabel(g);
-  const total = g.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+  if (key === NONE_FOLDER) {
+    const g = groupFolders().find((x) => x.key === NONE_FOLDER);
+    if (!g) return (view.innerHTML = emptyState('フォルダが見つかりません'));
+    $('#mainTitle').textContent = '未分類';
+    const total = g.tracks.reduce((s, t) => s + (t.duration || 0), 0);
+    const st = getSortState('folder', key);
+    const tracks = sortTracks(g.tracks, st.by, st.desc);
+    view.innerHTML = `
+      <div class="detail-actions" style="padding:14px">
+        <button class="btn primary" data-act="playall">再生</button>
+        <button class="btn" data-act="shuffleall">シャッフル</button>
+        <button class="btn" data-act="sort" data-screen="folder" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
+        ${g.tracks.length ? `<button class="btn" data-act="folderAlbum" data-key="${esc(key)}">このフォルダをアルバムにする</button>` : ''}
+        <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲 · ${fmtLong(total)}</span>
+      </div>
+      ${tracks.length ? tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
+    view.dataset.ctx = JSON.stringify({ type: 'folder', key });
+    return;
+  }
+
+  const groups = buildFolderGroups();
+  if (!groups.some((g) => folderIsUnder(g.folder, key))) return (view.innerHTML = emptyState('フォルダが見つかりません'));
+  const { name } = folderNameParts(key);
+  $('#mainTitle').textContent = name;
+  const children = folderChildren(key, groups);
+  const directTracks = folderDirectTracks(key, groups);
+  const subtree = folderSubtreeTracks(key, groups);
   const st = getSortState('folder', key);
-  const tracks = sortTracks(g.tracks, st.by, st.desc);
-  view.innerHTML = `
+  const sortedDirect = sortTracks(directTracks, st.by, st.desc);
+  const total = subtree.reduce((s, t) => s + (t.duration || 0), 0);
+  let html = `
     <div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
       <button class="btn" data-act="sort" data-screen="folder" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
-      ${g.tracks.length ? `<button class="btn" data-act="folderAlbum" data-key="${esc(key)}">このフォルダをアルバムにする</button>` : ''}
-      <span class="muted" style="align-self:center;font-size:12px">${g.tracks.length}曲 · ${fmtLong(total)}</span>
-    </div>
-    ${tracks.length ? tracks.map((t, i) => songRowHTML(t, i)).join('') : emptyState('曲がありません')}`;
+      ${subtree.length ? `<button class="btn" data-act="folderAlbum" data-key="${esc(key)}">このフォルダをアルバムにする</button>` : ''}
+      <span class="muted" style="align-self:center;font-size:12px">${subtree.length}曲 · ${fmtLong(total)}</span>
+    </div>`;
+  if (children.length) html += `<div class="sectitle">フォルダ</div>` + children.map((g) => folderRowHTML(g)).join('');
+  html += `<div class="sectitle">曲</div>` + (sortedDirect.length ? sortedDirect.map((t, i) => songRowHTML(t, i)).join('') : emptyState('このフォルダに直接ある曲はありません'));
+  view.innerHTML = html;
   view.dataset.ctx = JSON.stringify({ type: 'folder', key });
 }
 
@@ -884,10 +1006,14 @@ function currentListTracks() {
     return { tracks: sortTracks(g.tracks, st.by, st.desc), label: g.name };
   }
   if (r.name === 'folder') {
-    const g = groupFolders().find((x) => x.key === r.key);
-    if (!g) return { tracks: [], label: '' };
     const st = getSortState('folder', r.key);
-    return { tracks: sortTracks(g.tracks, st.by, st.desc), label: folderLabel(g) };
+    if (r.key === NONE_FOLDER) {
+      const g = groupFolders().find((x) => x.key === NONE_FOLDER);
+      if (!g) return { tracks: [], label: '' };
+      return { tracks: sortTracks(g.tracks, st.by, st.desc), label: '未分類' };
+    }
+    const subtree = folderSubtreeTracks(r.key, buildFolderGroups());
+    return { tracks: sortTracks(subtree, st.by, st.desc), label: folderNameParts(r.key).name };
   }
   if (r.name === 'playlist') {
     const b = builtinPlaylist(r.key);
@@ -1497,81 +1623,147 @@ function chooseAlbumDialog(ids, { title = 'アルバムにまとめる', exclude
 }
 
 async function folderToAlbum(folderKey) {
-  const g = groupFolders().find((x) => x.key === folderKey);
-  if (!g || !g.tracks.length) return;
-  const initial = g.key === NONE_FOLDER ? '' : folderNameParts(g.folder).name;
+  let tracks, initial;
+  if (folderKey === NONE_FOLDER) {
+    const g = groupFolders().find((x) => x.key === NONE_FOLDER);
+    tracks = g ? g.tracks : [];
+    initial = '';
+  } else {
+    tracks = folderSubtreeTracks(folderKey, buildFolderGroups());
+    initial = folderNameParts(folderKey).name;
+  }
+  if (!tracks.length) return;
   const name = await promptDialog('アルバム名', initial, '例）青の記録');
   if (!name) return;
-  await runMoveToAlbum(g.tracks.map((t) => t.id), name, undefined);
+  await runMoveToAlbum(tracks.map((t) => t.id), name, undefined);
 }
 
 function folderMenu(key) {
-  const g = groupFolders().find((x) => x.key === key);
-  if (!g) return;
-  menuDialog(folderLabel(g), [
+  if (key === NONE_FOLDER) {
+    const g = groupFolders().find((x) => x.key === NONE_FOLDER);
+    if (!g) return;
+    menuDialog('未分類', [
+      { label: '選択する', run: () => enterSelectMode(key, 'folder') },
+      { label: 'プレイリストに追加', icon: 'plus', run: () => addToPlaylistDialog(g.tracks.map((t) => t.id)) },
+      ...(g.tracks.length ? [{ label: 'アルバムにする', icon: 'note', run: () => folderToAlbum(key) }] : []),
+    ]);
+    return;
+  }
+  const groups = buildFolderGroups();
+  if (!groups.some((g) => folderIsUnder(g.folder, key))) return;
+  const tracks = folderSubtreeTracks(key, groups);
+  const { name } = folderNameParts(key);
+  menuDialog(name, [
     { label: '選択する', run: () => enterSelectMode(key, 'folder') },
-    { label: 'プレイリストに追加', icon: 'plus', run: () => addToPlaylistDialog(g.tracks.map((t) => t.id)) },
-    ...(g.tracks.length ? [{ label: 'アルバムにする', icon: 'note', run: () => folderToAlbum(key) }] : []),
+    { label: 'プレイリストに追加', icon: 'plus', run: () => addToPlaylistDialog(tracks.map((t) => t.id)) },
+    ...(tracks.length ? [{ label: 'アルバムにする', icon: 'note', run: () => folderToAlbum(key) }] : []),
   ]);
 }
 
-// 複数フォルダの曲を1本にまとめる。選んだフォルダIDから曲一覧をまとめて取り出す。
+// 選んだフォルダ（複数可）の配下すべての曲をまとめて取り出す（重複なし）。
 function folderTracksFromKeys(keys) {
-  const set = new Set(keys);
-  const tracks = [];
-  for (const g of groupFolders()) {
-    if (set.has(g.key)) tracks.push(...g.tracks);
+  const groups = buildFolderGroups();
+  const noneGroup = keys.includes(NONE_FOLDER) ? groupFolders().find((g) => g.key === NONE_FOLDER) : null;
+  const seen = new Set();
+  const result = [];
+  const add = (list) => {
+    for (const t of list) { if (!seen.has(t.id)) { seen.add(t.id); result.push(t); } }
+  };
+  for (const key of keys) {
+    if (key === NONE_FOLDER) continue;
+    add(folderSubtreeTracks(key, groups));
   }
-  return tracks;
+  if (noneGroup) add(noneGroup.tracks);
+  return result;
 }
 
-// 選んだフォルダの分だけを新しい名前に差し替えて1つのフォルダにまとめる。
-// その曲が他にも持っているフォルダ（複数所属）は差し替えず残す。
-async function mergeFoldersInto(keys, folderName) {
-  const name = String(folderName || '').trim();
+// 選んだフォルダ（複数可・配下も含む）を親の下にまとめる。
+// nested=true（既定）: 選んだフォルダの末尾の名前を残したまま、親の子として入れ子にする（例: English/Vocaloid）。
+//   選んだフォルダの配下（孫フォルダ）もそのまま構造を保って一緒に移る（例: English/Vocaloid/Old）。
+// nested=false: 中身を混ぜて、対象の曲をすべて親フォルダ直下にする（元の名前は残らない）。
+// その曲が他にも持っているフォルダ（複数所属）は setFolders で選んだ分だけ差し替え、他は壊さない。
+async function mergeFoldersInto(keys, parentName, nested = true) {
+  const name = String(parentName || '').trim();
   if (!name) return null;
-  const keySet = new Set(keys);
+  const realKeys = keys.filter((k) => k !== NONE_FOLDER);
+  const noneSelected = keys.includes(NONE_FOLDER);
   const tracks = folderTracksFromKeys(keys);
   if (!tracks.length) return null;
+
+  // f（曲が持つフォルダの1つ）が選んだキーのどれかの配下（自身を含む）にあれば、その新しい行き先を返す。
+  // 無関係なら null（差し替えない）。
+  const targetFor = (f) => {
+    const k = realKeys.find((k) => folderIsUnder(f, k));
+    if (!k) return null;
+    if (!nested) return name;
+    const leaf = folderNameParts(k).name;
+    const rest = f === k ? '' : f.slice(k.length + 1);
+    return rest ? `${name}/${leaf}/${rest}` : `${name}/${leaf}`;
+  };
+
   for (const t of tracks) {
     const cur = foldersOf(t);
-    const matched = cur.some((f) => keySet.has(norm(f)));
-    // 未分類（フォルダなし）から選ばれた曲は、置き換える対象が無いので単に新しい名前を足す
-    const newList = matched ? cur.map((f) => (keySet.has(norm(f)) ? name : f)) : [...cur, name];
+    let changed = false;
+    let newList = cur.map((f) => {
+      const to = targetFor(f);
+      if (to === null) return f;
+      changed = true;
+      return to;
+    });
+    if (!cur.length && noneSelected) {
+      // 未分類（フォルダなし）から選ばれた曲は、置き換える対象が無いので新しい名前を足す
+      newList = [name];
+      changed = true;
+    }
+    if (!changed) continue;
     setFolders(t, newList);
     await db.put('tracks', t);
   }
   await loadLibrary();
   render();
-  return { name, count: tracks.length };
+  return { name, count: tracks.length, nested };
 }
 
-async function runMergeFolders(keys, folderName) {
-  const res = await mergeFoldersInto(keys, folderName);
+async function runMergeFolders(keys, folderName, nested = true) {
+  const res = await mergeFoldersInto(keys, folderName, nested);
   if (!res) return;
   exitSelectMode();
-  toast(`${res.count}曲を「${res.name}」にまとめました`);
+  const shown = folderDisplayPath(res.name);
+  toast(nested ? `${res.count}曲を「${shown}」の下にまとめました` : `${res.count}曲を「${shown}」にまとめました`);
+}
+
+// 入れ子にするか、中身を混ぜるかを選ばせる小さな確認ダイアログ。
+function askMergeMode(keys, name) {
+  menuDialog(`「${folderDisplayPath(name)}」にまとめる`, [
+    { label: '入れ子にする（元のフォルダ名を残す）', sel: true, run: () => runMergeFolders(keys, name, true) },
+    { label: '中身を混ぜてまとめる（フォルダ名は残らない）', run: () => runMergeFolders(keys, name, false) },
+  ]);
 }
 
 // 「1つのフォルダにまとめる」ダイアログ。既存フォルダから選ぶか、新しい名前を入力する。
+// 選んだ後、入れ子にするか中身を混ぜるかを askMergeMode で確認する。
 function mergeFoldersDialog(keys) {
-  const selected = new Set(keys);
-  const selectedGroups = groupFolders().filter((g) => selected.has(g.key));
-  const firstNamed = selectedGroups.find((g) => g.key !== NONE_FOLDER);
-  const others = groupFolders().filter((g) => g.key !== NONE_FOLDER && !selected.has(g.key));
+  const groups = buildFolderGroups();
+  const realKeys = keys.filter((k) => k !== NONE_FOLDER);
+  const selectedGroups = groups.filter((g) => realKeys.includes(g.folder));
+  const firstNamed = selectedGroups[0];
+  // 統合先の候補から、選んだフォルダ自身とその配下（自分の子に自分を入れることになる）は外す
+  const others = groups.filter((g) => !realKeys.some((k) => folderIsUnder(g.folder, k)));
   const opts = [
     {
-      label: '＋ 新しいフォルダ名を入力',
+      label: '新しいフォルダ名を入力',
       icon: 'plus',
       run: async () => {
         const name = await promptDialog('フォルダ名', firstNamed ? folderNameParts(firstNamed.folder).name : '', '例）お気に入り');
         if (!name) return;
-        await runMergeFolders(keys, name);
+        // promptDialog を閉じた直後の history.back() とダイアログの再オープンが競合しないよう、
+        // 一呼吸置いてから次のダイアログを開く（menuDialog 自身のクリック処理と同じ考え方）
+        setTimeout(() => askMergeMode(keys, name), 60);
       },
     },
     ...others.map((g) => ({
-      label: `${folderLabel(g)}（${g.tracks.length}曲）`,
-      run: () => runMergeFolders(keys, g.folder),
+      label: `${folderDisplayPath(g.folder)}（${g.tracks.length}曲）`,
+      run: () => askMergeMode(keys, g.folder),
     })),
   ];
   menuDialog('1つのフォルダにまとめる', opts);
@@ -1580,24 +1772,23 @@ function mergeFoldersDialog(keys) {
 async function folderSelectionToAlbumDialog(keys) {
   const tracks = folderTracksFromKeys(keys);
   if (!tracks.length) return;
-  const groups = groupFolders().filter((g) => keys.includes(g.key));
-  const firstNamed = groups.find((g) => g.key !== NONE_FOLDER);
-  const initial = firstNamed ? folderNameParts(firstNamed.folder).name : '';
+  const realKeys = keys.filter((k) => k !== NONE_FOLDER);
+  const initial = realKeys.length ? folderNameParts(realKeys[0]).name : '';
   const name = await promptDialog('アルバム名', initial, '例）青の記録');
   if (!name) return;
   await runMoveToAlbum(tracks.map((t) => t.id), name, undefined);
 }
 
-// 選んだフォルダを削除する。曲がそのフォルダにしか属していなければ曲ごと削除するが、
-// 他のフォルダにも属している曲は消さず、選んだフォルダから外すだけにする。
+// 選んだフォルダ（配下の子フォルダも含む）を削除する。曲がそのフォルダにしか属していなければ
+// 曲ごと削除するが、他のフォルダにも属している曲は消さず、選んだフォルダから外すだけにする。
 async function folderDeleteSelection(keys) {
-  const keySet = new Set(keys);
+  const realKeys = keys.filter((k) => k !== NONE_FOLDER);
   const tracks = folderTracksFromKeys(keys);
   if (!tracks.length) return;
   const toDelete = [];
   const toUnlink = []; // { t, remaining }
   for (const t of tracks) {
-    const remaining = foldersOf(t).filter((f) => !keySet.has(norm(f)));
+    const remaining = foldersOf(t).filter((f) => !realKeys.some((k) => folderIsUnder(f, k)));
     if (remaining.length) toUnlink.push({ t, remaining });
     else toDelete.push(t);
   }
@@ -2918,8 +3109,9 @@ function wire() {
   $('#btnSelClose').onclick = () => exitSelectMode();
   $('#btnSelAll').onclick = () => {
     if (state.selectKind === 'folder') {
-      const groups = groupFolders(filtered());
-      state.selected = new Set(groups.map((g) => g.key));
+      // 階層のどの深さで選択モードに入っても、いま画面に出ているフォルダ行だけを全選択する
+      const keys = [...document.querySelectorAll('#view .row[data-act="folder"][data-id]')].map((r) => r.dataset.id);
+      state.selected = new Set(keys);
     } else {
       const { tracks } = currentListTracks();
       state.selected = new Set(tracks.map((t) => t.id));
@@ -2964,7 +3156,8 @@ function wire() {
     const act = n.dataset.act;
     if (act === 'play') {
       if (lp.suppressClick) { lp.suppressClick = false; return; } // 長押しで選択モードに入った直後のクリックは無視
-      if (state.selectMode && state.selectKind !== 'folder') { toggleSelect(n.dataset.id); return; }
+      // フォルダ詳細では子フォルダ行と曲行が同じ画面に混ざるので、フォルダを選択中は曲行に反応しない
+      if (state.selectMode) { if (state.selectKind !== 'folder') toggleSelect(n.dataset.id); return; }
       const { tracks, label } = currentListTracks();
       const i = tracks.findIndex((t) => t.id === n.dataset.id);
       playContext(tracks, i < 0 ? 0 : i, label);
@@ -2973,7 +3166,8 @@ function wire() {
     else if (act === 'artist') pushRoute({ name: 'artist', key: n.dataset.key });
     else if (act === 'folder') {
       if (lp.suppressClick) { lp.suppressClick = false; return; }
-      if (state.selectMode && state.selectKind === 'folder') { toggleSelect(n.dataset.key); return; }
+      // 曲を選択中のときは、混ざって出ているフォルダ行のタップでは移動しない
+      if (state.selectMode) { if (state.selectKind === 'folder') toggleSelect(n.dataset.key); return; }
       pushRoute({ name: 'folder', key: n.dataset.key });
     }
     else if (act === 'foldermenu') folderMenu(n.dataset.key);
