@@ -342,7 +342,7 @@ function filtered() {
   const q = norm(state.query);
   if (!q) return state.tracks;
   return state.tracks.filter(
-    (t) => norm(t.title).includes(q) || norm(t.artist).includes(q) || norm(t.album).includes(q) || norm(t.folder || '').includes(q)
+    (t) => norm(t.title).includes(q) || norm(t.artist).includes(q) || norm(t.album).includes(q) || foldersOf(t).some((f) => norm(f).includes(q))
   );
 }
 
@@ -357,14 +357,49 @@ function folderLabel(g) {
   return g.key === NONE_FOLDER ? '未分類' : folderNameParts(g.folder).name;
 }
 
-// フォルダごとに曲をまとめる。既存トラックには folder が無いことがあるので t.folder || '' で扱う
+/* ---- 1曲が複数のフォルダに属せるようにするための小さな道具 ----
+   同じ曲を複数のフォルダから取り込んだとき（被り曲として弾く代わりに）曲を1つに保ちつつ
+   フォルダだけ複数持たせる。t.folder / t.folderKey は「先頭の1件」を指す形のまま残し、
+   folders を持たない既存の曲データもそのまま動くようにする。 */
+function foldersOf(t) {
+  if (Array.isArray(t.folders) && t.folders.length) return t.folders;
+  if (t.folder) return [t.folder];
+  return [];
+}
+
+function setFolders(t, list) {
+  const seen = new Set();
+  const clean = [];
+  for (const f of list) {
+    const s = String(f || '').trim();
+    if (!s) continue;
+    const k = norm(s);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    clean.push(s);
+  }
+  t.folders = clean;
+  t.folder = clean[0] || '';
+  t.folderKey = norm(t.folder);
+  return t;
+}
+
+// フォルダごとに曲をまとめる。1曲が複数のフォルダに属していれば、その全部に出す。
+// フォルダを持たない曲（foldersOf が空）だけ「未分類」にまとめる。
 function groupFolders(tracks = state.tracks) {
   const m = new Map();
   for (const t of tracks) {
-    const folder = t.folder || '';
-    const key = folder ? t.folderKey || norm(folder) : NONE_FOLDER;
-    if (!m.has(key)) m.set(key, { key, folder, tracks: [] });
-    m.get(key).tracks.push(t);
+    const folders = foldersOf(t);
+    if (!folders.length) {
+      if (!m.has(NONE_FOLDER)) m.set(NONE_FOLDER, { key: NONE_FOLDER, folder: '', tracks: [] });
+      m.get(NONE_FOLDER).tracks.push(t);
+      continue;
+    }
+    for (const folder of folders) {
+      const key = norm(folder);
+      if (!m.has(key)) m.set(key, { key, folder, tracks: [] });
+      m.get(key).tracks.push(t);
+    }
   }
   const list = [...m.values()];
   list.forEach((g) => g.tracks.sort((a, b) => String(a.fileName || '').localeCompare(String(b.fileName || ''), 'ja', { numeric: true })));
@@ -1290,11 +1325,13 @@ async function toggleFav(t) {
 }
 
 function trackInfo(t) {
+  const folders = foldersOf(t);
   const rows = [
     ['曲名', t.title],
     ['アーティスト', t.artist || '—'],
     ['アルバム', t.album || '—'],
     ['年', t.year || '—'],
+    ['フォルダ', folders.length ? folders.join('\n') : '—'],
     ['長さ', fmtTime(t.duration || 0)],
     ['サイズ', fmtSize(t.size)],
     ['形式', t.mime || '—'],
@@ -1304,15 +1341,16 @@ function trackInfo(t) {
   ];
   openDialog(
     `<h3>曲の情報</h3><div class="pad" style="font-size:13px;line-height:2">` +
-      rows.map(([k, v]) => `<div style="display:flex;gap:10px"><span class="muted" style="width:6.5em;flex:none">${k}</span><span style="word-break:break-all">${esc(v)}</span></div>`).join('') +
+      rows.map(([k, v]) => `<div style="display:flex;gap:10px"><span class="muted" style="width:6.5em;flex:none">${k}</span><span style="word-break:break-all;white-space:pre-line">${esc(v)}</span></div>`).join('') +
       `</div><div class="actions"><button class="btn full" id="ic">閉じる</button></div>`,
     (root) => ($('#ic', root).onclick = closeDialog)
   );
 }
 
-async function deleteTracks(ids, name) {
-  const ok = await confirmDialog(ids.length === 1 ? `「${name}」を端末から削除しますか？` : `${ids.length}曲を端末から削除しますか？`, '削除', true);
-  if (!ok) return;
+// 実際の削除処理（確認ダイアログは呼び出し側で済ませておくこと）。
+// キュー・シャッフル前配列・プレイリストからも取り除いた上でライブラリを読み直す。
+async function deleteTracksConfirmed(ids) {
+  if (!ids.length) return;
   await db.deleteTracks(ids);
   const set = new Set(ids);
   if (set.has(state.queue[state.qi])) audio.pause();
@@ -1325,6 +1363,12 @@ async function deleteTracks(ids, name) {
   }
   await loadLibrary();
   render();
+}
+
+async function deleteTracks(ids, name) {
+  const ok = await confirmDialog(ids.length === 1 ? `「${name}」を端末から削除しますか？` : `${ids.length}曲を端末から削除しますか？`, '削除', true);
+  if (!ok) return;
+  await deleteTracksConfirmed(ids);
   toast('削除しました');
 }
 
@@ -1481,16 +1525,20 @@ function folderTracksFromKeys(keys) {
   return tracks;
 }
 
-// 選んだフォルダの全曲の folder/folderKey を書き換えて1つのフォルダにまとめる。
+// 選んだフォルダの分だけを新しい名前に差し替えて1つのフォルダにまとめる。
+// その曲が他にも持っているフォルダ（複数所属）は差し替えず残す。
 async function mergeFoldersInto(keys, folderName) {
   const name = String(folderName || '').trim();
   if (!name) return null;
+  const keySet = new Set(keys);
   const tracks = folderTracksFromKeys(keys);
   if (!tracks.length) return null;
-  const key = norm(name);
   for (const t of tracks) {
-    t.folder = name;
-    t.folderKey = key;
+    const cur = foldersOf(t);
+    const matched = cur.some((f) => keySet.has(norm(f)));
+    // 未分類（フォルダなし）から選ばれた曲は、置き換える対象が無いので単に新しい名前を足す
+    const newList = matched ? cur.map((f) => (keySet.has(norm(f)) ? name : f)) : [...cur, name];
+    setFolders(t, newList);
     await db.put('tracks', t);
   }
   await loadLibrary();
@@ -1538,6 +1586,45 @@ async function folderSelectionToAlbumDialog(keys) {
   const name = await promptDialog('アルバム名', initial, '例）青の記録');
   if (!name) return;
   await runMoveToAlbum(tracks.map((t) => t.id), name, undefined);
+}
+
+// 選んだフォルダを削除する。曲がそのフォルダにしか属していなければ曲ごと削除するが、
+// 他のフォルダにも属している曲は消さず、選んだフォルダから外すだけにする。
+async function folderDeleteSelection(keys) {
+  const keySet = new Set(keys);
+  const tracks = folderTracksFromKeys(keys);
+  if (!tracks.length) return;
+  const toDelete = [];
+  const toUnlink = []; // { t, remaining }
+  for (const t of tracks) {
+    const remaining = foldersOf(t).filter((f) => !keySet.has(norm(f)));
+    if (remaining.length) toUnlink.push({ t, remaining });
+    else toDelete.push(t);
+  }
+  let msg;
+  if (toDelete.length && toUnlink.length) msg = `${toDelete.length}曲を削除し、${toUnlink.length}曲はフォルダから外します`;
+  else if (toDelete.length) msg = `${toDelete.length}曲を端末から削除しますか？`;
+  else msg = `${toUnlink.length}曲を、このフォルダから外します`;
+  const ok = await confirmDialog(msg, toDelete.length ? '削除' : '外す', !!toDelete.length);
+  if (!ok) return;
+
+  for (const { t, remaining } of toUnlink) {
+    setFolders(t, remaining);
+    await db.put('tracks', t);
+  }
+  if (toDelete.length) await deleteTracksConfirmed(toDelete.map((t) => t.id));
+  else {
+    await loadLibrary();
+    render();
+  }
+  toast(
+    toDelete.length && toUnlink.length
+      ? `${toDelete.length}曲を削除し、${toUnlink.length}曲をフォルダから外しました`
+      : toDelete.length
+      ? '削除しました'
+      : 'フォルダから外しました'
+  );
+  exitSelectMode();
 }
 
 async function moveTracksArtist(ids, name) {
@@ -1782,27 +1869,29 @@ async function sigOfTrack(t, runFiles) {
   }
 }
 
-// 取り込み中に使う索引をまとめて作る
+// 取り込み中に使う索引をまとめて作る。被り曲を検出したとき「どの曲の被りか」を
+// 引けるよう、値は曲そのもの（配列・Map）を持たせる。
 function buildDupIndex(tracks) {
-  const byMeta = new Map(); // 「曲名|アーティスト」→ 長さの一覧
+  const byMeta = new Map(); // 「曲名|アーティスト」→ 曲の一覧（長さで絞り込む）
   const bySize = new Map(); // サイズ → その大きさの曲
-  const sigs = new Set();
+  const sigs = new Map(); // 指紋 → 曲
   for (const t of tracks) {
     const mk = metaKeyOf(t);
     if (!byMeta.has(mk)) byMeta.set(mk, []);
-    byMeta.get(mk).push(t.duration || 0);
+    byMeta.get(mk).push(t);
     if (t.size) {
       if (!bySize.has(t.size)) bySize.set(t.size, []);
       bySize.get(t.size).push(t);
     }
-    if (t.sig) sigs.add(t.sig);
+    if (t.sig) sigs.set(t.sig, t);
   }
   return { byMeta, bySize, sigs };
 }
 
-// 長さは端末やタグの違いで数秒ずれることがあるので、少し幅を持たせる
-function sameSong(durations, d) {
-  return durations.some((x) => Math.abs((x || 0) - (d || 0)) <= 2);
+// 長さは端末やタグの違いで数秒ずれることがあるので、少し幅を持たせる。
+// 見つかった曲（無ければ null）を返す。
+function findSameSongTrack(tracks, d) {
+  return tracks.find((x) => Math.abs((x.duration || 0) - (d || 0)) <= 2) || null;
 }
 
 // 取り込みは SD の曲を端末内にコピーするので、ライブラリが大きいと保存上限に当たる。
@@ -1823,10 +1912,26 @@ async function confirmEnoughSpace(list) {
 async function importFilesInner(list, source) {
   const startCount = state.tracks.length; // 実際に増えた曲数は、最後に数え直して求める
   const known = new Set(state.tracks.map((t) => t.fp));
+  const fpIndex = new Map(state.tracks.map((t) => [t.fp, t])); // fp → 曲（被り曲にフォルダを足すため）
   const dupSkip = db.setting('dupSkip', true); // 被り曲を自動で飛ばすか
   const dup = buildDupIndex(state.tracks);
   const runFiles = new Map(); // この取り込みで入れた曲の id → File（指紋を作るときの読み元）
   let dupped = 0;
+  // 被り曲として飛ばしたファイルにフォルダ情報があり、既存の曲がまだそのフォルダを
+  // 持っていなければ、曲を増やす代わりにそのフォルダを既存の曲へ足す（フォルダごと消える不具合の対策）。
+  let folderAdded = 0; // フォルダを足した件数（トーストに出す）
+  const touchedFolderTracks = new Map(); // id → 曲（フォルダを足したので、まとめて最後に保存する）
+  const pendingFolderByFp = new Map(); // fp → まだ曲オブジェクトが無いうちに来たフォルダの一覧（同時実行のすき間を埋める）
+  function addFolderIfMissing(target, relPath) {
+    if (!target) return;
+    const folder = folderOfPath(relPath || '');
+    if (!folder) return;
+    const cur = foldersOf(target);
+    if (cur.some((x) => norm(x) === norm(folder))) return; // 既に持っているフォルダなら何もしない
+    setFolders(target, [...cur, folder]);
+    touchedFolderTracks.set(target.id, target);
+    folderAdded++;
+  }
   // ジャケットの既存キーは取り込み開始時に1回だけまとめて取得しておく（1曲ごとに db.has() を呼ばない）
   const existingArt = new Set(await db.getAllKeys('art'));
   let added = 0,
@@ -1887,6 +1992,14 @@ async function importFilesInner(list, source) {
       const fp = f.driveId ? 'drive:' + f.driveId : fingerprint(f.name, f.size);
       if (known.has(fp)) {
         skipped++;
+        const target = fpIndex.get(fp);
+        if (target) addFolderIfMissing(target, f.webkitRelativePath || '');
+        else {
+          // 同じ fp の曲がこの取り込みの中で今まさに作られている途中（並行実行のすき間）。
+          // 曲オブジェクトができたときにまとめて足す。
+          if (!pendingFolderByFp.has(fp)) pendingFolderByFp.set(fp, []);
+          pendingFolderByFp.get(fp).push(f.webkitRelativePath || '');
+        }
         bump(f);
         continue;
       }
@@ -1900,8 +2013,10 @@ async function importFilesInner(list, source) {
           // 1) 曲名・アーティスト・長さがほぼ同じなら、同じ曲とみなす
           const mk = norm(tags.title || f.name) + '|' + norm(tags.artist || '');
           const seen = dup.byMeta.get(mk);
-          if (seen && sameSong(seen, duration)) {
+          const metaMatch = seen && findSameSongTrack(seen, duration);
+          if (metaMatch) {
             dupped++;
+            addFolderIfMissing(metaMatch, f.webkitRelativePath || '');
             bump(f);
             continue;
           }
@@ -1910,18 +2025,19 @@ async function importFilesInner(list, source) {
           if (sameSize && sameSize.length) {
             const sig = await contentSig(f);
             if (sig) {
-              let hit = dup.sigs.has(sig);
-              if (!hit) {
+              let match = dup.sigs.get(sig) || null;
+              if (!match) {
                 for (const other of sameSize) {
                   if ((await sigOfTrack(other, runFiles)) === sig) {
-                    dup.sigs.add(sig);
-                    hit = true;
+                    dup.sigs.set(sig, other);
+                    match = other;
                     break;
                   }
                 }
               }
-              if (hit) {
+              if (match) {
                 dupped++;
+                addFolderIfMissing(match, f.webkitRelativePath || '');
                 bump(f);
                 continue;
               }
@@ -1961,10 +2077,17 @@ async function importFilesInner(list, source) {
           // 同じ取り込みの中でも二重に入らないよう、その場で索引に足す
           const mk = metaKeyOf(track);
           if (!dup.byMeta.has(mk)) dup.byMeta.set(mk, []);
-          dup.byMeta.get(mk).push(track.duration || 0);
+          dup.byMeta.get(mk).push(track);
           if (!dup.bySize.has(track.size)) dup.bySize.set(track.size, []);
           dup.bySize.get(track.size).push(track);
           runFiles.set(track.id, f); // 同じサイズの曲が後から来たとき、ここから指紋を作る
+        }
+        // 同じ fp の曲を待っていた「同時実行のすき間」の分があれば、ここでフォルダを足す
+        fpIndex.set(track.fp, track);
+        const waitingFolders = pendingFolderByFp.get(track.fp);
+        if (waitingFolders) {
+          for (const relPath of waitingFolders) addFolderIfMissing(track, relPath);
+          pendingFolderByFp.delete(track.fp);
         }
         let artBlob = null;
         if (tags.picture && !existingArt.has(track.artId)) {
@@ -1991,6 +2114,17 @@ async function importFilesInner(list, source) {
   await flushChain;
   clearInterval(refreshRetryTimer);
 
+  // 被り曲にフォルダを足した分は、ここでまとめて保存する（同じ曲を複数回さわっても最終状態を1回で書く）
+  if (touchedFolderTracks.size) {
+    for (const t of touchedFolderTracks.values()) {
+      try {
+        await db.put('tracks', t);
+      } catch (e) {
+        console.error('フォルダの追加を保存できませんでした', e);
+      }
+    }
+  }
+
   hideImportBar();
   await loadLibrary(); // 取り込みが終わったところで一度だけ整合を取る
   render();
@@ -2007,6 +2141,7 @@ async function importFilesInner(list, source) {
     const notes = [];
     if (skipped) notes.push(`${skipped}曲は取り込み済み`);
     if (dupped) notes.push(`${dupped}曲は同じ曲のため飛ばしました`);
+    if (folderAdded) notes.push(`${folderAdded}曲に別のフォルダを追加`);
     summary = `${added}曲を追加${notes.length ? `（${notes.join('・')}）` : ''}`;
   }
 
@@ -2819,11 +2954,7 @@ function wire() {
     if (act === 'selFolderMerge') mergeFoldersDialog(keys);
     else if (act === 'selFolderAlbum') folderSelectionToAlbumDialog(keys);
     else if (act === 'selFolderPlaylist') addToPlaylistDialog(folderTracksFromKeys(keys).map((t) => t.id));
-    else if (act === 'selFolderDelete') {
-      const ids = folderTracksFromKeys(keys).map((t) => t.id);
-      if (!ids.length) return;
-      deleteTracks(ids, `${keys.length}個のフォルダ`).then(() => exitSelectMode());
-    }
+    else if (act === 'selFolderDelete') folderDeleteSelection(keys);
   });
 
   // 一覧のタップ
