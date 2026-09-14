@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -1070,6 +1070,7 @@ function playList(ids, index, label) {
    実機でだけ起きる停止の原因を後から追えるよう、直近の出来事を控えておく。
    設定の「再生の記録を見る」で読める。端末の中だけに置き、どこにも送らない。 */
 const playLog = [];
+let plogSaveTimer = 0;
 function plog(msg) {
   const t = new Date();
   const hh = String(t.getHours()).padStart(2, '0');
@@ -1077,10 +1078,44 @@ function plog(msg) {
   const ss = String(t.getSeconds()).padStart(2, '0');
   playLog.push(`${hh}:${mm}:${ss} ${msg}`);
   if (playLog.length > 80) playLog.shift();
+  // reload されても証拠が消えないよう、1秒だけまとめて設定に控えておく
+  clearTimeout(plogSaveTimer);
+  plogSaveTimer = setTimeout(() => {
+    db.setSetting('playLog', playLog.slice());
+  }, 1000);
+}
+
+// 「意図としては再生中である」フラグ。自分たちが止めたときや外部に止められたときは false にし、
+// 再生が始まったら true に戻す。watchdog はこれを見て「止まったまま」を検知する。
+let wantPlaying = false;
+// 直近で一時停止になった時刻。曲が付いたまま長く放置されているかどうかの判定に使う
+let lastPausedAt = 0;
+
+// 自分たちの都合で止めるときは、理由をログに残しつつ P.pauseWith を通す。
+// audio が既に一時停止中なら pause() は何もしない（'pause' イベントが飛ばない）ので、
+// その場合はここで直接ログに残し、理由を空に戻す（あとで来る無関係な pause に
+// この理由が誤って使われないように）。
+function pauseWith(reason) {
+  wantPlaying = false;
+  const alreadyPaused = audio.paused;
+  P.pauseWith(reason);
+  if (alreadyPaused) {
+    plog(`一時停止［${reason}］（既に停止中）`);
+    P.takePauseReason();
+  }
 }
 
 let nextPrefetch = null; // { id, blob }
 let skipStreak = 0; // 連続で再生に失敗した回数。無限に飛ばし続けないための歯止め
+
+// ---- 見張り（watchdog）用の状態 ----
+let stalledCount = 0; // 今の曲での 'stalled' の回数
+let waitingCount = 0; // 今の曲での 'waiting' の回数
+let endedStuckSince = 0; // wantPlaying なのに paused && ended のまま、が続き始めた時刻
+let stallSince = 0; // 今の曲で currentTime が進まなくなった（と見なした）時刻
+let stallLastTime = -1; // 直前に見た currentTime
+let stallTrackId = null; // 見張り対象の曲
+let stallRetryDone = false; // 同じ曲で立て直しを試みたか（1回だけ許す）
 
 async function prefetchNext() {
   const id = state.queue[state.qi + 1];
@@ -1100,9 +1135,10 @@ async function tryPlay() {
   let last = null;
   for (let i = 0; i < 3; i++) {
     try {
-      await P.resumeContext();
+      // resumeContext() が詰まって帰ってこない端末があるので、300ms で見切りをつける
+      await Promise.race([P.resumeContext(), new Promise((r) => setTimeout(r, 300))]);
       await audio.play();
-      plog('再生開始' + (i ? `（${i + 1}回目で成功）` : ''));
+      plog('再生開始' + (i ? `（${i + 1}回目で成功）` : '') + ` ctx=${P.contextState()}`);
       return 'ok';
     } catch (e) {
       last = e;
@@ -1119,12 +1155,12 @@ function skipAfterFailure() {
   skipStreak++;
   if (skipStreak > 5) {
     skipStreak = 0;
-    audio.pause();
+    pauseWith('再生失敗が続いた');
     toast('続けて再生できなかったので止めました');
     return;
   }
   if (state.qi < state.queue.length - 1 || state.repeat === 'all') next(false);
-  else audio.pause();
+  else pauseWith('キューの最後');
 }
 
 async function loadCurrent(autoplay, seekTo = 0) {
@@ -1132,6 +1168,13 @@ async function loadCurrent(autoplay, seekTo = 0) {
   const t = state.byId.get(id);
   if (!t) return;
   plog(`読み込み ${state.qi + 1}/${state.queue.length}「${t.title}」`);
+  // 曲が変わったので、直前の曲についての stalled/waiting/stall の見張り状態を仕切り直す
+  stalledCount = 0;
+  waitingCount = 0;
+  stallSince = Date.now();
+  stallLastTime = -1;
+  stallRetryDone = false;
+  stallTrackId = id;
 
   // 先読みしてあればそれを使う（ここでデータベースを待たずに済む）
   let blob = nextPrefetch && nextPrefetch.id === id ? nextPrefetch.blob : null;
@@ -1252,8 +1295,7 @@ function setupMediaSession() {
   // Android は音声フォーカスを失ったときや通知が消えたときにも stop を送ってくることがある。
   // ここで再生セッションごと畳むと、勝手に止まったように見えるので一時停止に留める。
   set('stop', () => {
-    plog('通知/システムから stop');
-    audio.pause();
+    pauseWith('通知/システムの stop');
   });
 }
 
@@ -1267,13 +1309,13 @@ async function togglePlay(force) {
     }
     await P.resumeContext();
     audio.play().catch(() => toast('再生できませんでした'));
-  } else audio.pause();
+  } else pauseWith('ユーザー操作');
 }
 
 function next(auto = false) {
   if (!state.queue.length) return;
   if (auto && P.consumeTrackEndSleep()) {
-    audio.pause();
+    pauseWith('スリープタイマー（曲の終わり）');
     toast('スリープタイマーで停止しました');
     return;
   }
@@ -1285,9 +1327,29 @@ function next(auto = false) {
     state.qi = 0;
     loadCurrent(true);
   } else {
-    audio.pause();
+    pauseWith('キューの最後');
     audio.currentTime = 0;
   }
+}
+
+// 曲が終わったときの分岐（スリープ／1曲リピート／次へ）。
+// 通常は 'ended' イベントから呼ぶが、そのイベント自体を取りこぼしたときは
+// watchdog がここを直接呼んで立て直す。
+function onEnded() {
+  // 「この曲の終わりで停止」は、1曲リピートより先に見る。
+  // 後ろに置くと、リピート中は曲が終わっても判定に到達せずタイマーが効かない。
+  if (P.consumeTrackEndSleep()) {
+    pauseWith('スリープタイマー（曲の終わり）');
+    toast('スリープタイマーで停止しました');
+    return;
+  }
+  if (state.repeat === 'one') {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+    return;
+  }
+  next(true);
+  scheduleUpdateCheck();
 }
 
 function prev() {
@@ -1303,7 +1365,7 @@ function prev() {
 
 // ■ 再生を終わらせる。一時停止と違って、頭に戻して表示も通知も片付ける。
 function stopPlayback() {
-  audio.pause();
+  pauseWith('■で終了');
   try {
     audio.currentTime = 0;
   } catch {}
@@ -1479,7 +1541,7 @@ async function deleteTracksConfirmed(ids) {
   if (!ids.length) return;
   await db.deleteTracks(ids);
   const set = new Set(ids);
-  if (set.has(state.queue[state.qi])) audio.pause();
+  if (set.has(state.queue[state.qi])) pauseWith('曲を削除');
   state.queue = state.queue.filter((x) => !set.has(x));
   state.base = state.base.filter((x) => !set.has(x));
   for (const pl of state.playlists) {
@@ -2696,7 +2758,7 @@ async function renderSettings() {
         renderSettings();
       } else if (act === 'wipe') {
         if (!(await confirmDialog('本当にすべて削除しますか？この操作は戻せません。', '全部消す', true))) return;
-        audio.pause();
+        pauseWith('データを全部削除');
         await db.clear('tracks');
         await db.clear('blobs');
         await db.clear('art');
@@ -2851,6 +2913,8 @@ function showPlayLog() {
       $('#plClose', root).onclick = closeDialog;
       $('#plClear', root).onclick = () => {
         playLog.length = 0;
+        clearTimeout(plogSaveTimer);
+        db.setSetting('playLog', []);
         closeDialog();
         toast('記録を消しました');
       };
@@ -3261,11 +3325,30 @@ function wire() {
 
   // audio のイベント
   audio.addEventListener('play', () => {
+    wantPlaying = true;
+    lastPausedAt = 0;
     syncControls();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   });
   audio.addEventListener('pause', () => {
-    plog(`一時停止（位置 ${Math.round(audio.currentTime)}秒 / 画面${document.visibilityState === 'visible' ? '表' : '裏'}）`);
+    const reason = P.takePauseReason();
+    if (audio.ended) {
+      // 曲の終わりで自然に paused になったとき。true のままにしておき、
+      // 直後の 'ended' （か、それを取りこぼしたときの watchdog）に後の判断を任せる。
+      plog(`曲の終わり（位置 ${Math.round(audio.currentTime)}秒）`);
+    } else {
+      const why = reason || '外部（端末・他アプリ・イヤホン）';
+      plog(
+        `一時停止［${why}］（位置 ${Math.round(audio.currentTime)}秒/全体 ${Math.round(audio.duration || 0)}秒 · 画面${
+          document.visibilityState === 'visible' ? '表' : '裏'
+        } · ready=${audio.readyState} · net=${audio.networkState}）`
+      );
+      // 自分たちの都合の pause は pauseWith() の時点で既に false にしてある。
+      // ここに来るのは理由なし＝外部要因なので、意図が続いていることにはしない
+      // （電話や他アプリの音声フォーカス奪取と喧嘩しないため）。
+      wantPlaying = false;
+    }
+    lastPausedAt = Date.now();
     syncControls();
     savePlayback();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
@@ -3273,20 +3356,15 @@ function wire() {
   });
   audio.addEventListener('ended', () => {
     plog('曲が終わった');
-    // 「この曲の終わりで停止」は、1曲リピートより先に見る。
-    // 後ろに置くと、リピート中は曲が終わっても判定に到達せずタイマーが効かない。
-    if (P.consumeTrackEndSleep()) {
-      audio.pause();
-      toast('スリープタイマーで停止しました');
-      return;
-    }
-    if (state.repeat === 'one') {
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
-      return;
-    }
-    next(true);
-    scheduleUpdateCheck();
+    onEnded();
+  });
+  audio.addEventListener('stalled', () => {
+    stalledCount++;
+    if (stalledCount <= 2) plog('stalled（読み込みが詰まった）');
+  });
+  audio.addEventListener('waiting', () => {
+    waitingCount++;
+    if (waitingCount <= 2) plog('waiting（データ待ち）');
   });
   let tick = 0;
   audio.addEventListener('timeupdate', () => {
@@ -3415,9 +3493,19 @@ let lastUpdateCheck = 0;
 const UPDATE_CHECK_VISIBLE_GAP = 5 * 60 * 1000; // 表示に戻ったとき、前回確認から5分以上なら確認する
 const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // 開いている間は60分ごとに確認する
 
+// 再生セッション中（曲が読み込まれている間）を「一時停止しただけ」で reload すると、
+// 通知が消えてイヤホン/通知から再開できなくなり「止まった」ように見える。
+// なので再生セッションがある間は原則 reload しない。無セッション（■で終えた/何も鳴らしていない）
+// のときだけ即適用する。例外は、画面が表示中のまま長時間（10分以上）一時停止が続いた場合。
+const UPDATE_IDLE_PAUSE_MS = 10 * 60 * 1000;
+
 // いま新しい版を適用してよい状態か（再生中でなく、シート／ダイアログ／進捗表示も出ていない）
 function canApplyUpdateNow() {
   if (!audio.paused) return false;
+  if (state.qi >= 0) {
+    const idleLongEnough = lastPausedAt && Date.now() - lastPausedAt >= UPDATE_IDLE_PAUSE_MS;
+    if (!(document.visibilityState === 'visible' && idleLongEnough)) return false;
+  }
   if (document.querySelector('.sheet.open')) return false;
   if (!$('#dialogWrap').hidden) return false;
   if (!$('#progress').hidden) return false;
@@ -3431,7 +3519,10 @@ function applyUpdateIfPossible() {
   if (!canApplyUpdateNow()) return;
   updateReloading = true;
   sessionStorage.setItem('kbmusic-updated', '1'); // 次の起動時に一度だけ知らせる
-  location.reload();
+  plog('更新のため再読み込み');
+  clearTimeout(plogSaveTimer);
+  // 再生の記録が reload で消えないよう、書き込みが終わってから reload する
+  db.setSetting('playLog', playLog.slice()).finally(() => location.reload());
 }
 
 // 曲が次へ切り替わる一瞬は audio.paused が true になるため、そこで更新を適用すると
@@ -3446,6 +3537,72 @@ function scheduleUpdateCheck() {
 function checkForUpdate() {
   lastUpdateCheck = Date.now();
   if (swReg) swReg.update().catch(() => {});
+}
+
+/* ============================ 見張り（watchdog） ============================ */
+// 「意図としては再生中」なのに実際は進んでいない状態を、3秒おきに見つけて立て直す。
+// タイマーは画面が裏に回ると間引かれることがあるが、それでも止まったままよりまし。
+const WATCHDOG_INTERVAL = 3000;
+const ENDED_STUCK_MS = 3000; // ended の取りこぼしと見なすまでの時間
+const STALL_MS = 8000; // currentTime が動いていないと見なすまでの時間
+
+async function watchdogTick() {
+  applyUpdateIfPossible(); // 表示中のまま長く一時停止していたら、ここで保留中の更新を適用する
+
+  // 1. ended イベントの取りこぼし: paused かつ ended のまま、再生する意図だけが残っている
+  if (wantPlaying && audio.paused && audio.ended) {
+    if (!endedStuckSince) endedStuckSince = Date.now();
+    else if (Date.now() - endedStuckSince >= ENDED_STUCK_MS) {
+      endedStuckSince = 0;
+      plog('endedの取りこぼしを検知、立て直す');
+      onEnded();
+    }
+    return;
+  }
+  endedStuckSince = 0;
+
+  // 2. 再生中のはずなのに currentTime が進んでいない（stall）
+  if (wantPlaying && !audio.paused && audio.readyState >= 2) {
+    const id = state.queue[state.qi];
+    if (id !== stallTrackId) {
+      stallTrackId = id;
+      stallLastTime = audio.currentTime;
+      stallSince = Date.now();
+      stallRetryDone = false;
+      return;
+    }
+    if (Math.abs(audio.currentTime - stallLastTime) >= 0.05) {
+      stallLastTime = audio.currentTime;
+      stallSince = Date.now();
+      return;
+    }
+    if (Date.now() - stallSince < STALL_MS) return;
+    if (!stallRetryDone) {
+      stallRetryDone = true;
+      stallSince = Date.now();
+      plog('再生が進んでいない（stall）。立て直しを試みる');
+      const pos = audio.currentTime;
+      try {
+        // load() が勝手に pause を出すかは端末次第なので、こちらから理由付きで止めてから読み直す
+        P.pauseWith('立て直しのため読み直し');
+        audio.load();
+        audio.addEventListener(
+          'loadedmetadata',
+          () => {
+            try {
+              audio.currentTime = pos;
+            } catch {}
+          },
+          { once: true }
+        );
+        await tryPlay();
+      } catch {}
+    } else {
+      pauseWith('立て直し失敗');
+    }
+  } else {
+    stallTrackId = null;
+  }
 }
 
 /* ============================ 起動 ============================ */
@@ -3465,6 +3622,11 @@ async function init() {
   history.replaceState({ n: 0 }, '');
   await db.loadSettings();
 
+  // reload をまたいで消えないよう、保存してあった再生の記録を読み戻す
+  const savedLog = db.setting('playLog', []);
+  if (Array.isArray(savedLog) && savedLog.length) playLog.push(...savedLog);
+  plog(sessionStorage.getItem('kbmusic-updated') ? '起動（更新後）' : '起動');
+
   state.shuffle = db.setting('shuffle', false);
   state.repeat = db.setting('repeat', 'off');
   P.setRate(db.setting('rate', 1));
@@ -3479,6 +3641,7 @@ async function init() {
 
   wire();
   setupMediaSession();
+  setInterval(watchdogTick, WATCHDOG_INTERVAL);
 
   await loadLibrary();
   render();

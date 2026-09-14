@@ -5,6 +5,19 @@ import * as db from './db.js';
 export const audio = new Audio();
 audio.preload = 'auto';
 
+// pause() を呼ぶたびに理由を控えておき、'pause' イベント側でログに出せるようにする。
+// 端末や他アプリがこちらの知らないところで止めた場合は理由が無いままになる。
+let pauseReason = null;
+export function pauseWith(reason) {
+  pauseReason = reason;
+  audio.pause();
+}
+export function takePauseReason() {
+  const r = pauseReason;
+  pauseReason = null;
+  return r;
+}
+
 export const EQ_BANDS = [60, 230, 910, 3600, 14000];
 export const EQ_PRESETS = {
   フラット: [0, 0, 0, 0, 0],
@@ -98,6 +111,10 @@ export async function resumeContext() {
   }
 }
 
+export function contextState() {
+  return ctx ? ctx.state : 'none';
+}
+
 // ---------- スリープタイマー ----------
 let sleepTimer = null;
 let sleepAt = 0;
@@ -156,7 +173,7 @@ export function fadeOutAndPause(ms = 4000) {
   const step = () => {
     const p = (performance.now() - t0) / ms;
     if (p >= 1) {
-      audio.pause();
+      pauseWith('スリープタイマー');
       audio.volume = start;
       return;
     }
@@ -205,7 +222,7 @@ export function setupUnplugGuard(getMode, onLog) {
       if (again > 0 && again < lastOutputs && !audio.paused) {
         if (onLog) onLog(`イヤホンが外れたと判断（出力 ${lastOutputs} → ${again}）`);
         if (mode === 'mute') audio.volume = 0;
-        else audio.pause();
+        else pauseWith('イヤホンが外れた');
         emit('unplug');
       } else if (onLog) {
         onLog(`出力が減ったが戻った（${lastOutputs} → ${n} → ${again}）ので止めない`);
