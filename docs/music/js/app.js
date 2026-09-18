@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.6.2';
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -3704,9 +3704,10 @@ async function init() {
   if (db.setting('eqOn', false)) P.setEqEnabled(true);
   P.setupUnplugGuard(() => db.setting('unplug', 'pause'), plog);
 
-  // 起動時に開くタブが非表示設定になっていたら、先頭の表示タブを開く
+  // 起動時はいちばん左のタブを開く。並びは設定の「タブの並びと表示」で変えられるので、
+  // 左端に置いたものが「アプリを開いて最初に出る画面」になる。
   const vis = visibleTabs();
-  if (!vis.some((t) => t.id === state.routes[0].name)) state.routes = [{ name: vis[0] ? vis[0].id : 'songs' }];
+  state.routes = [{ name: vis[0] ? vis[0].id : 'songs' }];
 
   wire();
   setupMediaSession();
