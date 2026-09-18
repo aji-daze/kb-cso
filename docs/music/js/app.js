@@ -1077,7 +1077,7 @@ function plog(msg) {
   const mm = String(t.getMinutes()).padStart(2, '0');
   const ss = String(t.getSeconds()).padStart(2, '0');
   playLog.push(`${hh}:${mm}:${ss} ${msg}`);
-  if (playLog.length > 80) playLog.shift();
+  if (playLog.length > 200) playLog.shift();
   // reload されても証拠が消えないよう、1秒だけまとめて設定に控えておく
   clearTimeout(plogSaveTimer);
   plogSaveTimer = setTimeout(() => {
@@ -1090,6 +1090,14 @@ function plog(msg) {
 let wantPlaying = false;
 // 直近で一時停止になった時刻。曲が付いたまま長く放置されているかどうかの判定に使う
 let lastPausedAt = 0;
+// 直近で 'play' イベントが来た時刻。起動直後の waiting をノイズとして無視するために使う
+let lastPlayStartAt = 0;
+
+// ---- 外部要因の pause から自動で再開する仕掛け ----
+let autoResumeTrackId = null; // 何曲目に対しての試行回数か
+let autoResumeCount = 0; // 今の曲で自動再開を試みた回数（最大2回）
+let autoResumeTimer = 0;
+let lastAutoResumeSuccessAt = 0; // 直前に自動再開が成功した時刻
 
 // 自分たちの都合で止めるときは、理由をログに残しつつ P.pauseWith を通す。
 // audio が既に一時停止中なら pause() は何もしない（'pause' イベントが飛ばない）ので、
@@ -1159,8 +1167,51 @@ function skipAfterFailure() {
     toast('続けて再生できなかったので止めました');
     return;
   }
-  if (state.qi < state.queue.length - 1 || state.repeat === 'all') next(false);
+  if (state.qi < state.queue.length - 1 || state.repeat === 'all') next(false, '再生失敗');
   else pauseWith('キューの最後');
+}
+
+// 外部要因（端末・他アプリ）で pause された直後に、条件が揃っていれば再生を試みる。
+// wasWanted は、外部 pause が来る直前の wantPlaying の値（=直前まで再生する意図があったか）。
+function maybeAutoResume(wasWanted) {
+  if (!wasWanted) return; // そもそも再生する意図が無かった（もう止まっていた）
+  if (audio.ended) return;
+  if (audio.readyState < 3) return; // データがまだ無い＝読み込み待ちで止まっただけ
+  if (state.qi < 0) return; // 再生セッションが無い
+  if (!db.setting('autoResume', true)) return; // 設定でオフ
+
+  const id = state.queue[state.qi];
+  if (autoResumeTrackId !== id) {
+    autoResumeTrackId = id;
+    autoResumeCount = 0;
+    lastAutoResumeSuccessAt = 0;
+  }
+
+  // 再開できた直後にまた外部で止められた＝本物（電話・他アプリの音声）と判断し、以後は試さない
+  if (lastAutoResumeSuccessAt && Date.now() - lastAutoResumeSuccessAt < 5000) {
+    autoResumeCount = 2;
+    plog('再開してもすぐ止められたので、外部の要求と判断して諦める');
+    return;
+  }
+
+  if (autoResumeCount >= 2) return; // 同じ曲での試行は最大2回まで
+
+  autoResumeCount++;
+  const trackAtAttempt = id;
+  const n = autoResumeCount;
+  plog(`外部で止まったので再開を試みる（${n}回目）`);
+  clearTimeout(autoResumeTimer);
+  autoResumeTimer = setTimeout(async () => {
+    if (state.queue[state.qi] !== trackAtAttempt) return; // その間に曲が変わった
+    if (wantPlaying || !audio.paused) return; // 既に別経路で再生が戻っている
+    const res = await tryPlay();
+    if (res === 'ok') {
+      lastAutoResumeSuccessAt = Date.now();
+      plog('再開できた');
+    } else if (res === 'blocked') {
+      plog('端末に再生を止められているため再開しない');
+    }
+  }, 900);
 }
 
 async function loadCurrent(autoplay, seekTo = 0) {
@@ -1175,6 +1226,11 @@ async function loadCurrent(autoplay, seekTo = 0) {
   stallLastTime = -1;
   stallRetryDone = false;
   stallTrackId = id;
+  // 自動再開の試行回数も曲ごとに数え直す
+  clearTimeout(autoResumeTimer);
+  autoResumeTrackId = id;
+  autoResumeCount = 0;
+  lastAutoResumeSuccessAt = 0;
 
   // 先読みしてあればそれを使う（ここでデータベースを待たずに済む）
   let blob = nextPrefetch && nextPrefetch.id === id ? nextPrefetch.blob : null;
@@ -1284,8 +1340,8 @@ function setupMediaSession() {
   };
   set('play', () => togglePlay(true));
   set('pause', () => togglePlay(false));
-  set('previoustrack', () => prev());
-  set('nexttrack', () => next(false));
+  set('previoustrack', () => prev('通知/システム'));
+  set('nexttrack', () => next(false, '通知/システム'));
   set('seekbackward', (d) => (audio.currentTime = Math.max(0, audio.currentTime - (d.seekOffset || 10))));
   set('seekforward', (d) => (audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + (d.seekOffset || 10))));
   set('seekto', (d) => {
@@ -1312,8 +1368,9 @@ async function togglePlay(force) {
   } else pauseWith('ユーザー操作');
 }
 
-function next(auto = false) {
+function next(auto = false, why = 'UI') {
   if (!state.queue.length) return;
+  plog(auto ? '次の曲へ（自動）' : `次の曲へ［${why}］`);
   if (auto && P.consumeTrackEndSleep()) {
     pauseWith('スリープタイマー（曲の終わり）');
     toast('スリープタイマーで停止しました');
@@ -1352,7 +1409,8 @@ function onEnded() {
   scheduleUpdateCheck();
 }
 
-function prev() {
+function prev(why = 'UI') {
+  plog(`前の曲へ［${why}］`);
   if (audio.currentTime > 3) {
     audio.currentTime = 0;
     return;
@@ -2654,6 +2712,7 @@ async function renderSettings() {
   const quota = est && est.quota ? fmtSize(est.quota) : '—';
   const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
   const unplug = db.setting('unplug', 'pause');
+  const autoResume = db.setting('autoResume', true);
   const dupSkip = db.setting('dupSkip', true);
   const autoArt = db.setting('autoArt', true);
   const importNotify = db.setting('importNotify', true);
@@ -2704,6 +2763,8 @@ async function renderSettings() {
         <option value="mute" ${unplug === 'mute' ? 'selected' : ''}>消音する</option>
         <option value="off" ${unplug === 'off' ? 'selected' : ''}>何もしない</option>
       </select></div>
+    <div class="item" data-act="toggleAutoResume"><div class="txt"><div class="t">外部で止まったら再開する</div><div class="s">端末や他のアプリに止められたとき、一度だけ再生し直します</div></div>
+      <div class="switch ${autoResume ? 'on' : ''}"></div></div>
     <div class="item" data-act="eq"><div class="txt"><div class="t">イコライザ</div><div class="s">${P.eqEnabled() ? 'オン' : 'オフ'}</div></div><svg style="color:var(--sub)"><use href="#i-eq"/></svg></div>
     <div class="item" data-act="playLog"><div class="txt"><div class="t">再生の記録を見る</div><div class="s">勝手に止まったときに、直前に何が起きたかを確かめられます</div></div></div>
 
@@ -2742,6 +2803,9 @@ async function renderSettings() {
       }
       else if (act === 'toggleArt') {
         await db.setSetting('autoArt', !db.setting('autoArt', true));
+        renderSettings();
+      } else if (act === 'toggleAutoResume') {
+        await db.setSetting('autoResume', !db.setting('autoResume', true));
         renderSettings();
       } else if (act === 'toggleImportNotify') {
         await db.setSetting('importNotify', !db.setting('importNotify', true));
@@ -3257,15 +3321,15 @@ function wire() {
   // ミニプレーヤー
   $('#mini').addEventListener('click', (e) => {
     if (e.target.closest('#miniPlay')) return togglePlay();
-    if (e.target.closest('#miniNext')) return next();
+    if (e.target.closest('#miniNext')) return next(false, 'UI');
     if (e.target.closest('#miniStop')) return stopPlayback();
     openSheet('sheetNow');
   });
 
   // 再生中画面
   $('#btnPlay').onclick = () => togglePlay();
-  $('#btnNext').onclick = () => next();
-  $('#btnPrev').onclick = () => prev();
+  $('#btnNext').onclick = () => next(false, 'UI');
+  $('#btnPrev').onclick = () => prev('UI');
   $('#btnShuffle').onclick = toggleShuffle;
   $('#btnRepeat').onclick = cycleRepeat;
   $('#nowQueue').onclick = showQueue;
@@ -3327,6 +3391,7 @@ function wire() {
   audio.addEventListener('play', () => {
     wantPlaying = true;
     lastPausedAt = 0;
+    lastPlayStartAt = Date.now();
     syncControls();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   });
@@ -3337,6 +3402,7 @@ function wire() {
       // 直後の 'ended' （か、それを取りこぼしたときの watchdog）に後の判断を任せる。
       plog(`曲の終わり（位置 ${Math.round(audio.currentTime)}秒）`);
     } else {
+      const wasWanted = wantPlaying;
       const why = reason || '外部（端末・他アプリ・イヤホン）';
       plog(
         `一時停止［${why}］（位置 ${Math.round(audio.currentTime)}秒/全体 ${Math.round(audio.duration || 0)}秒 · 画面${
@@ -3347,6 +3413,7 @@ function wire() {
       // ここに来るのは理由なし＝外部要因なので、意図が続いていることにはしない
       // （電話や他アプリの音声フォーカス奪取と喧嘩しないため）。
       wantPlaying = false;
+      if (!reason) maybeAutoResume(wasWanted);
     }
     lastPausedAt = Date.now();
     syncControls();
@@ -3364,7 +3431,9 @@ function wire() {
   });
   audio.addEventListener('waiting', () => {
     waitingCount++;
-    if (waitingCount <= 2) plog('waiting（データ待ち）');
+    // 毎曲の先頭で必ず出る waiting はローカル再生でも普通に起きるノイズなので、
+    // 再生開始から1秒以内のものは記録しない
+    if (waitingCount <= 2 && Date.now() - lastPlayStartAt >= 1000) plog('waiting（データ待ち）');
   });
   let tick = 0;
   audio.addEventListener('timeupdate', () => {
@@ -3676,9 +3745,20 @@ async function setupServiceWorker() {
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    const visible = document.visibilityState === 'visible';
+    // 再生セッションがあるときだけ記録する（無いときまで記録すると記録が溢れる）
+    if (state.qi >= 0) plog('画面' + (visible ? '表' : '裏') + 'になった');
+    if (!visible) return;
     applyUpdateIfPossible();
     if (Date.now() - lastUpdateCheck > UPDATE_CHECK_VISIBLE_GAP) checkForUpdate();
+  });
+
+  // 端末の省電力機能などでページごと凍結されたとき（Page Lifecycle API）
+  document.addEventListener('freeze', () => {
+    plog('ページが凍結された（端末の省電力）');
+  });
+  document.addEventListener('resume', () => {
+    plog('ページの凍結が解けた');
   });
 
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL);
