@@ -7,7 +7,7 @@
 <title>栞 — 読書アプリ設計案</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Noto+Serif+JP:wght@400;500;600&display=swap">
 <style>
 :root{
   --bg:#f5f3ef; --surface:#fffdf9; --surface2:#ebe7e0; --line:#dcd6cc;
@@ -17,6 +17,7 @@
   --shadow:0 6px 20px rgba(80,70,55,.14); --shadow-lg:0 18px 44px rgba(80,70,55,.20);
   --sans:-apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",Roboto,sans-serif;
   --serif:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",serif;
+  --enserif:"EB Garamond","Iowan Old Style","Palatino",Georgia,serif;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
@@ -172,44 +173,79 @@ td.r{color:var(--sub)}
 @media(max-width:520px){.notes > div{grid-template-columns:1fr;gap:4px}}
 
 /* リーダー実寸デモ */
-#reader{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;flex-direction:column}
+#reader{position:fixed;inset:0;z-index:50;display:none;flex-direction:column;
+  --pg:#f3efe7; --ink:#26231f; --pg2:#e7e1d4; --grain:.5; --blend:multiply;
+  --mg:26px; --fam:var(--serif); --fs:17px; --lh:2;
+  background:var(--pg);color:var(--ink)}
 #reader.open{display:flex}
-.rline{height:2px;background:var(--line);flex:0 0 auto;margin-top:env(safe-area-inset-top,0px)}
-.rline i{display:block;height:100%;background:var(--acc-fill);width:0;transition:width .18s}
+#reader[data-paper="hakuji"]{--pg:#fffffe;--pg2:#f0f0ee;--ink:#1a1a1d;--blend:multiply}
+#reader[data-paper="kinari"]{--pg:#f3efe7;--pg2:#e6e0d2;--ink:#26231f;--blend:multiply}
+#reader[data-paper="koshi"] {--pg:#ece2cf;--pg2:#ddd0b6;--ink:#332b20;--blend:multiply}
+#reader[data-paper="sepia"] {--pg:#e6d8ba;--pg2:#d6c39c;--ink:#3f3220;--blend:multiply}
+#reader[data-paper="sumi"]  {--pg:#0e0f11;--pg2:#17181b;--ink:#d9d7d3;--blend:screen}
+.rline{height:2px;background:var(--pg2);flex:0 0 auto;margin-top:env(safe-area-inset-top,0px)}
+.rline i{display:block;height:100%;background:var(--ink);opacity:.45;width:0;transition:width .18s}
 .stage{flex:1;min-height:0;position:relative;overflow:hidden;
-  padding:26px 22px calc(26px + env(safe-area-inset-bottom,0px))}
-.page{position:absolute;inset:26px 22px;overflow:hidden}
-#flow{position:absolute;top:0;height:100%;font-family:var(--fam,var(--serif));
-  font-size:var(--fs,17px);line-height:var(--lh,2.0);letter-spacing:.04em;
-  text-align:justify;transition:transform .22s ease;color:var(--tx)}
+  padding:var(--mg) var(--mg) calc(var(--mg) + env(safe-area-inset-bottom,0px))}
+.page{position:absolute;inset:var(--mg);overflow:hidden}
+/* 紙の目：SVG ノイズ1枚。画像を読み込まないので軽い */
+.grain{position:absolute;inset:0;pointer-events:none;opacity:var(--grain);
+  mix-blend-mode:var(--blend);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* 綴じ側のわずかな陰り */
+.gutter{position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(to left,color-mix(in srgb,var(--pg2) 70%,transparent),transparent 9%)}
+#reader[data-dirmode="h"] .gutter{background:linear-gradient(to right,color-mix(in srgb,var(--pg2) 70%,transparent),transparent 9%)}
+#flow{position:absolute;top:0;height:100%;font-family:var(--fam);
+  font-size:var(--fs);line-height:var(--lh);letter-spacing:.04em;
+  text-align:justify;transition:transform .22s ease;color:var(--ink)}
 #flow[data-dir="v"]{writing-mode:vertical-rl;right:0}
 #flow[data-dir="h"]{writing-mode:horizontal-tb;left:0;column-gap:0;column-fill:auto}
 #flow p{margin:0;text-indent:1em;max-width:none}
-#flow p+p{margin-block-start:0}
+#flow h2,#flow h3{font-family:var(--fam);margin:0;text-indent:0;line-height:1.5}
+#flow h2{font-size:1.18em;font-weight:600;margin-block:1.4em .7em}
+#flow h3{font-size:1.02em;font-weight:600;margin-block:1.2em .5em}
+#flow ul{margin:.6em 0;padding-inline-start:1.4em}
+#flow li{text-indent:0;margin-block:.25em}
+#flow blockquote{margin:.9em 0;padding-inline-start:.9em;text-indent:0;
+  border-inline-start:2px solid color-mix(in srgb,var(--ink) 30%,transparent);opacity:.82}
+#flow code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;
+  background:color-mix(in srgb,var(--ink) 9%,transparent);padding:.1em .35em;border-radius:2px}
+#flow hr{border:0;border-top:1px solid color-mix(in srgb,var(--ink) 22%,transparent);margin:1.2em 0}
+/* 洋書：欧文組み。ハイフネーションとドロップキャップ */
+#flow[data-style="en"]{letter-spacing:0;hyphens:auto;-webkit-hyphens:auto;text-align:justify}
+#flow[data-style="en"] p{text-indent:1.2em}
+#flow[data-style="en"] p:first-of-type{text-indent:0}
+#flow[data-style="en"] p:first-of-type::first-letter{float:left;font-size:3.2em;
+  line-height:.84;padding-right:.05em;padding-top:.06em;font-weight:500}
 .zones{position:absolute;inset:0;display:flex}
 .zones button{flex:1;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.zones button:focus-visible{outline:2px solid var(--acc);outline-offset:-4px}
+.zones button:focus-visible{outline:2px solid var(--ink);outline-offset:-4px}
 .rfoot{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;
-  padding:0 22px calc(10px + env(safe-area-inset-bottom,0px));font-size:11.5px;color:var(--faint);
-  font-variant-numeric:tabular-nums}
-.rui{position:absolute;left:0;right:0;background:var(--surface);border-block:1px solid var(--line);
-  transition:transform .2s ease,opacity .2s;z-index:2}
+  padding:0 var(--mg) calc(10px + env(safe-area-inset-bottom,0px));font-size:11.5px;
+  color:var(--ink);opacity:.5;font-variant-numeric:tabular-nums;gap:12px}
+.rui{position:absolute;left:0;right:0;background:var(--pg);color:var(--ink);
+  border-block:1px solid var(--pg2);transition:transform .2s ease,opacity .2s;z-index:3}
 .rui.top{top:0;padding:calc(9px + env(safe-area-inset-top,0px)) 16px 9px;display:flex;
   align-items:center;gap:12px}
-.rui.bottom{bottom:0;padding:14px 18px calc(16px + env(safe-area-inset-bottom,0px));
-  display:flex;flex-direction:column;gap:12px}
+.rui.bottom{bottom:0;padding:14px 16px calc(16px + env(safe-area-inset-bottom,0px));
+  display:flex;flex-direction:column;gap:11px;max-height:74%;overflow-y:auto}
 .rui[hidden]{display:none}
 .rui.top b{font-family:var(--serif);font-size:14px;font-weight:600;flex:1;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub)}
-.ctl > span{width:52px;flex:0 0 auto;letter-spacing:.06em}
+.ctl{display:flex;align-items:flex-start;gap:8px;font-size:12px;opacity:.95}
+.ctl > span{width:54px;flex:0 0 auto;letter-spacing:.06em;padding-top:7px;opacity:.6}
 .ctl .opts{display:flex;gap:6px;flex:1;flex-wrap:wrap}
-.ctl .opts button{font-family:inherit;font-size:12px;padding:6px 11px;border:1px solid var(--line);
-  background:var(--bg);color:var(--sub);border-radius:2px;cursor:pointer}
-.ctl .opts button[aria-pressed="true"]{background:var(--acc-fill);color:var(--on-acc);
-  border-color:var(--acc-fill);font-weight:600}
-.xbtn{font-family:inherit;font-size:12px;border:1px solid var(--line);background:var(--bg);
-  color:var(--tx);padding:6px 12px;border-radius:2px;cursor:pointer;flex:0 0 auto}
+.ctl .opts button{font-family:inherit;font-size:12px;padding:6px 11px;
+  border:1px solid color-mix(in srgb,var(--ink) 22%,transparent);
+  background:transparent;color:var(--ink);border-radius:2px;cursor:pointer;opacity:.7}
+.ctl .opts button[aria-pressed="true"]{background:var(--ink);color:var(--pg);
+  border-color:var(--ink);font-weight:600;opacity:1}
+.ctl.mood .opts button{font-family:var(--serif)}
+.rsep{border-top:1px solid var(--pg2);margin-block:1px}
+.xbtn{font-family:inherit;font-size:12px;
+  border:1px solid color-mix(in srgb,var(--ink) 22%,transparent);background:transparent;
+  color:var(--ink);padding:6px 12px;border-radius:2px;cursor:pointer;flex:0 0 auto}
 @media (prefers-reduced-motion:reduce){#flow{transition:none}.rui{transition:none}}
 </style>
 <style>
@@ -224,7 +260,7 @@ img{max-width:100%}
 <div class="wrap">
   <p class="eyebrow">docs/read — 設計案</p>
   <h1>栞</h1>
-  <p class="lede">読むための画面と、読んだ記録を1つにした個人用 PWA。ミュージック・DESK と同じ作り（ビルド不要の素の ES モジュール／GitHub Pages／IndexedDB／オフライン）に乗せる前提。</p>
+  <p class="lede">読むための画面と、読んだ記録を1つにした個人用 PWA。青空文庫はアプリ内から落として縦組みで読む。Markdown のノートも同じ画面で読み返せる。ミュージック・DESK と同じ作り（ビルド不要の素の ES モジュール／GitHub Pages／IndexedDB／オフライン）に乗せる前提。</p>
 
   <section style="margin-top:34px">
     <div class="verdict">
@@ -237,7 +273,7 @@ img{max-width:100%}
   <section>
     <div class="cta">
       <button class="btn primary" id="open">実寸で読んでみる</button>
-      <small>縦組み・タップ送り・文字設定を実装済み。端末の全画面で開く</small>
+      <small>縦組み・雰囲気5種・紙の調整・タップ送りを実装済み。端末の全画面で開く</small>
     </div>
   </section>
 
@@ -251,12 +287,12 @@ img{max-width:100%}
           <div class="bar"><span>9:41</span><span>栞</span></div>
           <div class="body">
             <div class="hero-book">
-              <div class="cover"><span class="t">存在と時間<br><span style="font-size:11px;opacity:.7">ハイデガー</span></span></div>
+              <div class="cover"><span class="t">岬の図書館<br><span style="font-size:11px;opacity:.7">表示サンプル</span></span></div>
               <div>
-                <div class="h-t">存在と時間</div>
-                <div class="h-s">第一篇 第二章 · 残り 38 分</div>
+                <div class="h-t">岬の図書館</div>
+                <div class="h-s">第三章 · 残り 38 分</div>
               </div>
-              <div class="lastline">…前回はここで止めた。「世界内存在」という<br>言い方がまだ腑に落ちていない。</div>
+              <div class="lastline">…前回はここで止めた。灯台の描写が<br>まだ腑に落ちていない。</div>
               <div class="resume">続きから読む</div>
               <div class="flow">
                 <div><b>3</b><span>読んでいる</span></div>
@@ -280,16 +316,16 @@ img{max-width:100%}
             <div class="shelfhead"><h4>棚</h4><span style="font-size:12px;color:var(--faint)">並び: 最近</span></div>
             <div class="seg"><div class="on">読んでいる</div><div>積んでいる</div><div>読んだ</div></div>
             <div class="row"><span class="sc" style="background:linear-gradient(160deg,#3b4a5a,#222b36)"></span>
-              <span class="rt"><b>存在と時間</b><span>ハイデガー · EPUB</span>
+              <span class="rt"><b>岬の図書館</b><span>表示サンプル · EPUB</span>
               <span class="prog"><i style="width:34%"></i></span></span><span class="rmin">38分</span></div>
             <div class="row"><span class="sc" style="background:linear-gradient(160deg,#6b5040,#3a2b22)"></span>
-              <span class="rt"><b>夜と霧</b><span>フランクル · 紙</span>
+              <span class="rt"><b>砂の手紙</b><span>表示サンプル · 紙</span>
               <span class="prog"><i style="width:71%"></i></span></span><span class="rmin">p.148</span></div>
             <div class="row"><span class="sc" style="background:linear-gradient(160deg,#4a5240,#2a2f24)"></span>
-              <span class="rt"><b>失われた時を求めて 1</b><span>プルースト · Kindle</span>
+              <span class="rt"><b>雨の計画</b><span>表示サンプル · Kindle</span>
               <span class="prog"><i style="width:12%"></i></span></span><span class="rmin">12%</span></div>
             <div class="row" style="opacity:.55"><span class="sc" style="background:linear-gradient(160deg,#5a4550,#322430)"></span>
-              <span class="rt"><b>銀河英雄伝説 1</b><span>田中芳樹 · EPUB</span>
+              <span class="rt"><b>The Long Harbour</b><span>表示サンプル · 青空/洋書</span>
               <span class="prog"><i style="width:100%"></i></span></span><span class="rmin">読了</span></div>
           </div>
           <div class="tabs">
@@ -305,11 +341,11 @@ img{max-width:100%}
           <div style="height:2px;background:var(--line);flex:0 0 auto"><i style="display:block;height:100%;width:34%;background:var(--acc-fill)"></i></div>
           <div style="flex:1;min-height:0;padding:26px 22px;overflow:hidden">
             <div style="writing-mode:vertical-rl;height:100%;font-family:var(--serif);font-size:17px;line-height:2.05;letter-spacing:.04em;text-align:justify;color:var(--tx)">
-              <p style="margin:0;text-indent:1em">現存在はそのつど、みずからの存在においてこの存在そのものへとかかわっている。この存在関係のうちで、現存在は自分自身へと 開かれている。<mark style="background:color-mix(in srgb,var(--acc-fill) 26%,transparent)">問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</mark>したがって存在への問いは、外から持ちこまれるのではない。</p>
+              <p style="margin:0;text-indent:1em">紙の本を読むとき、指は次のページの端をさわっている。残りがどれだけあるかを、数えずに知っている。画面にはこれが無い。<mark style="background:color-mix(in srgb,var(--acc-fill) 26%,transparent)">だから残量は数字で補うしかないのだが、ページ数は補いになっていない。</mark>読む速さを知らない数字だからだ。</p>
             </div>
           </div>
           <div style="flex:0 0 auto;display:flex;justify-content:space-between;padding:0 22px 16px;font-size:11px;color:var(--faint)">
-            <span>第一篇 第二章</span><span>この章 あと 12 分</span>
+            <span>第三章</span><span>この章 あと 12 分</span>
           </div>
         </div></div></div>
         <p class="cap"><b>読む</b>UI は全部消える。上端の細線と下の1行だけ。残りは「ページ数」ではなく実測の読速から出した<b style="display:inline">分</b>で出す。上下スワイプは誤爆するので使わず、左・中央・右のタップ3分割。</p>
@@ -322,16 +358,16 @@ img{max-width:100%}
             <div class="shelfhead"><h4>抜き書き</h4><span style="font-size:12px;color:var(--faint)">127</span></div>
             <div style="border:1px solid var(--line);border-radius:3px;padding:13px;background:var(--surface2);margin-bottom:4px">
               <div style="font-size:10.5px;letter-spacing:.12em;color:var(--faint);margin-bottom:8px">1年前の今日</div>
-              <div style="font-family:var(--serif);font-size:13.5px;line-height:1.9">人間から一切を奪うことはできるが、たった一つ、与えられた状況でいかに振る舞うかという自由だけは奪えない。</div>
-              <div style="font-size:11px;color:var(--faint);margin-top:8px">夜と霧 · p.183</div>
+              <div style="font-family:var(--serif);font-size:13.5px;line-height:1.9">効くのは、効いていると気づかない程度までである。</div>
+              <div style="font-size:11px;color:var(--faint);margin-top:8px">砂の手紙 · p.183</div>
             </div>
-            <div class="note"><q>問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</q>
-              <span class="src">存在と時間 · 第一篇 第二章 · 今日</span>
-              <span class="me">＝循環しているのに前提の誤りにならない、という主張。論証の形が普通と違う。</span>
-              <span style="display:block;margin-top:8px"><span class="chip">#方法</span><span class="chip">#ThinkOS</span></span>
+            <div class="note"><q>だから残量は数字で補うしかないのだが、ページ数は補いになっていない。</q>
+              <span class="src">岬の図書館 · 第三章 · 今日</span>
+              <span class="me">＝単位が行動に繋がっていない、という話。分に直せば寝る前の判断に使える。</span>
+              <span style="display:block;margin-top:8px"><span class="chip">#表示</span><span class="chip">#ThinkOS</span></span>
             </div>
-            <div class="note"><q>語りえぬものについては、沈黙しなければならない。</q>
-              <span class="src">論理哲学論考 · 7 · 3日前</span></div>
+            <div class="note"><q>縦が効くのは地の文が続くものだけで、覚え書きの類は横のほうがいい。</q>
+              <span class="src">岬の図書館 · 第三章 · 3日前</span></div>
           </div>
           <div class="tabs">
             <div><i></i>つづき</div><div><i></i>棚</div>
@@ -350,35 +386,100 @@ img{max-width:100%}
     <div class="dev tab"><div class="scr" id="tabscr"><div class="tabinner" id="tabinner">
       <div class="tleft">
         <div class="vtext">
-          <p style="margin:0;text-indent:1em">存在への問いは、今日では忘れられている。とはいえ、この問いが忘れられているということ自体は、けっして自明の事柄ではない。むしろ問いが忘却されえたという事実のうちに、問いそのものの性格が現れている。<mark>問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</mark>われわれは、存在とは何かをあらかじめ何ほどか了解しているからこそ、存在を問うことができる。この了解は漠然としており、概念の形をとっていない。しかしそれが皆無であるなら、問いを発することすらできないはずである。したがって存在への問いは、外から持ちこまれるものではなく、現存在そのものの構造から立ちあがってくる。</p>
+          <p style="margin:0;text-indent:1em">紙の本を読むとき、指は次のページの端をさわっている。残りがどれだけあるかを、数えずに知っている。画面にはこれが無い。<mark>だから残量は数字で補うしかないのだが、ページ数は補いになっていない。</mark>読む速さを知らない数字だからだ。実測すればいい。一行に何秒かかったかは、ページを送った間隔からわかる。十ページも読めばその人の速さは出る。あとは残りの字数を割ればいい。「あと四十二ページ」より「あと十八分」のほうが、寝る前に読み続けるかどうかを決められる。</p>
         </div>
-        <div class="tcap"><span>存在と時間 · 第一篇 第二章</span><span>34% · この章 あと 12 分</span></div>
+        <div class="tcap"><span>岬の図書館 · 第三章</span><span>34% · この章 あと 12 分</span></div>
       </div>
       <div class="tright">
         <h5>抜き書き</h5>
         <div style="border-left:2px solid var(--acc-fill);padding-left:13px">
-          <div style="font-family:var(--serif);font-size:14px;line-height:1.95">問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</div>
+          <div style="font-family:var(--serif);font-size:14px;line-height:1.95">だから残量は数字で補うしかないのだが、ページ数は補いになっていない。</div>
           <div style="font-size:11px;color:var(--faint);margin-top:7px">たった今</div>
         </div>
         <div style="border:1px solid var(--line);border-radius:3px;background:var(--surface);
              padding:12px;font-size:13px;line-height:1.75;color:var(--sub);min-height:92px">
-          ＝循環しているのに前提の誤りにならない、という主張。論証の形が普通と違う。あとで<span style="color:var(--tx)">ThinkOS/概念検査</span>に回す。
+          ＝単位が行動に繋がっていない、という話。分に直せば寝る前の判断に使える。あとで<span style="color:var(--tx)">ThinkOS/概念検査</span>に回す。
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <span class="chip">#方法</span><span class="chip">#ThinkOS</span><span class="chip" style="border-style:dashed">＋</span>
+          <span class="chip">#表示</span><span class="chip">#ThinkOS</span><span class="chip" style="border-style:dashed">＋</span>
         </div>
         <div style="border-top:1px solid var(--line);padding-top:13px;margin-top:2px">
           <h5 style="margin-bottom:9px">この本から</h5>
           <div style="font-size:12.5px;color:var(--sub);line-height:1.8">
-            · 存在了解は概念以前である<br>· 現存在は自分自身へ開かれている<br>· 平均的日常性から始める理由
+            · 残量の単位は分であるべき<br>· 縦組みは飾りではなく復元<br>· 紙の目は気づかない強さで
           </div>
         </div>
       </div>
     </div></div></div>
   </section>
 
+
   <section>
-    <div class="shead"><span class="snum">03</span><h2>入れる機能・入れない機能</h2></div>
+    <div class="shead"><span class="snum">03</span><h2>本をどこから入れるか</h2></div>
+    <p>ここは形式ごとに事情がまったく違う。まとめて「対応」とは書けないので、一つずつ分ける。</p>
+    <div class="tblwrap"><table>
+      <thead><tr><th>形式</th><th>入れ方</th><th>アプリ内で完結するか</th></tr></thead>
+      <tbody>
+        <tr><td class="j">青空文庫</td><td class="r">アプリ内で作者・題名を検索して、そのままダウンロード</td><td class="j y">する見込み</td></tr>
+        <tr><td class="j">Markdown / テキスト</td><td class="r">ファイル選択、または共有シートから</td><td class="j y">する</td></tr>
+        <tr><td class="j">EPUB（DRM フリー）</td><td class="r">ファイル選択、または共有シートから</td><td class="j y">する</td></tr>
+        <tr><td class="j">洋書（Gutenberg 等）</td><td class="r">ブラウザで落としてから、共有シートで栞に渡す</td><td class="r"><b>半分だけ</b>（検索はアプリ内、取得は外）</td></tr>
+        <tr><td class="j">PDF（自炊）</td><td class="r">ファイル選択</td><td class="j y">する（タブレットのみ）</td></tr>
+        <tr><td class="j">Kindle</td><td class="r">入れられない。棚に登録して進捗を手で動かすだけ</td><td class="j n">しない</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="notes">
+      <div><dt>青空文庫</dt><dd>本家 <code>www.aozora.gr.jp</code> は CORS ヘッダが無いのでブラウザから直接は読めない。<b>GitHub のミラー（<code>aozorabunko.github.io</code>）なら GitHub Pages 配信なので CORS が通る見込み</b>で、ここを叩く設計にする。作品一覧の CSV を初回に一度だけ取り込んで端末内に索引を作れば、以後の検索はオフラインで済む（約2万作品）。本文は<b>テキスト版ではなく XHTML 版を使う</b> — ルビが <code>&lt;ruby&gt;</code> タグで入っているので縦組みにそのまま流せる。テキスト版は Shift_JIS ＋ <code>《》</code><code>［＃］</code> の独自注記で、パーサを1本書くことになる。<b>着手前に1作品 fetch して実際に通るか確かめること。</b>ここが通らなければこの機能は成立しない</dd></div>
+      <div><dt>洋書</dt><dd>期待しないほうがいい。<code>gutenberg.org</code> は自動取得を制限していて、CORS も期待できない。Gutendex のような API で<b>検索と書誌は取れても、本文ファイルの実体は gutenberg.org 側にある</b>ので別問題になる。現実的な形は、アプリ内で探して端末のブラウザに渡し、落ちてきたファイルを<b>共有シートから栞に投げ返す</b>（Web Share Target を manifest に書く。Android では効く、iOS は非対応なのでファイル選択で拾う）。自前の CORS プロキシを1枚立てれば完結するが、サーバーを持たない原則を壊すので最後の手段</dd></div>
+      <div><dt>Markdown</dt><dd>パーサは自前で足りる（見出し・箇条書き・引用・強調・コード・罫線・リンク）。ライブラリは要らない。<b>ただし縦組みにはしない。</b>箇条書きとコードと表が縦に流れると、どこを見ればいいかわからなくなる。横組み固定にする。抜き書きの書き出しと同じ形式なので、<b>書き出しと取り込みが対称になる</b> — ThinkOS 側のノートをそのまま読み返せる</dd></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">04</span><h2>雰囲気 — 配色ではなく組み方ごと変える</h2></div>
+    <p>和書と洋書で変えるべきなのは色ではない。行の長さ、字送り、段落の頭、書体の系統が全部違う。配色だけ切り替えても洋書は洋書に見えない。だから「雰囲気」は<b>組版のプリセット</b>として持つ。</p>
+    <div class="tblwrap"><table>
+      <thead><tr><th>雰囲気</th><th>組み方・書体</th><th>紙</th><th>効くもの</th></tr></thead>
+      <tbody>
+        <tr><td class="j">和・縦</td><td class="r">縦組み／明朝／行間ゆったり／ルビあり</td><td class="r">生成り</td><td class="r">青空文庫の小説、日本語の EPUB</td></tr>
+        <tr><td class="j">覚え書き</td><td class="r">横組み／ゴシック／行間つめ</td><td class="r">白磁</td><td class="r">Markdown、実用書、自分のノート</td></tr>
+        <tr><td class="j">洋・古典</td><td class="r">横組み／欧文セリフ／ハイフネーション／段落一字下げ／頭文字を大きく</td><td class="r">古紙</td><td class="r">洋書</td></tr>
+        <tr><td class="j">研究</td><td class="r">横組み／ゴシック／小さめ／余白を削る</td><td class="r">白磁</td><td class="r">通読ではなく参照。ノート併置</td></tr>
+        <tr><td class="j">夜</td><td class="r">直前の組み方を保つ／紙だけ墨に</td><td class="r">墨</td><td class="r">暗所。紙の目は弱めに落ちる</td></tr>
+      </tbody>
+    </table></div>
+    <div class="cta">
+      <button class="btn" data-open="wa_v">和・縦を見る</button>
+      <button class="btn" data-open="yo">洋・古典を見る</button>
+      <button class="btn" data-open="wa_h">Markdown を見る</button>
+      <button class="btn" data-open="yoru">夜を見る</button>
+    </div>
+    <p style="color:var(--sub);font-size:13.5px">雰囲気を選ぶと下の項目（紙・書体・文字・行間・版面）がまとめて動く。動いたあとで個別に触れる。プリセットは出発点であって、固定ではない。</p>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">05</span><h2>紙に寄せる — どこまで効いて、どこから邪魔になるか</h2></div>
+    <p>画面は発光しているので、紙にはならない。できるのは「発光している感じを減らす」ところまでで、それ以上やるとコントラストが落ちて読みにくいだけになる。調整できるものと、上限を決めておく。</p>
+    <div class="tblwrap"><table>
+      <thead><tr><th>項目</th><th>中身</th><th>実装</th></tr></thead>
+      <tbody>
+        <tr><td class="j">紙の色</td><td class="r">白磁／生成り／古紙／セピア／墨。純白は目が疲れる。既定は生成り</td><td class="r">token を差し替えるだけ</td></tr>
+        <tr><td class="j">紙の目</td><td class="r">なし／弱／中／強。ざらつきを1枚重ねる。<b>ここがいちばん効く</b></td><td class="r">SVG の <code>feTurbulence</code> を data URI で1枚。画像を読み込まないので軽い</td></tr>
+        <tr><td class="j">綴じ側の陰り</td><td class="r">本を開いたときノドが少し暗くなる、あれ。縦組みなら右、横組みなら左</td><td class="r">グラデーション1枚</td></tr>
+        <tr><td class="j">版面</td><td class="r">広く読む／標準／余白を取る。紙の本は余白が広いが、スマホで真似ると読める量が減る</td><td class="r">余白の変数1つ</td></tr>
+        <tr><td class="j">インクの濃さ</td><td class="r">本文を純黒（#000）にしない。紙側とセットで決める</td><td class="r">紙の token に同梱</td></tr>
+      </tbody>
+    </table></div>
+    <div class="notes">
+      <div><dt>上限を抑える</dt><dd>紙の目を強くすると、文字と地のコントラストが縮むだけで読みやすさは上がらない。<b>効くのは、効いていると気づかない強さまで。</b>「強」でもまだ控えめな位置に上限を置く</dd></div>
+      <div><dt>夜だけ別扱い</dt><dd>墨の紙にノイズを載せると、画面が真っ黒でなくなるので <b>OLED の省電力が消える</b>。夜の既定は「弱」にして、そこは自覚的に払う</dd></div>
+      <div><dt>描き直さない</dt><dd>ノイズは背景に固定し、ページ送りでは動かさない。送るたびに再描画すると電池を削る。めくりアニメを既定オフにしている理由と同じ</dd></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">06</span><h2>入れる機能・入れない機能</h2></div>
     <p>「読書体験を楽しむ」で普通に挙がるものの大半は、自分ひとりで使うアプリでは効かない。判断を先に書く。</p>
     <div class="tblwrap"><table>
       <thead><tr><th>機能</th><th>判断</th><th>理由</th></tr></thead>
@@ -388,6 +489,10 @@ img{max-width:100%}
         <tr><td class="j">抜き書きの再会</td><td class="j y">入れる</td><td class="r">1日1枚、過去の抜き書きを出す。研究用途では復習が効く。枚数を増やすと見なくなるので1枚固定</td></tr>
         <tr><td class="j">読了時の1問</td><td class="j y">入れる</td><td class="r">星をつけさせる代わりに「一番残った文は」を抜き書きから1つ選ばせる。読了記録が引用に繋がり、後から使える形で残る</td></tr>
         <tr><td class="j">読書の記録</td><td class="j y">入れる</td><td class="r">いつ・何分読んだかを DESK の集中セッションと同じ形で残す。冊数ではなく時間で見る</td></tr>
+        <tr><td class="j">Markdown を読む</td><td class="j y">入れる</td><td class="r">自前パーサで足りる。ThinkOS のノートを読書と同じ画面で読み返せる。ただし横組み固定</td></tr>
+        <tr><td class="j">青空文庫の取り込み</td><td class="j y">入れる</td><td class="r">アプリ内で検索して落とせる。縦組みとルビを実装する主目的でもある（第3章）</td></tr>
+        <tr><td class="j">雰囲気のプリセット</td><td class="j y">入れる</td><td class="r">組版ごと切り替える。和書と洋書で変えるべきは色ではない（第4章）</td></tr>
+        <tr><td class="j">紙の目・紙の色</td><td class="j y">入れる</td><td class="r">SVG ノイズ1枚。ただし上限は控えめに抑える（第5章）</td></tr>
         <tr><td class="j">ページめくりアニメ</td><td class="j n">既定オフ</td><td class="r">紙をめくる演出は最初の3日で邪魔になる。60fps 維持のコストと電池も払う。設定で「なし / 薄いフェード」のみ</td></tr>
         <tr><td class="j">星評価・点数</td><td class="j n">入れない</td><td class="r">他人に見せないなら★4と★5の区別に意味がない。付けるのが面倒になって記録自体が止まる</td></tr>
         <tr><td class="j">連続日数・バッジ</td><td class="j n">入れない</td><td class="r">途切れた日に開かなくなる。読書は音読やゲームと違い、1日空けるのが普通</td></tr>
@@ -398,7 +503,7 @@ img{max-width:100%}
   </section>
 
   <section>
-    <div class="shead"><span class="snum">04</span><h2>正直なところ（先に潰しておく制約）</h2></div>
+    <div class="shead"><span class="snum">07</span><h2>正直なところ（先に潰しておく制約）</h2></div>
     <div class="notes">
       <div><dt>Kindle</dt><dd><b>開けない。回避策も無い。</b>DRM があり、Web から読む手段は提供されていない。Kindle の本は「棚に登録して進捗を手で動かす・抜き書きは手打ちかカメラ」までしかできない。蔵書の大半が Kindle なら、ビューアを作る意味はほぼ無い。<b>ここが設計全体の分岐点</b>なので、作り始める前に自分の蔵書の内訳を数えたほうがいい</dd></div>
       <div><dt>EPUB</dt><dd>DRM フリーなら開ける。EPUB は zip + XHTML なので、<b>ブラウザ標準の <code>DecompressionStream('deflate-raw')</code> で展開できる</b>。epub.js のような外部ライブラリを抱えずに、ミュージックや DESK と同じ「素の ES モジュール」のまま実装できる</dd></div>
@@ -409,21 +514,22 @@ img{max-width:100%}
   </section>
 
   <section>
-    <div class="shead"><span class="snum">05</span><h2>作る順番</h2></div>
+    <div class="shead"><span class="snum">08</span><h2>作る順番</h2></div>
     <p>各段階で単体で使えるようにする。v0.1 だけで止めても損にならない構成にしてある。</p>
     <div class="tblwrap"><table>
       <thead><tr><th>版</th><th>中身</th><th>これだけで使えるか</th></tr></thead>
       <tbody>
         <tr><td class="j">v0.1</td><td>棚 ＋ 手動の進捗 ＋ 抜き書き（手打ち・カメラ OCR）＋ 読書の記録</td><td class="r"><b>使える。</b>紙でも Kindle でも成立する。ビューアが無くても困らない</td></tr>
-        <tr><td class="j">v0.2</td><td>EPUB ビューア（横組み・タップ送り・文字設定）</td><td class="r">DRM フリーの蔵書がある場合のみ効く</td></tr>
-        <tr><td class="j">v0.3</td><td>縦組み ＋ 選択からの抜き書き ＋ タブレットの分割表示</td><td class="r">ここで「読書体験」の側が完成する</td></tr>
-        <tr><td class="j">v0.4</td><td>DESK / ConTodo 連携、ドライブ同期、PDF</td><td class="r">周辺。無くても本体は回る</td></tr>
+        <tr><td class="j">v0.2</td><td><b>Markdown / テキストのビューア</b>（横組み・雰囲気・紙の調整）</td><td class="r"><b>いちばん安い。</b>手元のノートがすぐ読める。ここで表示まわりを全部作り切る</td></tr>
+        <tr><td class="j">v0.3</td><td>EPUB ビューア（横組み・タップ送り）</td><td class="r">DRM フリーの蔵書がある場合のみ効く</td></tr>
+        <tr><td class="j">v0.4</td><td><b>縦組み ＋ ルビ ＋ 青空文庫の取り込み</b>。選択からの抜き書き、タブレットの分割表示</td><td class="r">まとめて1段。青空文庫は縦組みとルビが揃って初めて意味がある</td></tr>
+        <tr><td class="j">v0.5</td><td>洋書の取り込み（共有シート）、DESK / ConTodo 連携、ドライブ同期、PDF</td><td class="r">周辺。無くても本体は回る</td></tr>
       </tbody>
     </table></div>
   </section>
 
   <section>
-    <div class="shead"><span class="snum">06</span><h2>既存アプリとの接続</h2></div>
+    <div class="shead"><span class="snum">09</span><h2>既存アプリとの接続</h2></div>
     <div class="notes">
       <div><dt>見た目</dt><dd>ミュージックのテーマ体系（墨／霧／灰／藍鉄／生成り／白磁 ＋ アクセント ＋ フォント）を<b>そのまま流用</b>する。読書アプリ側で足すのは本文の設定だけ ― 文字サイズ・行間・字送り・余白・縦横組み</dd></div>
       <div><dt>DESK</dt><dd>同一オリジンなので localStorage を共有できる。今日の読書分数を DESK の集中セッション（<code>kind: read</code>）に書く。DESK 側は何も変えずに時間が積算される</dd></div>
@@ -433,16 +539,17 @@ img{max-width:100%}
   </section>
 
   <section>
-    <div class="shead"><span class="snum">07</span><h2>保存するもの</h2></div>
+    <div class="shead"><span class="snum">10</span><h2>保存するもの</h2></div>
     <div class="tblwrap"><table>
       <thead><tr><th>ストア</th><th>中身</th></tr></thead>
       <tbody>
-        <tr><td class="j">books</td><td class="r">書誌（題・著者・形式＝紙/Kindle/EPUB/PDF・状態・入手日・読了日）</td></tr>
-        <tr><td class="j">files</td><td class="r">EPUB / PDF の実体（Blob。キーは本 ID）</td></tr>
+        <tr><td class="j">books</td><td class="r">書誌（題・著者・形式＝紙/Kindle/EPUB/PDF/Markdown/青空・出どころ・状態・入手日・読了日）</td></tr>
+        <tr><td class="j">files</td><td class="r">EPUB / PDF / Markdown の実体（Blob。キーは本 ID）</td></tr>
         <tr><td class="j">marks</td><td class="r">進捗（CFI 相当の位置／ページ番号／%）と、前回止まった位置</td></tr>
         <tr><td class="j">notes</td><td class="r">抜き書き（引用・位置・自分の反応・タグ・日時）</td></tr>
         <tr><td class="j">sessions</td><td class="r">読書セッション（本 ID・開始・分数・進んだ量）</td></tr>
-        <tr><td class="j">settings</td><td class="r">テーマ・本文設定・最後に開いていた本</td></tr>
+        <tr><td class="j">aozora</td><td class="r">青空文庫の作品索引（初回に CSV から作る。検索はここだけで済む）</td></tr>
+        <tr><td class="j">settings</td><td class="r">テーマ・雰囲気・紙の設定・本文設定・最後に開いていた本</td></tr>
       </tbody>
     </table></div>
     <p style="color:var(--sub);font-size:13.5px">ミュージックの <code>tracks / blobs / art / playlists / settings</code> と同じ分け方。実体（files）だけ別ストアにしておくと、本を消さずに実体だけ捨てて容量を空ける、ができる。</p>
@@ -456,25 +563,57 @@ img{max-width:100%}
   </section>
 </div>
 
-<div id="reader" role="dialog" aria-label="読書画面のデモ">
+<div id="reader" role="dialog" aria-label="読書画面のデモ" data-paper="kinari" data-dirmode="v">
   <div class="rline"><i id="bar"></i></div>
   <div class="stage">
-    <div class="page"><div id="flow" data-dir="v"></div></div>
+    <div class="page"><div id="flow" data-dir="v" data-style="ja"></div></div>
+    <div class="gutter"></div>
+    <div class="grain"></div>
     <div class="zones">
       <button id="zprev" aria-label="前のページ"></button>
       <button id="zui" aria-label="操作を出す"></button>
       <button id="znext" aria-label="次のページ"></button>
     </div>
     <div class="rui top" id="uitop" hidden>
-      <b>存在と時間</b>
+      <b id="rtitle">サンプル本文</b>
       <button class="xbtn" id="close">閉じる</button>
     </div>
     <div class="rui bottom" id="uibot" hidden>
+      <div class="ctl mood"><span>雰囲気</span><div class="opts" id="g-mood">
+        <button data-v="wa_v" aria-pressed="true">和・縦</button>
+        <button data-v="wa_h" aria-pressed="false">覚え書き</button>
+        <button data-v="yo" aria-pressed="false">洋・古典</button>
+        <button data-v="kenkyu" aria-pressed="false">研究</button>
+        <button data-v="yoru" aria-pressed="false">夜</button>
+      </div></div>
+      <div class="rsep"></div>
+      <div class="ctl"><span>紙</span><div class="opts" id="g-paper">
+        <button data-v="hakuji" aria-pressed="false">白磁</button>
+        <button data-v="kinari" aria-pressed="true">生成り</button>
+        <button data-v="koshi" aria-pressed="false">古紙</button>
+        <button data-v="sepia" aria-pressed="false">セピア</button>
+        <button data-v="sumi" aria-pressed="false">墨</button>
+      </div></div>
+      <div class="ctl"><span>紙の目</span><div class="opts" id="g-grain">
+        <button data-v="0" aria-pressed="false">なし</button>
+        <button data-v="0.28" aria-pressed="false">弱</button>
+        <button data-v="0.5" aria-pressed="true">中</button>
+        <button data-v="0.78" aria-pressed="false">強</button>
+      </div></div>
+      <div class="ctl"><span>版面</span><div class="opts" id="g-mg">
+        <button data-v="16" aria-pressed="false">広く読む</button>
+        <button data-v="26" aria-pressed="true">標準</button>
+        <button data-v="42" aria-pressed="false">余白を取る</button>
+      </div></div>
+      <div class="rsep"></div>
       <div class="ctl"><span>組み方</span><div class="opts" id="g-dir">
-        <button data-v="v" aria-pressed="true">縦組み</button><button data-v="h" aria-pressed="false">横組み</button>
+        <button data-v="v" aria-pressed="true">縦組み</button>
+        <button data-v="h" aria-pressed="false">横組み</button>
       </div></div>
       <div class="ctl"><span>書体</span><div class="opts" id="g-fam">
-        <button data-v="serif" aria-pressed="true">明朝</button><button data-v="sans" aria-pressed="false">ゴシック</button>
+        <button data-v="serif" aria-pressed="true">明朝</button>
+        <button data-v="sans" aria-pressed="false">ゴシック</button>
+        <button data-v="enserif" aria-pressed="false">欧文セリフ</button>
       </div></div>
       <div class="ctl"><span>文字</span><div class="opts" id="g-fs">
         <button data-v="15" aria-pressed="false">小</button><button data-v="17" aria-pressed="true">中</button>
@@ -486,73 +625,131 @@ img{max-width:100%}
       </div></div>
     </div>
   </div>
-  <div class="rfoot"><span id="chap">第一篇 第二章</span><span id="left">この章 あと 12 分</span></div>
+  <div class="rfoot"><span id="chap">表示確認用のダミー本文</span><span id="left">この章 あと 12 分</span></div>
 </div>
 
 <script>
 (function(){
-  var TEXT = [
-    "存在への問いは、今日では忘れられている。とはいえ、この問いが忘れられているということ自体は、けっして自明の事柄ではない。むしろ問いが忘却されえたという事実のうちに、問いそのものの性格が現れている。",
-    "問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。われわれは、存在とは何かをあらかじめ何ほどか了解しているからこそ、存在を問うことができる。この了解は漠然としており、概念の形をとっていない。しかしそれが皆無であるなら、問いを発することすらできないはずである。",
-    "したがって存在への問いは、外から持ちこまれるものではなく、現存在そのものの構造から立ちあがってくる。この事情を、循環であると言って退けることはできない。退けた瞬間に、問いを発している自分自身の足場もまた失われるからである。",
-    "現存在はそのつど、みずからの存在においてこの存在そのものへとかかわっている。かかわりのうちで、現存在は自分自身へと開かれている。開かれているとは、明るく照らされているという意味ではない。むしろ、気づかぬまま巻きこまれている、という意味に近い。",
-    "だからこそ分析は、特別な瞬間ではなく、平均的な日常性から始められなければならない。祭りの日ではなく、何でもない午後の、誰でもない振る舞いのうちに、探されているものは潜んでいる。",
-    "ここまでが準備である。以下では、この地盤の上に立って、時間という手がかりを取り出す作業に移る。急ぐ必要はない。問いの形が正確であれば、答えはあとから追いついてくる。"
-  ];
+  // 表示確認用のダミー本文。実在の書籍の文章ではない。
+  var TEXT = {
+    ja: ['<p>紙の本を読むとき、指は次のページの端をさわっている。残りがどれだけあるかを、数えずに知っている。画面にはこれが無い。だから残量は数字で補うしかないのだが、ページ数は補いになっていない。読む速さを知らない数字だからだ。</p>',
+      '<p>実測すればいい。一行に何秒かかったかは、ページを送った間隔からわかる。十ページも読めばその人の速さは出る。あとは残りの字数を割ればいい。「あと四十二ページ」より「あと十八分」のほうが、寝る前に読み続けるかどうかを決められる。</p>',
+      '<p>組み方も同じことで、縦に組むか横に組むかは好みの問題ではない。日本語の小説は縦で書かれ、縦で読まれることを前提に句読点の位置が決まっている。横に流し替えた瞬間、息の切れる場所がずれる。だから縦組みは飾りではなく、もとの形に戻す作業にあたる。</p>',
+      '<p>もっとも、すべてを縦にすればいいわけでもない。箇条書きと図表と引用が交互に出てくる文章を縦に組むと、どこを見ればいいかわからなくなる。縦が効くのは地の文が続くものだけで、覚え書きの類は横のほうがいい。</p>',
+      '<p>紙の質感についても、同じ線引きが要る。わずかな地の色とざらつきは目を楽にするが、強くすれば文字との差が縮まって読みにくくなるだけだ。効くのは、効いていると気づかない程度までである。</p>',
+      '<p>ここまでが表示の話で、以下では取り込みの話に移る。読めない本をどう扱うかを決めておかないと、棚そのものが使えなくなる。</p>'],
+    md: ['<h2>読書ノート — 方法について</h2>',
+      '<p>覚え書きは縦組みにしない。見出しと箇条書きが混ざる文章は、横で読むほうが速い。</p>',
+      '<h3>決めたこと</h3>',
+      '<ul><li>引用と自分の反応は必ず対で残す</li><li>タグは三つまで。増やすと検索しなくなる</li><li>読み返しは一日一枚だけ出す</li></ul>',
+      '<blockquote>問いの形が正確であれば、答えはあとから追いついてくる。</blockquote>',
+      '<p>この形式なら <code>.md</code> のまま書き出して、そのまま研究用のノートに積める。書き出しと取り込みが同じ形なら、どちらの方向にも動かせる。</p>',
+      '<hr>',
+      '<h3>次に確かめること</h3>',
+      '<ul><li>手元の蔵書の内訳を数える</li><li>取り込みが通る配信元を実測する</li></ul>',
+      '<p>数えるまでは、どこから作るかを決めない。</p>'],
+    en: ['<p>The reader of a printed book is always touching the edge of what remains. No number is consulted; the hand simply knows. A screen withholds this, and the usual remedy, a page count, restores nothing, because a page count knows nothing about the person holding it.</p>',
+      '<p>Measure instead. The interval between one turn and the next is the reading speed, and ten pages are enough to establish it. Divide what is left by what was observed. Eighteen minutes is a fact one can act on at midnight; forty-two pages is not.</p>',
+      '<p>Typesetting follows the same rule. A line of English wants a measure of roughly sixty-five characters, hyphenation at the margin, and a first line that does not indent. Give it those, and the page stops announcing that it is a screen.</p>',
+      '<p>Texture is the last of it, and the easiest to overdo. A faint tone in the ground and a grain too fine to resolve will rest the eye. Push either one further and the letters begin to compete with the paper they sit on, which is the opposite of what was wanted.</p>']
+  };
+  var PRESET = {
+    wa_v:  {dir:'v',fam:'serif',  fs:'17',lh:'2',   paper:'kinari',grain:'0.5', mg:'26',style:'ja',text:'ja',title:'サンプル本文（和・縦）'},
+    wa_h:  {dir:'h',fam:'sans',   fs:'16',lh:'1.9', paper:'hakuji',grain:'0',   mg:'26',style:'ja',text:'md',title:'読書ノート（Markdown）'},
+    yo:    {dir:'h',fam:'enserif',fs:'18',lh:'1.6', paper:'koshi', grain:'0.5', mg:'42',style:'en',text:'en',title:'Sample Text (Western)'},
+    kenkyu:{dir:'h',fam:'sans',   fs:'15',lh:'1.85',paper:'hakuji',grain:'0',   mg:'16',style:'ja',text:'ja',title:'サンプル本文（研究）'},
+    yoru:  {dir:'v',fam:'serif',  fs:'17',lh:'2.05',paper:'sumi',  grain:'0.28',mg:'26',style:'ja',text:'ja',title:'サンプル本文（夜）'}
+  };
   var R=document.getElementById('reader'), flow=document.getElementById('flow');
   var bar=document.getElementById('bar'), left=document.getElementById('left');
   var uitop=document.getElementById('uitop'), uibot=document.getElementById('uibot');
-  var page=0, pages=1, W=0;
+  var rtitle=document.getElementById('rtitle');
+  var page=0, pages=1, W=0, cur='wa_v';
 
-  flow.innerHTML = TEXT.map(function(t){return '<p>'+t+'</p>';}).join('');
+  function setText(k){ flow.innerHTML = TEXT[k].join(''); }
+  setText('ja');
 
   function measure(){
     var box = flow.parentNode.getBoundingClientRect();
-    W = Math.round(box.width);
-    var H = Math.round(box.height);
+    W = Math.max(1, Math.round(box.width));
+    var H = Math.max(1, Math.round(box.height));
     if(flow.dataset.dir==='v'){
-      flow.style.height = H+'px'; flow.style.width='auto';
-      flow.style.columnWidth=''; flow.style.columns='';
+      flow.style.height=H+'px'; flow.style.width='auto'; flow.style.columnWidth='';
     }else{
-      flow.style.height = H+'px'; flow.style.width = W+'px';
-      flow.style.columnWidth = W+'px';
+      flow.style.height=H+'px'; flow.style.width=W+'px'; flow.style.columnWidth=W+'px';
     }
-    var total = flow.dataset.dir==='v' ? flow.scrollWidth : flow.scrollWidth;
-    pages = Math.max(1, Math.round(total / W));
+    pages = Math.max(1, Math.round(flow.scrollWidth / W));
     if(page > pages-1) page = pages-1;
+    if(page < 0) page = 0;
     render();
   }
   function render(){
-    var x = flow.dataset.dir==='v' ? page*W : -page*W;
-    flow.style.transform = 'translateX('+x+'px)';
-    var pct = pages<2 ? 1 : (page+1)/pages;
-    bar.style.width = (pct*100).toFixed(1)+'%';
+    flow.style.transform = 'translateX(' + (flow.dataset.dir==='v' ? page*W : -page*W) + 'px)';
+    bar.style.width = ((pages<2 ? 1 : (page+1)/pages)*100).toFixed(1)+'%';
     var mins = Math.max(0, Math.round((pages-1-page)*1.6));
     left.textContent = mins>0 ? ('この章 あと '+mins+' 分') : 'この章 おわり';
   }
   function go(d){ page = Math.min(pages-1, Math.max(0, page+d)); render(); }
+  function relayout(){ flow.style.transform='none'; requestAnimationFrame(measure); }
+
+  function press(id, v){
+    var g=document.getElementById(id);
+    [].forEach.call(g.querySelectorAll('button'), function(x){
+      x.setAttribute('aria-pressed', x.dataset.v===String(v) ? 'true':'false');
+    });
+  }
+  var FAM={serif:'var(--serif)', sans:'var(--sans)', enserif:'var(--enserif)'};
+  function applyFam(v){ R.style.setProperty('--fam', FAM[v]||FAM.serif); }
+  function applyDir(v){ flow.dataset.dir=v; R.dataset.dirmode=v; }
+
+  function applyPreset(k){
+    var P=PRESET[k]; if(!P) return;
+    cur=k; page=0;
+    setText(P.text);
+    flow.dataset.style=P.style;
+    applyDir(P.dir); applyFam(P.fam);
+    R.style.setProperty('--fs', P.fs+'px');
+    R.style.setProperty('--lh', P.lh);
+    R.style.setProperty('--grain', P.grain);
+    R.style.setProperty('--mg', P.mg+'px');
+    R.dataset.paper=P.paper;
+    rtitle.textContent=P.title;
+    press('g-mood',k); press('g-paper',P.paper); press('g-grain',P.grain);
+    press('g-mg',P.mg); press('g-dir',P.dir); press('g-fam',P.fam);
+    press('g-fs',P.fs); press('g-lh',P.lh);
+    relayout();
+  }
+
+  function group(id, fn){
+    document.getElementById(id).addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b) return;
+      press(id, b.dataset.v); fn(b.dataset.v);
+    });
+  }
+  group('g-mood', applyPreset);
+  group('g-paper',function(v){ R.dataset.paper=v; });
+  group('g-grain',function(v){ R.style.setProperty('--grain', v); });
+  group('g-mg',   function(v){ R.style.setProperty('--mg', v+'px'); relayout(); });
+  group('g-dir',  function(v){ applyDir(v); page=0; relayout(); });
+  group('g-fam',  function(v){ applyFam(v); relayout(); });
+  group('g-fs',   function(v){ R.style.setProperty('--fs', v+'px'); relayout(); });
+  group('g-lh',   function(v){ R.style.setProperty('--lh', v); relayout(); });
 
   document.getElementById('znext').onclick=function(){go(1);};
   document.getElementById('zprev').onclick=function(){go(-1);};
   document.getElementById('zui').onclick=function(){
-    var h = uitop.hidden; uitop.hidden=!h; uibot.hidden=!h;
+    var h=uitop.hidden; uitop.hidden=!h; uibot.hidden=!h;
   };
-  function group(id, fn){
-    var g=document.getElementById(id);
-    g.addEventListener('click', function(e){
-      var b=e.target.closest('button'); if(!b) return;
-      [].forEach.call(g.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b?'true':'false');});
-      fn(b.dataset.v);
-    });
-  }
-  group('g-dir', function(v){ flow.dataset.dir=v; flow.style.transform='none'; page=0; requestAnimationFrame(measure); });
-  group('g-fam', function(v){ flow.style.setProperty('--fam', v==='serif'?'var(--serif)':'var(--sans)'); requestAnimationFrame(measure); });
-  group('g-fs',  function(v){ flow.style.setProperty('--fs', v+'px'); requestAnimationFrame(measure); });
-  group('g-lh',  function(v){ flow.style.setProperty('--lh', v); requestAnimationFrame(measure); });
 
-  function open(){ R.classList.add('open'); page=0; requestAnimationFrame(measure); }
-  document.getElementById('open').onclick=open;
-  document.getElementById('open2').onclick=open;
+  function open(mood){
+    R.classList.add('open');
+    applyPreset(mood || cur);
+  }
+  document.getElementById('open').onclick=function(){open('wa_v');};
+  document.getElementById('open2').onclick=function(){open(cur);};
+  [].forEach.call(document.querySelectorAll('[data-open]'), function(el){
+    el.onclick=function(){ open(el.dataset.open); };
+  });
   document.getElementById('close').onclick=function(){ R.classList.remove('open'); };
   document.addEventListener('keydown', function(e){
     if(!R.classList.contains('open')) return;
@@ -562,21 +759,19 @@ img{max-width:100%}
   });
   window.addEventListener('resize', function(){ if(R.classList.contains('open')) measure(); });
 
-  // タブレット枠を親の幅に合わせて縮小
   function fitTab(){
     var scr=document.getElementById('tabscr'), inner=document.getElementById('tabinner');
     if(!scr) return;
-    var s = scr.clientWidth/1024;
-    inner.style.transform='scale('+s+')';
+    inner.style.transform='scale('+(scr.clientWidth/1024)+')';
   }
   fitTab(); window.addEventListener('resize', fitTab);
   if(document.fonts && document.fonts.ready) document.fonts.ready.then(fitTab);
 
   var root=document.documentElement;
   document.getElementById('theme').onclick=function(){
-    var cur = root.getAttribute('data-theme');
-    if(!cur){ cur = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark':'light'; }
-    root.setAttribute('data-theme', cur==='dark'?'light':'dark');
+    var c=root.getAttribute('data-theme');
+    if(!c) c = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark':'light';
+    root.setAttribute('data-theme', c==='dark'?'light':'dark');
   };
 })();
 </script>
