@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DESK</string>
+    <string name="tab_desk">作業画面</string>
+    <string name="tab_focus">集中（ConTodo）</string>
+    <string name="tab_reload">更新</string>
+
+    <string name="widget_timeline">今日の流れ</string>
+    <string name="widget_timeline_desc">いまの予定と次の予定を出す。</string>
+    <string name="widget_tasks">やること</string>
+    <string name="widget_tasks_desc">残っているタスクと次の一歩を出す。</string>
+    <string name="widget_focus">集中</string>
+    <string name="widget_focus_desc">今日の集中時間と連続日数を出す。</string>
+</resources>
