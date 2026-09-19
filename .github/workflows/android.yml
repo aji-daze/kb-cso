@@ -26,7 +26,12 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      # ランナーには Android SDK が最初から入っている。
+      # setup-android は廃止された tools パッケージを取りに行って落ちるので使わない。
+      - name: show sdk
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
 
       - name: build apk
         run: |

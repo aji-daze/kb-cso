@@ -39,6 +39,7 @@ const Store = (() => {
     ],
     notes: '',
     links: [
+      { id: 'l0', label: 'ConTodo', url: 'https://aji-daze.github.io/chakushu/' },
       { id: 'l1', label: 'メール', url: 'https://mail.google.com/' },
       { id: 'l2', label: 'カレンダー', url: 'https://calendar.google.com/' },
       { id: 'l3', label: 'ドライブ', url: 'https://drive.google.com/' },
