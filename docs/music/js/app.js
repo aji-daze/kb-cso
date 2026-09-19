@@ -5,7 +5,52 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.7.0';
+
+/* ============================ 見た目（テーマ・アクセント・フォント） ============================
+   色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
+   ここに持つ表は、ダイアログの見本（実際の配色）を出すためのもの。 */
+const THEMES = [
+  { id: 'sumi', name: '墨', bg: '#0b0b0d', surface: '#1c1c21', tx: '#f2f2f4' },
+  { id: 'kiri', name: '霧', bg: '#16181c', surface: '#272b31', tx: '#e3e6ea' },
+  { id: 'hai', name: '灰', bg: '#1a1a1a', surface: '#2b2b2b', tx: '#ededed' },
+  { id: 'aitetsu', name: '藍鉄', bg: '#0e1319', surface: '#1d252f', tx: '#e6ebf1' },
+  { id: 'kinari', name: '生成り', bg: '#f5f3ef', surface: '#ebe7e0', tx: '#26231f' },
+  { id: 'hakuji', name: '白磁', bg: '#ffffff', surface: '#f3f3f5', tx: '#17171a' },
+];
+const ACCENTS = [
+  { id: 'kohaku', name: '琥珀', c: '#d79a5f' },
+  { id: 'sabi', name: '錆', c: '#c1705a' },
+  { id: 'koke', name: '苔', c: '#839472' },
+  { id: 'fuji', name: '藤', c: '#9b8fc2' },
+  { id: 'toki', name: '鴇', c: '#cd8f9a' },
+  { id: 'asagi', name: '浅葱', c: '#6f9ba3' },
+  { id: 'ai', name: '藍', c: '#7f90b4' },
+  { id: 'karashi', name: '芥子', c: '#bda55f' },
+  { id: 'kuwa', name: '桑', c: '#a9808f' },
+  { id: 'mono', name: 'モノクロ', c: null },
+];
+const FONTS = [
+  { id: 'system', name: 'システム標準', family: '-apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Roboto, sans-serif' },
+  { id: 'gothic', name: 'ゴシック', family: '"Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif' },
+  { id: 'mincho', name: '明朝', family: '"Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", YuMincho, serif' },
+  { id: 'maru', name: '丸ゴシック', family: '"Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", "Noto Sans JP", sans-serif' },
+];
+
+function applyAppearance() {
+  const theme = db.setting('theme', 'sumi');
+  const accent = db.setting('accent', 'kohaku');
+  const font = db.setting('font', 'system');
+  document.body.dataset.theme = theme;
+  document.body.dataset.accent = accent;
+  document.body.dataset.font = font;
+  // Android の通知バーの色をテーマに合わせる
+  const t = THEMES.find((x) => x.id === theme) || THEMES[0];
+  const meta = document.querySelector('meta[name=theme-color]');
+  if (meta) meta.setAttribute('content', t.bg);
+  const cs = document.querySelector('meta[name=color-scheme]');
+  if (cs) cs.setAttribute('content', t.id === 'kinari' || t.id === 'hakuji' ? 'light' : 'dark');
+}
 
 /* ---- ホーム画面へのインストール ----
    Chrome は条件を満たすと beforeinstallprompt をくれるので、それを取っておいて
@@ -2726,7 +2771,19 @@ async function renderSettings() {
     ? 'タップするとホーム画面に追加できます'
     : '追加のしかたを表示します';
 
+  const themeNow = THEMES.find((x) => x.id === db.setting('theme', 'sumi')) || THEMES[0];
+  const accentNow = ACCENTS.find((x) => x.id === db.setting('accent', 'kohaku')) || ACCENTS[0];
+  const fontNow = FONTS.find((x) => x.id === db.setting('font', 'system')) || FONTS[0];
+
   body.innerHTML = `
+    <div class="sec">見た目</div>
+    <div class="item" data-act="theme"><div class="txt"><div class="t">テーマ</div>
+      <div class="s">${esc(themeNow.name)}</div></div><span class="sw-dot"></span></div>
+    <div class="item" data-act="accent"><div class="txt"><div class="t">アクセントカラー</div>
+      <div class="s">${esc(accentNow.name)}</div></div><span class="sw-dot acc"></span></div>
+    <div class="item" data-act="font"><div class="txt"><div class="t">フォント</div>
+      <div class="s">${esc(fontNow.name)}・端末に無い書体は標準で表示されます</div></div></div>
+
     <div class="sec">アプリとして使う</div>
     <div class="item" data-act="install"><svg style="color:${installed ? 'var(--acc)' : 'var(--sub)'}"><use href="#i-install"/></svg>
       <div class="txt"><div class="t">${installed ? 'インストール済み' : 'ホーム画面に追加'}</div><div class="s">${installSub}</div></div></div>
@@ -2793,6 +2850,9 @@ async function renderSettings() {
     }
     n.onclick = async () => {
       if (act === 'playLog') showPlayLog();
+      else if (act === 'theme') openThemeDialog();
+      else if (act === 'accent') openAccentDialog();
+      else if (act === 'font') openFontDialog();
       else if (act === 'install') await installFlow();
       else if (act === 'pickFiles') $('#filePick').click();
       else if (act === 'pickDir') $('#dirPick').click();
@@ -2840,6 +2900,82 @@ async function renderSettings() {
         toast('削除しました');
       }
     };
+  });
+}
+
+/* ---- テーマ選択ダイアログ（実際の配色の小さな見本を並べる） ---- */
+function openThemeDialog() {
+  const current = db.setting('theme', 'sumi');
+  const html =
+    `<h3>テーマ</h3>` +
+    THEMES.map((t) => {
+      const sel = t.id === current;
+      return `<div class="theme-opt${sel ? ' sel' : ''}" data-id="${t.id}">
+        <span class="swatch"><span style="background:${t.bg}"></span><span style="background:${t.surface}"></span><span style="background:${t.tx}"></span></span>
+        <span class="name">${esc(t.name)}</span>
+        ${sel ? '<svg><use href="#i-check"/></svg>' : ''}
+      </div>`;
+    }).join('');
+  openDialog(html, (root) => {
+    root.querySelectorAll('.theme-opt').forEach((n) => {
+      n.addEventListener('click', async () => {
+        await db.setSetting('theme', n.dataset.id);
+        applyAppearance();
+        closeDialog();
+        renderSettings();
+      });
+    });
+  });
+}
+
+/* ---- アクセント選択ダイアログ（丸をグリッドで並べる） ---- */
+function openAccentDialog() {
+  const current = db.setting('accent', 'kohaku');
+  const html =
+    `<h3>アクセントカラー</h3><div class="acc-grid">` +
+    ACCENTS.map((a) => {
+      const sel = a.id === current;
+      const bg = a.c ? a.c : 'var(--tx)';
+      return `<div class="acc-opt${sel ? ' sel' : ''}" data-id="${a.id}">
+        <span class="dot" style="background:${bg}">${sel ? '<svg><use href="#i-check"/></svg>' : ''}</span>
+        <span class="label">${esc(a.name)}</span>
+      </div>`;
+    }).join('') +
+    `</div>`;
+  openDialog(html, (root) => {
+    root.querySelectorAll('.acc-opt').forEach((n) => {
+      n.addEventListener('click', async () => {
+        await db.setSetting('accent', n.dataset.id);
+        applyAppearance();
+        closeDialog();
+        renderSettings();
+      });
+    });
+  });
+}
+
+/* ---- フォント選択ダイアログ（各項目をその書体で見せる） ----
+   menuDialog は esc() でラベルを通すだけなので、見本を出すためにここで自前で組む。 */
+function openFontDialog() {
+  const current = db.setting('font', 'system');
+  const html =
+    `<h3>フォント</h3>` +
+    FONTS.map((f) => {
+      const sel = f.id === current;
+      return `<div class="font-opt${sel ? ' sel' : ''}" data-id="${f.id}">
+        <span class="sample" style="font-family:${f.family}">${esc(f.name)}：あのイーハトーヴォ Aa</span>
+      </div>`;
+    }).join('') +
+    `<div class="pad"><div class="note">端末に無い書体を選ぶと、標準の書体で表示されることがあります。</div></div>`;
+  openDialog(html, (root) => {
+    root.querySelectorAll('.font-opt').forEach((n) => {
+      n.addEventListener('click', async () => {
+        await db.setSetting('font', n.dataset.id);
+        applyAppearance();
+        closeDialog();
+        renderSettings();
+      });
+    });
   });
 }
 
@@ -3690,6 +3826,7 @@ async function restorePlayback() {
 async function init() {
   history.replaceState({ n: 0 }, '');
   await db.loadSettings();
+  applyAppearance();
 
   // reload をまたいで消えないよう、保存してあった再生の記録を読み戻す
   const savedLog = db.setting('playLog', []);
