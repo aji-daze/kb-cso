@@ -164,15 +164,15 @@
     const blocks = Timeline.todaysBlocks().map((b) => ({
       title: b.title, start: b.start, end: b.end, kind: b.kind || 'work', src: b.src || 'desk',
     }));
-    const tasks = Tasks.all().filter((t) => !t.done).slice(0, 8)
-      .map((t) => ({ text: t.text, step: t.step || '', src: t.src }));
+    const undone = Tasks.all().filter((t) => !t.done);
+    const tasks = undone.slice(0, 8).map((t) => ({ text: t.text, step: t.step || '', src: t.src }));
     const s = Store.get();
     const key = U.dateKey(now);
     const focus = (Bridge.available() && Bridge.focus(key)) || s.focusLog[key] || { count: 0, min: 0 };
     const snap = {
       at: Date.now(),
       dayStart: s.settings.dayStart, dayEnd: s.settings.dayEnd,
-      now: U.hm(cur), blocks, tasks, focus,
+      now: U.hm(cur), blocks, tasks, remain: undone.length, focus,
       running: !!s.timer || !!(Bridge.available() && Bridge.runningTimer()),
     };
     const json = JSON.stringify(snap);
