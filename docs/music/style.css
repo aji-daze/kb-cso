@@ -26,43 +26,46 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
-/* ---------- テーマ（下地・面・文字・影・スクリム等） ---------- */
-body[data-theme="sumi"] {
+/* ---------- テーマ（下地・面・文字・影・スクリム等） ----------
+   セレクタを body に限定しない。<html> にも同じ印を付けて両方に当てる。
+   body だけに当てると、<html> が :root の既定値（黒）のままになり、
+   body の高さ（画面1枚分）を超えてスクロールしたときに下地の色が変わってしまう。 */
+[data-theme="sumi"] {
   --bg: #0b0b0d; --surface: #141417; --surface2: #1c1c21; --line: #26262c;
   --tx: #f2f2f4; --sub: #8b8b95; --ph: #3a3a42; --knob: #ffffff;
   --scrim: rgba(0, 0, 0, .62); --shadow: 0 6px 20px rgba(0, 0, 0, .45);
   --shadow-lg: 0 18px 44px rgba(0, 0, 0, .55);
   --toast-bg: #2a2a31; --toast-tx: #ffffff; --danger: #e5645c;
 }
-body[data-theme="kiri"] {
+[data-theme="kiri"] {
   --bg: #16181c; --surface: #1e2126; --surface2: #272b31; --line: #343941;
   --tx: #e3e6ea; --sub: #8b9199; --ph: #454b54; --knob: #ffffff;
   --scrim: rgba(10, 12, 15, .62); --shadow: 0 6px 20px rgba(0, 0, 0, .4);
   --shadow-lg: 0 18px 44px rgba(0, 0, 0, .5);
   --toast-bg: #30353c; --toast-tx: #f0f2f5; --danger: #d97a72;
 }
-body[data-theme="hai"] {
+[data-theme="hai"] {
   --bg: #1a1a1a; --surface: #222222; --surface2: #2b2b2b; --line: #383838;
   --tx: #ededed; --sub: #9a9a9a; --ph: #4a4a4a; --knob: #ffffff;
   --scrim: rgba(0, 0, 0, .6); --shadow: 0 6px 20px rgba(0, 0, 0, .4);
   --shadow-lg: 0 18px 44px rgba(0, 0, 0, .5);
   --toast-bg: #333333; --toast-tx: #f5f5f5; --danger: #df6f68;
 }
-body[data-theme="aitetsu"] {
+[data-theme="aitetsu"] {
   --bg: #0e1319; --surface: #151c24; --surface2: #1d252f; --line: #2a333f;
   --tx: #e6ebf1; --sub: #8593a3; --ph: #3b4653; --knob: #ffffff;
   --scrim: rgba(4, 8, 12, .65); --shadow: 0 6px 20px rgba(0, 0, 0, .45);
   --shadow-lg: 0 18px 44px rgba(0, 0, 0, .55);
   --toast-bg: #26313d; --toast-tx: #eef2f6; --danger: #e0736b;
 }
-body[data-theme="kinari"] {
+[data-theme="kinari"] {
   --bg: #f5f3ef; --surface: #fffdf9; --surface2: #ebe7e0; --line: #dcd6cc;
   --tx: #26231f; --sub: #6e675d; --ph: #c3bcb0; --knob: #ffffff;
   --scrim: rgba(40, 35, 28, .4); --shadow: 0 6px 20px rgba(80, 70, 55, .16);
   --shadow-lg: 0 16px 40px rgba(80, 70, 55, .22);
   --toast-bg: #332f2a; --toast-tx: #f8f6f2; --danger: #bf4f47;
 }
-body[data-theme="hakuji"] {
+[data-theme="hakuji"] {
   --bg: #ffffff; --surface: #ffffff; --surface2: #f3f3f5; --line: #e6e6e9;
   --tx: #17171a; --sub: #717179; --ph: #cdcdd3; --knob: #ffffff;
   --scrim: rgba(20, 20, 25, .38); --shadow: 0 6px 20px rgba(20, 20, 30, .12);
@@ -71,27 +74,27 @@ body[data-theme="hakuji"] {
 }
 
 /* ---------- アクセントカラー ---------- */
-body[data-accent="kohaku"] { --acc: #d79a5f; --on-acc: #1a1510; }
-body[data-accent="sabi"] { --acc: #c1705a; --on-acc: #1c1210; }
-body[data-accent="koke"] { --acc: #839472; --on-acc: #121510; }
-body[data-accent="fuji"] { --acc: #9b8fc2; --on-acc: #15121c; }
-body[data-accent="toki"] { --acc: #cd8f9a; --on-acc: #1c1315; }
-body[data-accent="asagi"] { --acc: #6f9ba3; --on-acc: #101618; }
-body[data-accent="ai"] { --acc: #7f90b4; --on-acc: #101319; }
-body[data-accent="karashi"] { --acc: #bda55f; --on-acc: #1a1610; }
-body[data-accent="kuwa"] { --acc: #a9808f; --on-acc: #1b1317; }
-body[data-accent="mono"] { --acc: var(--tx); --on-acc: var(--bg); }
+[data-accent="kohaku"] { --acc: #d79a5f; --on-acc: #1a1510; }
+[data-accent="sabi"] { --acc: #c1705a; --on-acc: #1c1210; }
+[data-accent="koke"] { --acc: #839472; --on-acc: #121510; }
+[data-accent="fuji"] { --acc: #9b8fc2; --on-acc: #15121c; }
+[data-accent="toki"] { --acc: #cd8f9a; --on-acc: #1c1315; }
+[data-accent="asagi"] { --acc: #6f9ba3; --on-acc: #101618; }
+[data-accent="ai"] { --acc: #7f90b4; --on-acc: #101319; }
+[data-accent="karashi"] { --acc: #bda55f; --on-acc: #1a1610; }
+[data-accent="kuwa"] { --acc: #a9808f; --on-acc: #1b1317; }
+[data-accent="mono"] { --acc: var(--tx); --on-acc: var(--bg); }
 
 /* mono はアクセントで見分けが付かない分を太さで補う */
-body[data-accent="mono"] .row.playing .t { font-weight: 700; }
-body[data-accent="mono"] .dialog .opt.sel { font-weight: 700; }
-body[data-accent="mono"] .tool.on { font-weight: 700; }
+[data-accent="mono"] .row.playing .t { font-weight: 700; }
+[data-accent="mono"] .dialog .opt.sel { font-weight: 700; }
+[data-accent="mono"] .tool.on { font-weight: 700; }
 
 /* ---------- フォント ---------- */
-body[data-font="system"] { --font: -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Roboto, sans-serif; }
-body[data-font="gothic"] { --font: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
-body[data-font="mincho"] { --font: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", YuMincho, serif; }
-body[data-font="maru"] { --font: "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", "Noto Sans JP", sans-serif; }
+[data-font="system"] { --font: -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Roboto, sans-serif; }
+[data-font="gothic"] { --font: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
+[data-font="mincho"] { --font: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", YuMincho, serif; }
+[data-font="maru"] { --font: "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", "Noto Sans JP", sans-serif; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }

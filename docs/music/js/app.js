@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -41,9 +41,13 @@ function applyAppearance() {
   const theme = db.setting('theme', 'sumi');
   const accent = db.setting('accent', 'kohaku');
   const font = db.setting('font', 'system');
-  document.body.dataset.theme = theme;
-  document.body.dataset.accent = accent;
-  document.body.dataset.font = font;
+  // <html> と <body> の両方に印を付ける。<html> に無いと、スクロールして
+  // body の箱（画面1枚分）を超えたところで既定の色が見えてしまう。
+  for (const el of [document.documentElement, document.body]) {
+    el.dataset.theme = theme;
+    el.dataset.accent = accent;
+    el.dataset.font = font;
+  }
   // Android の通知バーの色をテーマに合わせる
   const t = THEMES.find((x) => x.id === theme) || THEMES[0];
   const meta = document.querySelector('meta[name=theme-color]');
