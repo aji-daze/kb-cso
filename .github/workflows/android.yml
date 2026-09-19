@@ -1,0 +1,55 @@
+name: android-apk
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: build apk
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+
+      - name: rename
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/*.apk out/desk-${GITHUB_SHA::7}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desk-apk
+          path: android/out/*.apk
+          if-no-files-found: error
+
+      # タグ（android-v1.0 など）を押したときだけ Releases に置く。
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" out/*.apk \
+            --title "DESK ${GITHUB_REF_NAME}" \
+            --notes "ホーム画面ウィジェット付きの DESK。端末にそのまま入れて使う（debug 署名）。"
