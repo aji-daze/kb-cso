@@ -32,8 +32,9 @@ const Clock = (() => {
     ring('ringDay', dayRatio);
     U.el('dayPct').textContent = Math.round(Math.max(0, Math.min(1, dayRatio)) * 100) + '%';
 
-    const total = s.tasks.length;
-    const done = s.tasks.filter((t) => t.done).length;
+    const list = typeof Tasks !== 'undefined' ? Tasks.all() : s.tasks;
+    const total = list.length;
+    const done = list.filter((t) => t.done).length;
     ring('ringTask', total ? done / total : 0);
     U.el('taskPct').textContent = total ? Math.round((done / total) * 100) + '%' : '—';
     U.el('statRemain').textContent = total - done;

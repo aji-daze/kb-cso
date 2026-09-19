@@ -27,7 +27,10 @@ const Store = (() => {
 
   const DEFAULTS = {
     v: 1,
-    settings: { theme: 'dark', dayStart: '09:00', dayEnd: '18:00', focusMin: 25, breakMin: 5 },
+    settings: {
+      theme: 'dark', skin: 'glass', wallpaper: 'waves',
+      dayStart: '09:00', dayEnd: '18:00', focusMin: 25, breakMin: 5,
+    },
     tasks: [],
     blocks: [
       { id: 'b1', title: '朝の確認', start: '09:00', end: '09:30', kind: 'work', repeat: 'weekdays', date: null },

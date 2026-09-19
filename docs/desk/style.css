@@ -34,6 +34,51 @@
   color-scheme: light;
 }
 
+/* ---------- 半透明スキン（参考画像のロック画面に寄せたもの） ---------- */
+[data-skin="glass"] {
+  --surface: rgba(16, 16, 20, .46);
+  --surface2: rgba(255, 255, 255, .06);
+  --line: rgba(255, 255, 255, .10);
+  --line2: rgba(255, 255, 255, .22);
+  --tx: #f4f4f6;
+  --sub: rgba(244, 244, 246, .62);
+  --dim: rgba(0, 0, 0, .18);
+}
+[data-skin="glass"][data-theme="light"] {
+  --surface: rgba(255, 255, 255, .55);
+  --surface2: rgba(255, 255, 255, .42);
+  --line: rgba(0, 0, 0, .08);
+  --line2: rgba(0, 0, 0, .16);
+  --tx: #16181c;
+  --sub: rgba(22, 24, 28, .58);
+  --dim: rgba(255, 255, 255, .10);
+}
+
+/* 壁紙と、文字を読ませるための薄い膜 */
+body::before, body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none;
+}
+body::before { z-index: -2; background: var(--bg) var(--wall, none) center / cover no-repeat; }
+body::after { z-index: -1; background: var(--dim, transparent); }
+[data-skin="solid"] body::before { background-image: none; }
+
+[data-skin="glass"] body { background: transparent; }
+[data-skin="glass"] .panel,
+[data-skin="glass"] .bar,
+[data-skin="glass"] .dock,
+[data-skin="glass"] .modal {
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+}
+[data-skin="glass"] .clock { font-weight: 200; letter-spacing: -.01em; }
+[data-skin="glass"] .timer { font-weight: 200; }
+[data-skin="glass"] .btn.primary { background: rgba(255, 255, 255, .88); color: #15161a; border-color: transparent; }
+[data-skin="glass"] .hour { border-color: rgba(255, 255, 255, .07); }
+[data-skin="glass"][data-theme="light"] .hour { border-color: rgba(0, 0, 0, .07); }
+[data-skin="glass"] .hour.off { background: rgba(0, 0, 0, .10); }
+[data-skin="glass"] .block { background: rgba(255, 255, 255, .10); }
+[data-skin="glass"] #notes, [data-skin="glass"] .task-add input { background: rgba(255, 255, 255, .06); }
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }
 
@@ -71,6 +116,13 @@ h4 { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--sub)
 .brand { font-size: 12px; font-weight: 700; letter-spacing: .3em; color: var(--sub); }
 .bar-mid { flex: 1; font-size: 12px; color: var(--sub); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bar-right { display: flex; gap: 2px; }
+.linkchip {
+  flex: none;
+  font-size: 10.5px; color: var(--sub);
+  border: 1px solid var(--line2); border-radius: 999px;
+  padding: 2px 9px;
+}
+.linkchip::before { content: "● "; color: var(--acc); font-size: 8px; }
 .icon {
   width: 32px; height: 32px; border-radius: 8px;
   display: grid; place-items: center; color: var(--sub); font-size: 14px;
@@ -212,7 +264,16 @@ h4 { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--sub)
 }
 .tasks li.done .tick { color: var(--sub); border-color: var(--sub); }
 .tasks li.done .t-text { color: var(--sub); text-decoration: line-through; }
-.t-text { flex: 1; word-break: break-word; cursor: text; }
+.t-body { flex: 1; min-width: 0; }
+.t-text { display: block; word-break: break-word; cursor: text; }
+.t-step { display: block; font-size: 11.5px; color: var(--sub); margin-top: 1px; }
+.tasks li.done .t-step { text-decoration: line-through; }
+.t-src {
+  flex: none; width: 16px; height: 16px; margin-top: 2px;
+  border: 1px solid var(--line2); border-radius: 4px;
+  display: grid; place-items: center;
+  font-size: 9.5px; color: var(--sub);
+}
 .t-edit { flex: 1; background: var(--surface2); border: 1px solid var(--line2); border-radius: 5px; padding: 2px 6px; outline: none; }
 .t-del { color: var(--sub); font-size: 15px; line-height: 1; padding: 0 4px; opacity: 0; }
 .tasks li:hover .t-del { opacity: 1; }

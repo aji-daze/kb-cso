@@ -38,6 +38,8 @@ const Timer = (() => {
       const log = todayLog();
       log.count += 1;
       log.min += t.len;
+      // ConTodo があれば、そちらの記録にも1本ぶん積む
+      if (Bridge.available()) Bridge.logSession(t.len, true);
     }
     next = t.mode === 'focus' ? 'break' : 'focus';
     Store.get().timer = null;
@@ -72,6 +74,19 @@ const Timer = (() => {
     const t = s.timer;
     const disp = U.el('timerDisplay');
 
+    // DESK 側が止まっていて ConTodo でポモドーロが回っているときは、そちらを映す
+    const ct = !t && Bridge.available() ? Bridge.runningTimer() : null;
+    if (ct) {
+      const sec = Math.ceil(ct.left / 1000);
+      disp.textContent = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+      disp.classList.add('run');
+      U.el('timerMode').textContent = ct.phase === 'focus' ? 'ConTodo 集中中' : 'ConTodo 休憩中';
+      U.el('btnTimer').textContent = '開始';
+      if (!tick) tick = setInterval(render, 250);
+      stats(s);
+      return;
+    }
+
     if (t) {
       const left = Math.max(0, t.endsAt - Date.now());
       const sec = Math.ceil(left / 1000);
@@ -89,8 +104,15 @@ const Timer = (() => {
       U.el('btnTimer').textContent = '開始';
     }
 
-    const log = s.focusLog[U.dateKey(new Date())] || { count: 0, min: 0 };
-    U.el('timerDone').textContent = `今日 ${log.count} 本`;
+    stats(s);
+  }
+
+  // 本数と分。ConTodo があるならそちらの記録を正とする。
+  function stats(s) {
+    const key = U.dateKey(new Date());
+    const ct = Bridge.available() ? Bridge.focus(key) : null;
+    const log = ct || s.focusLog[key] || { count: 0, min: 0 };
+    U.el('timerDone').textContent = ct && ct.streak ? `今日 ${log.count} 本 / 連続 ${ct.streak} 日` : `今日 ${log.count} 本`;
     U.el('timerMin').textContent = `${log.min} 分`;
   }
 

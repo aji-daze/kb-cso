@@ -1,18 +1,27 @@
 // 今日のタスク。未完了を上、完了を下に出す。消すまで残るので持ち越しになる。
 
 const Tasks = (() => {
+  // DESK 自身のタスクと ConTodo のタスクを1つの一覧にする
+  function all() {
+    const mine = Store.get().tasks.map((t) => Object.assign({ src: 'desk' }, t));
+    return mine.concat(Bridge.available() ? Bridge.tasks() : []);
+  }
+
   function render() {
     const list = U.el('taskList');
-    const items = Store.get().tasks.slice().sort((a, b) => (a.done === b.done ? a.at - b.at : a.done ? 1 : -1));
+    const items = all().sort((a, b) => (a.done === b.done ? a.at - b.at : a.done ? 1 : -1));
     if (!items.length) {
       list.innerHTML = '<li class="t-empty">タスクなし。</li>';
       return;
     }
     list.innerHTML = items.map((t) => `
-      <li class="${t.done ? 'done' : ''}" data-id="${t.id}">
+      <li class="${t.done ? 'done' : ''}" data-id="${t.id}" data-src="${t.src}">
         <button class="tick" aria-label="完了">✓</button>
-        <span class="t-text">${esc(t.text)}</span>
-        <button class="t-del" aria-label="削除">×</button>
+        <span class="t-body">
+          <span class="t-text">${esc(t.text)}</span>
+          ${t.step ? `<span class="t-step">→ ${esc(t.step)}</span>` : ''}
+        </span>
+        ${t.src === 'contodo' ? '<span class="t-src" title="ConTodo のタスク">C</span>' : '<button class="t-del" aria-label="削除">×</button>'}
       </li>`).join('');
   }
 
@@ -27,7 +36,15 @@ const Tasks = (() => {
     Store.save();
   }
 
-  function toggle(id) {
+  function toggle(id, src) {
+    if (src === 'contodo') {
+      // ConTodo 側は「次の一歩」を1つ進める。全部済んでいればタスクを完了にする。
+      const t = Bridge.tasks().find((x) => x.id === id);
+      if (t && t.done) Bridge.undone(id); else Bridge.advance(id);
+      render();
+      Clock.refresh();
+      return;
+    }
     const t = Store.get().tasks.find((x) => x.id === id);
     if (!t) return;
     t.done = !t.done;
@@ -74,7 +91,9 @@ const Tasks = (() => {
       const li = e.target.closest('li[data-id]');
       if (!li) return;
       const id = li.dataset.id;
-      if (e.target.closest('.tick')) return toggle(id);
+      const src = li.dataset.src;
+      if (e.target.closest('.tick')) return toggle(id, src);
+      if (src === 'contodo') return;  // ConTodo のタスクは DESK からは消さない・書き換えない
       if (e.target.closest('.t-del')) return remove(id);
       if (e.target.closest('.t-text')) return edit(li, id);
     });
@@ -88,5 +107,5 @@ const Tasks = (() => {
     Store.subscribe(render);
   }
 
-  return { render, bind };
+  return { render, bind, all };
 })();

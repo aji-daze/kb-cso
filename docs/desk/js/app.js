@@ -3,7 +3,10 @@
 (() => {
   // ---------- テーマ ----------
   function applyTheme() {
-    const t = Store.get().settings.theme;
+    const st = Store.get().settings;
+    document.documentElement.dataset.skin = st.skin || 'glass';
+    Wallpaper.apply();
+    const t = st.theme;
     const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     const meta = document.querySelector('meta[name=theme-color]');
@@ -41,6 +44,8 @@
     U.el('setFocus').value = s.focusMin;
     U.el('setBreak').value = s.breakMin;
     U.el('setTheme').value = s.theme;
+    U.el('setSkin').value = s.skin || 'glass';
+    U.el('setWall').value = s.wallpaper || 'waves';
     Links.render();
     U.el('settingsModal').hidden = false;
   }
@@ -52,6 +57,8 @@
     s.focusMin = Math.min(120, Math.max(5, parseInt(U.el('setFocus').value, 10) || 25));
     s.breakMin = Math.min(60, Math.max(1, parseInt(U.el('setBreak').value, 10) || 5));
     s.theme = U.el('setTheme').value;
+    s.skin = U.el('setSkin').value;
+    s.wallpaper = U.el('setWall').value;
     if (U.min(s.dayEnd) <= U.min(s.dayStart)) s.dayEnd = U.hm(Math.min(U.min(s.dayStart) + 60, 23 * 60 + 59));
     Store.save();
     applyTheme();
@@ -63,8 +70,30 @@
     U.el('settingsModal').addEventListener('click', (e) => {
       if (e.target.id === 'settingsModal') { readSettings(); U.el('settingsModal').hidden = true; }
     });
-    ['setStart', 'setEnd', 'setFocus', 'setBreak', 'setTheme'].forEach((id) => {
+    ['setStart', 'setEnd', 'setFocus', 'setBreak', 'setTheme', 'setSkin', 'setWall'].forEach((id) => {
       U.el(id).addEventListener('change', readSettings);
+    });
+
+    // 壁紙に自分の画像を使う
+    U.el('btnWallPick').addEventListener('click', () => U.el('wallFile').click());
+    U.el('wallFile').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      Wallpaper.fromFile(f).then(() => {
+        Store.get().settings.wallpaper = 'custom';
+        U.el('setWall').value = 'custom';
+        Store.save();
+        Wallpaper.apply();
+      }).catch(() => alert('この画像は読めない。'));
+    });
+    U.el('btnWallClear').addEventListener('click', () => {
+      Wallpaper.drop().then(() => {
+        Store.get().settings.wallpaper = 'waves';
+        U.el('setWall').value = 'waves';
+        Store.save();
+        Wallpaper.apply();
+      });
     });
 
     U.el('btnExport').addEventListener('click', () => {
@@ -127,6 +156,30 @@
     });
   }
 
+  // ---------- Android ウィジェット向けの受け渡し ----------
+  // WebView 側（APK）が window.DeskAndroid を注入する。ブラウザで開いたときは何もしない。
+  function publishSnapshot() {
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const blocks = Timeline.todaysBlocks().map((b) => ({
+      title: b.title, start: b.start, end: b.end, kind: b.kind || 'work', src: b.src || 'desk',
+    }));
+    const tasks = Tasks.all().filter((t) => !t.done).slice(0, 8)
+      .map((t) => ({ text: t.text, step: t.step || '', src: t.src }));
+    const s = Store.get();
+    const key = U.dateKey(now);
+    const focus = (Bridge.available() && Bridge.focus(key)) || s.focusLog[key] || { count: 0, min: 0 };
+    const snap = {
+      at: Date.now(),
+      dayStart: s.settings.dayStart, dayEnd: s.settings.dayEnd,
+      now: U.hm(cur), blocks, tasks, focus,
+      running: !!s.timer || !!(Bridge.available() && Bridge.runningTimer()),
+    };
+    const json = JSON.stringify(snap);
+    try { localStorage.setItem('desk.snapshot', json); } catch (e) { /* 容量不足なら諦める */ }
+    try { if (window.DeskAndroid && window.DeskAndroid.publish) window.DeskAndroid.publish(json); } catch (e) {}
+  }
+
   function renderAll() {
     Timeline.render();
     Tasks.render();
@@ -134,6 +187,8 @@
     Links.render();
     Clock.refresh();
     U.el('notes').value = Store.get().notes || '';
+    U.el('ctChip').hidden = !Bridge.available();
+    publishSnapshot();
   }
 
   // ---------- 起動 ----------
@@ -154,6 +209,10 @@
 
     renderAll();
     Clock.start();
+    Store.subscribe(publishSnapshot);
+    // ConTodo 側の変更を拾って描き直す
+    Bridge.watch(renderAll);
+    setInterval(publishSnapshot, 60 * 1000);
     setTimeout(Timeline.scrollToNow, 60);
 
     // 日付が変わったら表示を作り直す

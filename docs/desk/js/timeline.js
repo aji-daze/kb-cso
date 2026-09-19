@@ -13,6 +13,7 @@ const Timeline = (() => {
     const day = d || new Date();
     const key = U.dateKey(day);
     const dow = day.getDay();
+    const fromContodo = Bridge.available() ? Bridge.blocks(key) : [];
     return Store.get().blocks
       .filter((b) => {
         if (b.repeat === 'daily') return true;
@@ -20,7 +21,7 @@ const Timeline = (() => {
         if (b.repeat === 'weekly') return b.dow === dow;
         return b.date === key;
       })
-      .slice()
+      .concat(fromContodo)
       .sort((a, b) => U.min(a.start) - U.min(b.start));
   }
 
@@ -90,7 +91,7 @@ const Timeline = (() => {
       const n = b._lanes || 1;
       html += `<div class="block k-${b.kind || 'work'}${live}" data-id="${b.id}"
         style="top:${top}px;height:${hgt}px;left:calc(48px + (100% - 52px) * ${lane} / ${n});width:calc((100% - 52px) / ${n} - 2px)">
-        <b>${esc(b.title)}</b><span>${b.start}–${b.end}</span></div>`;
+        <b>${esc(b.title)}</b><span>${b.start}–${b.end}${b.src === 'contodo' ? ' · ConTodo' : ''}</span></div>`;
     });
 
     if (cur >= from * 60 && cur <= to * 60) {
@@ -119,6 +120,8 @@ const Timeline = (() => {
 
   // ---------- 追加・編集 ----------
   function open(id, hour) {
+    // ConTodo から来たブロックは向こうが持ち主。こちらでは編集しない。
+    if (id && String(id).indexOf('ct-') === 0) return;
     editing = id || null;
     const b = id ? Store.get().blocks.find((x) => x.id === id) : null;
     const base = b || defaultBlock(hour);

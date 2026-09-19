@@ -1,12 +1,14 @@
 // 画面一式をキャッシュして、電波がなくても開けるようにする。
 // 保存データは localStorage 側にあるのでここでは触らない。
-const VERSION = 'desk-v1';
+const VERSION = 'desk-v2';
 const SHELL = [
   './',
   './index.html',
   './style.css',
   './manifest.json',
   './js/store.js',
+  './js/bridge.js',
+  './js/wallpaper.js',
   './js/clock.js',
   './js/timeline.js',
   './js/tasks.js',

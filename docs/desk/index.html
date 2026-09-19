@@ -19,6 +19,7 @@
 <header class="bar">
   <div class="brand">DESK</div>
   <div class="bar-mid" id="barStatus"></div>
+  <span class="linkchip" id="ctChip" hidden>ConTodo</span>
   <div class="bar-right">
     <button class="icon" id="btnTheme" title="表示切替 (D)" aria-label="表示切替">◐</button>
     <button class="icon" id="btnHelp" title="ショートカット (?)" aria-label="ショートカット">?</button>
@@ -147,13 +148,35 @@
       <label>集中（分）<input type="number" id="setFocus" min="5" max="120" step="5"></label>
       <label>休憩（分）<input type="number" id="setBreak" min="1" max="60" step="1"></label>
     </div>
-    <label>表示
-      <select id="setTheme">
-        <option value="dark">ダーク</option>
-        <option value="light">ライト</option>
-        <option value="auto">端末に合わせる</option>
+    <div class="two">
+      <label>表示
+        <select id="setTheme">
+          <option value="dark">ダーク</option>
+          <option value="light">ライト</option>
+          <option value="auto">端末に合わせる</option>
+        </select>
+      </label>
+      <label>質感
+        <select id="setSkin">
+          <option value="glass">半透明（壁紙が透ける）</option>
+          <option value="solid">不透明</option>
+        </select>
+      </label>
+    </div>
+    <label>壁紙
+      <select id="setWall">
+        <option value="waves">波（グレー）</option>
+        <option value="slate">波（ブルーグレー）</option>
+        <option value="ink">無地</option>
+        <option value="paper">明るい波</option>
+        <option value="custom">自分の画像</option>
       </select>
     </label>
+    <div class="modal-btns">
+      <button class="btn sm" id="btnWallPick">画像を選ぶ</button>
+      <button class="btn sm" id="btnWallClear">画像を外す</button>
+      <input type="file" id="wallFile" accept="image/*" hidden>
+    </div>
 
     <h4>ショートカット（下部ドック）</h4>
     <ul class="link-edit" id="linkEdit"></ul>
@@ -192,6 +215,8 @@
 </div>
 
 <script src="js/store.js"></script>
+<script src="js/wallpaper.js"></script>
+<script src="js/bridge.js"></script>
 <script src="js/clock.js"></script>
 <script src="js/timeline.js"></script>
 <script src="js/tasks.js"></script>
