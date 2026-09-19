@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -1363,9 +1363,12 @@ let lastPlayStartAt = 0;
 
 // ---- 外部要因の pause から自動で再開する仕掛け ----
 let autoResumeTrackId = null; // 何曲目に対しての試行回数か
-let autoResumeCount = 0; // 今の曲で自動再開を試みた回数（最大2回）
+let autoResumeCount = 0; // 今の曲で自動再開を試みた回数（曲の途中なら最大2回、切り替え直後なら最大4回）
 let autoResumeTimer = 0;
 let lastAutoResumeSuccessAt = 0; // 直前に自動再開が成功した時刻
+let lastLoadAt = 0; // loadCurrent() で曲を読み込んだ時刻（切り替え直後の pause かどうかの判定に使う）
+let autoResumeGaveUpAt = 0; // 自動再開を諦めた時刻。画面に戻ったときに一度だけ再開を試みるために使う
+let switchModeTrackId = null; // 「曲の切り替え直後」と判定した曲。位置が進むまでこの判定を保つ
 
 // 自分たちの都合で止めるときは、理由をログに残しつつ P.pauseWith を通す。
 // audio が既に一時停止中なら pause() は何もしない（'pause' イベントが飛ばない）ので、
@@ -1373,6 +1376,7 @@ let lastAutoResumeSuccessAt = 0; // 直前に自動再開が成功した時刻
 // この理由が誤って使われないように）。
 function pauseWith(reason) {
   wantPlaying = false;
+  autoResumeGaveUpAt = 0; // 自分の意図で止めたので、画面復帰時の自動再開はもう働かせない
   const alreadyPaused = audio.paused;
   P.pauseWith(reason);
   if (alreadyPaused) {
@@ -1414,7 +1418,7 @@ async function tryPlay() {
       // resumeContext() が詰まって帰ってこない端末があるので、300ms で見切りをつける
       await Promise.race([P.resumeContext(), new Promise((r) => setTimeout(r, 300))]);
       await audio.play();
-      plog('再生開始' + (i ? `（${i + 1}回目で成功）` : '') + ` ctx=${P.contextState()}`);
+      plog('再生開始' + (i ? `（${i + 1}回目で成功）` : '') + ` ctx=${P.contextState()} eq=${P.eqEnabled() ? 'オン' : 'オフ'}`);
       return 'ok';
     } catch (e) {
       last = e;
@@ -1441,6 +1445,15 @@ function skipAfterFailure() {
 
 // 外部要因（端末・他アプリ）で pause された直後に、条件が揃っていれば再生を試みる。
 // wasWanted は、外部 pause が来る直前の wantPlaying の値（=直前まで再生する意図があったか）。
+//
+// 曲が切り替わった直後・位置0秒での連続 pause は、実機ログから分かった端末側のクセであって
+// 電話などの「本物の要求」ではない。曲の途中で止められる場合（電話など）とは判定を分け、
+// 前者はより粘り、「再開できた直後にまた止められたら諦める」の判定を適用しない。
+const SWITCH_RESUME_DELAYS = [900, 2000, 4000, 8000];
+const SWITCH_RESUME_MAX = SWITCH_RESUME_DELAYS.length;
+const MIDTRACK_RESUME_MAX = 2;
+const MIDTRACK_RESUME_DELAY = 900;
+
 function maybeAutoResume(wasWanted) {
   if (!wasWanted) return; // そもそも再生する意図が無かった（もう止まっていた）
   if (audio.ended) return;
@@ -1455,20 +1468,47 @@ function maybeAutoResume(wasWanted) {
     lastAutoResumeSuccessAt = 0;
   }
 
-  // 再開できた直後にまた外部で止められた＝本物（電話・他アプリの音声）と判断し、以後は試さない
-  if (lastAutoResumeSuccessAt && Date.now() - lastAutoResumeSuccessAt < 5000) {
-    autoResumeCount = 2;
-    plog('再開してもすぐ止められたので、外部の要求と判断して諦める');
-    return;
+  // 曲の切り替え直後（位置がほぼ0秒・読み込んでからまだ間もない）かどうか。
+  // 待ち時間を延ばしながら何度も試すと、3回目以降は読み込みから4秒を過ぎてしまう。
+  // そこで一度この判定に入ったら、位置が進むまでは同じ曲では判定を保つ
+  // （症状は「位置0秒のまま先に進まない」ことなので、位置が動いたら普通の再生とみなす）。
+  const nearStart = audio.currentTime < 1.5;
+  const isSwitchPause = nearStart && (Date.now() - lastLoadAt < 4000 || switchModeTrackId === id);
+  if (isSwitchPause) switchModeTrackId = id;
+  const maxAttempts = isSwitchPause ? SWITCH_RESUME_MAX : MIDTRACK_RESUME_MAX;
+
+  if (!isSwitchPause) {
+    // 再開できた直後にまた外部で止められた＝本物（電話・他アプリの音声）と判断し、以後は試さない。
+    // 位置0秒での連続 pause はまさに切り替え直後の症状なので、この判定は曲の途中のときだけ使う。
+    if (lastAutoResumeSuccessAt && Date.now() - lastAutoResumeSuccessAt < 5000) {
+      autoResumeCount = maxAttempts;
+      plog('再開してもすぐ止められたので、外部の要求と判断して諦める');
+      autoResumeGaveUpAt = Date.now();
+      return;
+    }
   }
 
-  if (autoResumeCount >= 2) return; // 同じ曲での試行は最大2回まで
+  if (autoResumeCount >= maxAttempts) {
+    // 同じ曲での試行が上限に達した。どちらの判定で諦めたか分かるようにログを分ける
+    plog(
+      isSwitchPause
+        ? `曲の切り替え直後の再開を${maxAttempts}回試みても止められたので諦める`
+        : '外部の要求と判断して諦める'
+    );
+    autoResumeGaveUpAt = Date.now();
+    return;
+  }
 
   autoResumeCount++;
   const trackAtAttempt = id;
   const n = autoResumeCount;
-  plog(`外部で止まったので再開を試みる（${n}回目）`);
+  plog(
+    (isSwitchPause ? '曲の切り替え直後に止められた。再開を試みる（' : '外部で止まったので再開を試みる（') +
+      n +
+      '回目）'
+  );
   clearTimeout(autoResumeTimer);
+  const delay = isSwitchPause ? SWITCH_RESUME_DELAYS[n - 1] : MIDTRACK_RESUME_DELAY;
   autoResumeTimer = setTimeout(async () => {
     if (state.queue[state.qi] !== trackAtAttempt) return; // その間に曲が変わった
     if (wantPlaying || !audio.paused) return; // 既に別経路で再生が戻っている
@@ -1479,7 +1519,7 @@ function maybeAutoResume(wasWanted) {
     } else if (res === 'blocked') {
       plog('端末に再生を止められているため再開しない');
     }
-  }, 900);
+  }, delay);
 }
 
 async function loadCurrent(autoplay, seekTo = 0) {
@@ -1513,6 +1553,12 @@ async function loadCurrent(autoplay, seekTo = 0) {
     if (autoplay) skipAfterFailure();
     return;
   }
+
+  // 音源を差し替える前に、分かっている範囲（曲名・アーティスト・アルバム）だけ端末へ伝える。
+  // ジャケットは間に合わないので null のまま。あとの updateNowUI() が画像つきで上書きする
+  updateMediaSession(t, null);
+  lastLoadAt = Date.now();
+  switchModeTrackId = null;
 
   const prevUrl = state.objectUrl;
   state.objectUrl = URL.createObjectURL(blob);
@@ -3766,7 +3812,8 @@ function wire() {
   });
   audio.addEventListener('pause', () => {
     const reason = P.takePauseReason();
-    if (audio.ended) {
+    const wasEnded = audio.ended;
+    if (wasEnded) {
       // 曲の終わりで自然に paused になったとき。true のままにしておき、
       // 直後の 'ended' （か、それを取りこぼしたときの watchdog）に後の判断を任せる。
       plog(`曲の終わり（位置 ${Math.round(audio.currentTime)}秒）`);
@@ -3787,7 +3834,10 @@ function wire() {
     lastPausedAt = Date.now();
     syncControls();
     savePlayback();
-    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    // 曲の自然な終わりでは 'playing' のままにしておく。ここで 'paused' に落とすと、
+    // 曲が変わるたびに端末へ「停止した」→「再生中」のちらつきが伝わり、
+    // 端末側が音声フォーカスを手放すきっかけになりうる。
+    if (!wasEnded && 'mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     scheduleUpdateCheck();
   });
   audio.addEventListener('ended', () => {
@@ -4064,7 +4114,8 @@ async function init() {
   // reload をまたいで消えないよう、保存してあった再生の記録を読み戻す
   const savedLog = db.setting('playLog', []);
   if (Array.isArray(savedLog) && savedLog.length) playLog.push(...savedLog);
-  plog(sessionStorage.getItem('kbmusic-updated') ? '起動（更新後）' : '起動');
+  const eqLabel = db.setting('eqOn', false) ? 'オン' : 'オフ';
+  plog((sessionStorage.getItem('kbmusic-updated') ? '起動（更新後・eq=' : '起動（eq=') + eqLabel + '）');
 
   state.shuffle = db.setting('shuffle', false);
   state.repeat = db.setting('repeat', 'off');
@@ -4120,6 +4171,21 @@ async function setupServiceWorker() {
     // 再生セッションがあるときだけ記録する（無いときまで記録すると記録が溢れる）
     if (state.qi >= 0) plog('画面' + (visible ? '表' : '裏') + 'になった');
     if (!visible) return;
+    // 裏で自動再開を諦めたままだと、画面を開くまで無音が続く。
+    // ユーザーが自分で止めていない（pauseWith() で autoResumeGaveUpAt はクリアされる）
+    // ことと、諦めてから10分以内であることを確かめたうえで、一度だけ再開を試みる
+    if (
+      autoResumeGaveUpAt &&
+      Date.now() - autoResumeGaveUpAt < 10 * 60 * 1000 &&
+      audio.paused &&
+      state.qi >= 0 &&
+      !audio.ended &&
+      db.setting('autoResume', true)
+    ) {
+      autoResumeGaveUpAt = 0;
+      plog('画面に戻ったので、止まっていた再生を再開する');
+      tryPlay();
+    }
     applyUpdateIfPossible();
     if (Date.now() - lastUpdateCheck > UPDATE_CHECK_VISIBLE_GAP) checkForUpdate();
   });

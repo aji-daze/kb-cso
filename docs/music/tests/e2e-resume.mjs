@@ -237,7 +237,8 @@ async function main() {
       await externalPause();
       await sleep(2500);
       const log = await readPlayLog();
-      assert(log.includes('外部で止まったので再開を試みる'), 'log missing 再開を試みる');
+      // 曲を選んだ直後・位置ほぼ0秒なので「曲の切り替え直後」と判定されるのが正しい
+      assert(log.includes('曲の切り替え直後に止められた。再開を試みる'), 'log missing 切り替え直後の再開');
       assert(log.includes('再開できた'), 'log missing 再開できた');
       const s = await audioState();
       assert(!s.paused, 'audio should have resumed');
@@ -286,6 +287,242 @@ async function main() {
       assert(!added.includes('外部で止まったので再開を試みる'), `should not attempt resume when setting is off. added=${added}`);
       await setAutoResume(true); // 後始末
       await closeSettings();
+    });
+
+    // ---- ここから spec-stop3.md の追加確認項目1〜6 ----
+
+    // 1. 曲の切り替え直後（位置0秒）の外部pauseは、2回連続で止められても諦めない
+    await step('切り替え直後: 外部pauseが続いても諦めず、読み込みから4秒を越えても粘る', async () => {
+      await clickSong('Song 1');
+      await sleep(300);
+      const before = await readPlayLog();
+      const addedSince = (full) => full.slice(0, Math.max(0, full.length - before.length));
+      // 「再開できた」相当の動きを自前で作りつつ、位置0秒・読み込み直後のまま外部pauseを繰り返す
+      await externalPause(); // 1回目
+      await sleep(150);
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        await P.audio.play().catch(() => {});
+      });
+      await sleep(80);
+      await externalPause(); // 2回目
+      await sleep(150);
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        await P.audio.play().catch(() => {});
+      });
+      await sleep(80);
+      await externalPause(); // 3回目
+      await sleep(150);
+      let added = addedSince(await readPlayLog());
+      assert(added.includes('再開を試みる（3回目）'), `3回目の再開が無い. 増えた分=${added.slice(0, 400)}`);
+      assert(!added.includes('外部の要求と判断して諦める'), `切り替え直後に諦めてはいけない. 増えた分=${added.slice(0, 400)}`);
+
+      // 3回目の待ちは4秒。読み込みから4秒を越えたあとの pause でも、位置が0秒のままなら
+      // 「切り替え直後」の判定を保って粘ること（ここを取りこぼすと実機で諦めてしまう）
+      await sleep(4200);
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.audio.currentTime = 0;
+        await P.audio.play().catch(() => {});
+      });
+      await sleep(80);
+      await externalPause(); // 4回目
+      await sleep(200);
+      added = addedSince(await readPlayLog());
+      assert(
+        added.includes('再開を試みる（4回目）'),
+        `読み込みから4秒を越えると諦めてしまっている. 増えた分=${added.slice(0, 400)}`
+      );
+      assert(
+        !added.includes('外部の要求と判断して諦める'),
+        `4秒を越えても「外部の要求」で諦めてはいけない. 増えた分=${added.slice(0, 400)}`
+      );
+    });
+
+    // 2. 曲の途中での外部pauseは、従来どおり2回で諦める
+    await step('曲の途中: 外部pauseは従来どおり2回で諦める', async () => {
+      await clickSong('Song 2');
+      await sleep(300);
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.audio.currentTime = 3; // 曲の途中まで進める（切り替え直後の判定に入らないように）
+      });
+      await sleep(100);
+      await externalPause(); // 1回目: 再開を試みる
+      await sleep(1300); // 900ms後の自動再開が成功するのを待つ
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.audio.currentTime = 3; // 引き続き曲の途中の位置にしておく
+      });
+      await externalPause(); // 2回目: 再開直後にまた止められた＝本物の要求として諦める
+      await sleep(300);
+      const log = await readPlayLog();
+      assert(log.includes('外部の要求と判断して諦める'), 'log missing 諦める（曲の途中）');
+      const s = await audioState();
+      assert(s.paused, 'audio should remain paused (曲の途中で2回止められたら諦める)');
+    });
+
+    // 3. 曲が終わって次の曲へ進むとき、mediaSession.playbackState が 'paused' にならない
+    await step('曲の切り替え中はmediaSession.playbackStateがpausedにならない', async () => {
+      await clickSong('Song 3');
+      await sleep(300);
+      await page.evaluate(() => {
+        window.__msStates = [];
+        const ms = navigator.mediaSession;
+        let val = ms.playbackState;
+        Object.defineProperty(ms, 'playbackState', {
+          configurable: true,
+          get() {
+            return val;
+          },
+          set(v) {
+            window.__msStates.push(v);
+            val = v;
+          },
+        });
+      });
+      // 6秒の曲が終わって次の曲へ進むのを待つ（バッファ込みで最大14秒）
+      await page.waitForFunction((t) => document.querySelector('#miniTitle')?.textContent === t, 'Song 4', { timeout: 14000 });
+      await sleep(300);
+      const states = await page.evaluate(() => window.__msStates);
+      assert(!states.includes('paused'), `playbackState should never be 'paused' across a track switch. states=${JSON.stringify(states)}`);
+    });
+
+    // 4. 音源を差し替える前に曲情報が端末へ渡っている
+    await step('切り替え時: audio.srcを差し替える前にMediaMetadataが新しい曲名で設定される', async () => {
+      await openSheetNow();
+      const oldTitle = await page.evaluate(() => document.querySelector('#nowTitle')?.textContent || '');
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        window.__order = [];
+        const audio = P.audio;
+        const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+        Object.defineProperty(audio, 'src', {
+          configurable: true,
+          get() {
+            return desc.get.call(audio);
+          },
+          set(v) {
+            window.__order.push({ type: 'src' });
+            return desc.set.call(audio, v);
+          },
+        });
+        window.__origMediaMetadata = window.MediaMetadata;
+        const OrigMD = window.__origMediaMetadata;
+        window.MediaMetadata = function (init) {
+          window.__order.push({ type: 'metadata', title: init && init.title });
+          return new OrigMD(init);
+        };
+      });
+      await page.click('#btnNext');
+      await page.waitForFunction(
+        (old) => document.querySelector('#nowTitle')?.textContent && document.querySelector('#nowTitle').textContent !== old,
+        oldTitle,
+        { timeout: 8000 }
+      );
+      const newTitle = await page.evaluate(() => document.querySelector('#nowTitle')?.textContent || '');
+      const order = await page.evaluate(() => window.__order);
+      // 後始末: フックを外す（以降のテストへ影響しないように）
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        delete P.audio.src;
+        window.MediaMetadata = window.__origMediaMetadata;
+      });
+      const srcIdx = order.findIndex((e) => e.type === 'src');
+      assert(srcIdx >= 0, `src の差し替えを検知できなかった. order=${JSON.stringify(order)}`);
+      const metaBefore = order.slice(0, srcIdx).filter((e) => e.type === 'metadata');
+      assert(metaBefore.length > 0, `src を差し替える前に MediaMetadata の設定が無い. order=${JSON.stringify(order)}`);
+      assert(
+        metaBefore[metaBefore.length - 1].title === newTitle,
+        `src を差し替える前の MediaMetadata が新しい曲名になっていない. order=${JSON.stringify(order)} newTitle=${newTitle}`
+      );
+    });
+    await closeSheetNow();
+
+    // 5. 諦めたあと、画面表示に戻ると一度だけ再開する
+    await step('諦めたあと画面表示に戻ると一度だけ再開する', async () => {
+      await clickSong('Song 5');
+      await sleep(300);
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.audio.currentTime = 3;
+        Object.defineProperty(document, 'visibilityState', {
+          configurable: true,
+          get: () => window.__fakeVisibility || 'visible',
+        });
+        window.__fakeVisibility = 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await externalPause(); // 1回目: 再開を試みる（裏）
+      await sleep(1300); // 自動再開の成功を待つ
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.audio.currentTime = 3;
+      });
+      await externalPause(); // 2回目: 本物の要求と判断して裏で諦める
+      await sleep(300);
+      let log = await readPlayLog();
+      assert(log.includes('外部の要求と判断して諦める'), 'log missing 諦める（画面裏）');
+      let s = await audioState();
+      assert(s.paused, 'audio should remain paused after giving up while hidden');
+
+      // 画面に戻る
+      await page.evaluate(() => {
+        window.__fakeVisibility = 'visible';
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await sleep(1000);
+      log = await readPlayLog();
+      assert(log.includes('画面に戻ったので、止まっていた再生を再開する'), 'log missing 画面に戻ったので再開する');
+      s = await audioState();
+      assert(!s.paused, 'audio should resume once after returning to the foreground');
+
+      // 後始末: 画面表示の偽装を外す
+      await page.evaluate(() => {
+        delete document.visibilityState;
+      });
+    });
+    await closeSheetNow();
+
+    // 6. つまみが全部0のときはイコライザをオンにしてもWeb Audioにつながらない
+    await step('EQのつまみが全部0ならオンにしてもWeb Audioにつながらない。0以外を入れるとつながる', async () => {
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.setEqEnabled(false);
+        await P.setEqGains([0, 0, 0, 0, 0]);
+      });
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        P.setEqEnabled(true);
+      });
+      await sleep(100);
+      let ctxState = await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        return P.contextState();
+      });
+      assert(ctxState === 'none', `gains all 0 のとき Web Audio につながってはいけない. ctxState=${ctxState}`);
+
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        await P.setEqGain(0, 5);
+      });
+      await sleep(100);
+      ctxState = await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        return P.contextState();
+      });
+      assert(
+        ctxState === 'running' || ctxState === 'suspended',
+        `0以外のゲインを入れたら Web Audio につながるはず. ctxState=${ctxState}`
+      );
+
+      // 後始末: EQをオフに戻す
+      await page.evaluate(async () => {
+        const P = await import('./js/player.js');
+        await P.setEqGains([0, 0, 0, 0, 0]);
+        P.setEqEnabled(false);
+      });
     });
 
     // ---- #miniStop（■）で再生が終わり、ミニプレーヤーが隠れる ----
