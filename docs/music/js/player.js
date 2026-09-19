@@ -64,9 +64,11 @@ export function eqEnabled() {
 }
 
 // 一度 MediaElementSource を作ると外せないので、OFF はゲインを素通しにして表現する。
+// つまみが全部 0 のまま ON にしても、鳴らす音に違いが出ないので Web Audio へはつながない
+// （つながずに済む間は素の <audio> のまま。つまみを動かした時点で必要になり次第つなぐ）。
 export function setEqEnabled(on) {
   eqOn = !!on;
-  if (eqOn) buildGraph();
+  if (eqOn && getEqGains().some((v) => v)) buildGraph();
   if (ctx) {
     const gains = eqOn ? getEqGains() : [0, 0, 0, 0, 0];
     filters.forEach((f, i) => {
@@ -84,11 +86,13 @@ export async function setEqGain(index, value) {
   const g = getEqGains();
   g[index] = value;
   await db.setSetting('eqGains', g);
+  if (eqOn && value && !ctx) buildGraph();
   if (ctx && eqOn && filters[index]) filters[index].gain.value = value;
 }
 
 export async function setEqGains(values) {
   await db.setSetting('eqGains', values.slice());
+  if (eqOn && values.some((v) => v) && !ctx) buildGraph();
   if (ctx && eqOn) filters.forEach((f, i) => (f.gain.value = values[i] || 0));
 }
 
