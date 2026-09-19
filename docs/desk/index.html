@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DESK">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b0d">
+<meta name="description" content="タブレットをデスクトップのように使う、仕事用のミニマリスト作業画面">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>DESK</title>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">DESK</div>
+  <div class="bar-mid" id="barStatus"></div>
+  <div class="bar-right">
+    <button class="icon" id="btnTheme" title="表示切替 (D)" aria-label="表示切替">◐</button>
+    <button class="icon" id="btnHelp" title="ショートカット (?)" aria-label="ショートカット">?</button>
+    <button class="icon" id="btnSettings" title="設定" aria-label="設定">≡</button>
+  </div>
+</header>
+
+<main class="grid">
+
+  <!-- ============ 左列：時計・集中タイマー・今日の数字 ============ -->
+  <section class="col">
+    <div class="panel clock-panel">
+      <div class="clock" id="clock">--:--</div>
+      <div class="clock-date" id="clockDate"></div>
+      <div class="rings">
+        <div class="ring-item">
+          <svg viewBox="0 0 44 44" class="ring"><circle class="ring-bg" cx="22" cy="22" r="19"/><circle class="ring-fg" cx="22" cy="22" r="19" id="ringDay"/></svg>
+          <div class="ring-label"><b id="dayPct">0%</b><span>今日</span></div>
+        </div>
+        <div class="ring-item">
+          <svg viewBox="0 0 44 44" class="ring"><circle class="ring-bg" cx="22" cy="22" r="19"/><circle class="ring-fg acc" cx="22" cy="22" r="19" id="ringTask"/></svg>
+          <div class="ring-label"><b id="taskPct">0%</b><span>タスク</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel timer-panel">
+      <div class="panel-head"><h2>集中</h2><span class="muted" id="timerMode">待機</span></div>
+      <div class="timer" id="timerDisplay">25:00</div>
+      <div class="timer-btns">
+        <button class="btn primary" id="btnTimer">開始</button>
+        <button class="btn" id="btnTimerReset">リセット</button>
+      </div>
+      <div class="timer-foot muted"><span id="timerDone">今日 0 本</span> / <span id="timerMin">0 分</span></div>
+    </div>
+
+    <div class="panel stat-panel">
+      <div class="stat"><b id="statRemain">0</b><span>残タスク</span></div>
+      <div class="stat"><b id="statNext">—</b><span>次の予定</span></div>
+      <div class="stat"><b id="statLeft">—</b><span>終業まで</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 中央：タイムライン ============ -->
+  <section class="col">
+    <div class="panel timeline-panel">
+      <div class="panel-head">
+        <h2>タイムライン</h2>
+        <div class="head-btns">
+          <button class="btn sm" id="btnNow">現在</button>
+          <button class="btn sm primary" id="btnAddBlock">＋ ブロック</button>
+        </div>
+      </div>
+      <div class="timeline-wrap" id="timelineWrap">
+        <div class="timeline" id="timeline"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 右列：タスク・メモ ============ -->
+  <section class="col">
+    <div class="panel tasks-panel">
+      <div class="panel-head">
+        <h2>タスク</h2>
+        <button class="btn sm" id="btnClearDone">完了を消す</button>
+      </div>
+      <form class="task-add" id="taskForm" autocomplete="off">
+        <input id="taskInput" type="text" placeholder="やること（N キーで入力）" maxlength="120">
+      </form>
+      <ul class="tasks" id="taskList"></ul>
+    </div>
+
+    <div class="panel notes-panel">
+      <div class="panel-head"><h2>メモ</h2><span class="muted" id="noteSaved"></span></div>
+      <textarea id="notes" placeholder="走り書き。自動保存。"></textarea>
+    </div>
+  </section>
+
+</main>
+
+<footer class="dock" id="dock"></footer>
+
+<!-- ============ ブロック編集 ============ -->
+<div class="overlay" id="blockModal" hidden>
+  <div class="modal">
+    <h3 id="blockModalTitle">ブロックを追加</h3>
+    <label>内容<input type="text" id="blkTitle" maxlength="60" placeholder="例：POA マラソン"></label>
+    <div class="two">
+      <label>開始<input type="time" id="blkStart" step="300"></label>
+      <label>終了<input type="time" id="blkEnd" step="300"></label>
+    </div>
+    <label>繰り返し
+      <select id="blkRepeat">
+        <option value="none">この日だけ</option>
+        <option value="weekdays">平日（月〜金）</option>
+        <option value="daily">毎日</option>
+        <option value="weekly">毎週この曜日</option>
+      </select>
+    </label>
+    <label>種別
+      <select id="blkKind">
+        <option value="work">仕事</option>
+        <option value="focus">集中</option>
+        <option value="meet">打合せ</option>
+        <option value="rest">休憩</option>
+      </select>
+    </label>
+    <div class="modal-btns">
+      <button class="btn danger" id="blkDelete">削除</button>
+      <span class="spacer"></span>
+      <button class="btn" id="blkCancel">閉じる</button>
+      <button class="btn primary" id="blkSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 設定 ============ -->
+<div class="overlay" id="settingsModal" hidden>
+  <div class="modal wide">
+    <h3>設定</h3>
+    <div class="two">
+      <label>始業<input type="time" id="setStart" step="1800"></label>
+      <label>終業<input type="time" id="setEnd" step="1800"></label>
+    </div>
+    <div class="two">
+      <label>集中（分）<input type="number" id="setFocus" min="5" max="120" step="5"></label>
+      <label>休憩（分）<input type="number" id="setBreak" min="1" max="60" step="1"></label>
+    </div>
+    <label>表示
+      <select id="setTheme">
+        <option value="dark">ダーク</option>
+        <option value="light">ライト</option>
+        <option value="auto">端末に合わせる</option>
+      </select>
+    </label>
+
+    <h4>ショートカット（下部ドック）</h4>
+    <ul class="link-edit" id="linkEdit"></ul>
+    <form class="link-add" id="linkForm" autocomplete="off">
+      <input type="text" id="linkLabel" placeholder="名前" maxlength="16">
+      <input type="url" id="linkUrl" placeholder="https://..." >
+      <button class="btn sm primary" type="submit">追加</button>
+    </form>
+
+    <h4>データ</h4>
+    <div class="modal-btns">
+      <button class="btn" id="btnExport">書き出し</button>
+      <button class="btn" id="btnImport">読み込み</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+      <span class="spacer"></span>
+      <button class="btn primary" id="setClose">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ヘルプ ============ -->
+<div class="overlay" id="helpModal" hidden>
+  <div class="modal">
+    <h3>キーボード操作</h3>
+    <ul class="keys">
+      <li><kbd>N</kbd><span>タスク入力へ</span></li>
+      <li><kbd>B</kbd><span>ブロックを追加</span></li>
+      <li><kbd>F</kbd><span>集中タイマー 開始 / 停止</span></li>
+      <li><kbd>T</kbd><span>タイムラインを現在時刻へ</span></li>
+      <li><kbd>D</kbd><span>ダーク / ライト切替</span></li>
+      <li><kbd>Esc</kbd><span>閉じる</span></li>
+    </ul>
+    <p class="muted small">データはこの端末のブラウザ内にのみ保存される。機種変更や履歴削除で消えるので、設定の「書き出し」でバックアップすること。</p>
+    <div class="modal-btns"><span class="spacer"></span><button class="btn primary" id="helpClose">閉じる</button></div>
+  </div>
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/clock.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/tasks.js"></script>
+<script src="js/timer.js"></script>
+<script src="js/links.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
