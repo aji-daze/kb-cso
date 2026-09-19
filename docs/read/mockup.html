@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>栞 — 読書アプリ設計案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f5f3ef; --surface:#fffdf9; --surface2:#ebe7e0; --line:#dcd6cc;
+  --tx:#26231f; --sub:#6e675d; --faint:#8f887c;
+  --acc:#9c5f22; --acc-fill:#c07f3c; --on-acc:#fffdf9;
+  --ok:#4f7a4a; --no:#9a4f47;
+  --shadow:0 6px 20px rgba(80,70,55,.14); --shadow-lg:0 18px 44px rgba(80,70,55,.20);
+  --sans:-apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",Roboto,sans-serif;
+  --serif:"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b0b0d; --surface:#141417; --surface2:#1c1c21; --line:#26262c;
+    --tx:#f2f2f4; --sub:#8b8b95; --faint:#6a6a74;
+    --acc:#d79a5f; --acc-fill:#d79a5f; --on-acc:#1a1510;
+    --ok:#87a97f; --no:#d38078;
+    --shadow:0 6px 20px rgba(0,0,0,.45); --shadow-lg:0 18px 44px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b0b0d; --surface:#141417; --surface2:#1c1c21; --line:#26262c;
+  --tx:#f2f2f4; --sub:#8b8b95; --faint:#6a6a74;
+  --acc:#d79a5f; --acc-fill:#d79a5f; --on-acc:#1a1510;
+  --ok:#87a97f; --no:#d38078;
+  --shadow:0 6px 20px rgba(0,0,0,.45); --shadow-lg:0 18px 44px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);margin:0;
+  font-size:15px;line-height:1.75;-webkit-text-size-adjust:100%}
+.wrap{max-width:880px;margin:0 auto;padding-inline:20px;padding-block:40px 80px}
+h1{font-family:var(--serif);font-weight:600;font-size:clamp(28px,6vw,40px);line-height:1.3;
+  margin:0 0 6px;letter-spacing:.02em;text-wrap:balance}
+h2{font-family:var(--serif);font-weight:600;font-size:clamp(19px,3.6vw,23px);line-height:1.5;
+  margin:0;text-wrap:balance}
+h3{font-size:15px;font-weight:600;margin:0;line-height:1.6}
+p{margin:0;max-width:62ch}
+.eyebrow{font-size:11px;letter-spacing:.16em;color:var(--faint);text-transform:uppercase;margin:0}
+.lede{color:var(--sub);font-size:15px;max-width:60ch}
+section{margin-top:56px;display:flex;flex-direction:column;gap:18px}
+.shead{display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--line);padding-top:16px}
+.snum{font-family:var(--serif);font-size:12px;color:var(--acc);letter-spacing:.1em}
+
+/* 結論 */
+.verdict{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);
+  border-radius:4px;background:var(--surface);overflow:hidden}
+.verdict > div{display:grid;grid-template-columns:auto 1fr;gap:14px;padding:16px 18px;align-items:start}
+.verdict > div + div{border-top:1px solid var(--line)}
+.vmark{font-family:var(--serif);font-size:13px;color:var(--on-acc);background:var(--acc-fill);
+  width:22px;height:22px;display:grid;place-items:center;border-radius:50%;margin-top:2px}
+.verdict b{display:block;font-weight:600;margin-bottom:2px}
+.verdict span{color:var(--sub);font-size:14px}
+
+/* ボタン */
+.btn{font-family:var(--sans);font-size:14px;font-weight:600;border:1px solid var(--line);
+  background:var(--surface);color:var(--tx);padding:11px 18px;border-radius:3px;cursor:pointer;
+  line-height:1.4}
+.btn:hover{border-color:var(--acc)}
+.btn.primary{background:var(--acc-fill);color:var(--on-acc);border-color:var(--acc-fill)}
+.btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.cta small{color:var(--faint);font-size:12.5px}
+
+/* 端末モック */
+.strip{display:flex;gap:18px;overflow-x:auto;padding-block:4px 14px;
+  scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.slot{scroll-snap-align:start;flex:0 0 auto;display:flex;flex-direction:column;gap:9px}
+.cap{font-size:12.5px;color:var(--sub);max-width:214px;line-height:1.55}
+.cap b{color:var(--tx);display:block;font-size:13px;font-weight:600}
+.dev{position:relative;border:1px solid var(--line);border-radius:14px;background:#000;
+  padding:5px;box-shadow:var(--shadow);overflow:hidden}
+.scr{overflow:hidden;border-radius:10px;background:var(--surface);position:relative}
+.phone .scr{width:214px;height:464px}
+.phone .mini{width:390px;height:844px;transform:scale(.5487);transform-origin:top left}
+.tab .scr{width:100%;max-width:768px;aspect-ratio:1024/700}
+.tabinner{width:1024px;height:700px;transform-origin:top left}
+
+/* 画面中身（実寸390x844で作る） */
+.mini,.tabinner{font-size:15px;color:var(--tx);background:var(--surface);display:flex;flex-direction:column}
+.bar{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;
+  color:var(--faint);font-size:12px;flex:0 0 auto}
+.tabs{height:52px;border-top:1px solid var(--line);display:flex;flex:0 0 auto;background:var(--surface)}
+.tabs div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;font-size:10px;color:var(--faint)}
+.tabs div.on{color:var(--acc)}
+.tabs i{width:17px;height:17px;border:1.6px solid currentColor;border-radius:2px;display:block}
+.tabs div.on i{background:currentColor}
+.body{flex:1;min-height:0;overflow:hidden;padding:0 20px;display:flex;flex-direction:column}
+
+/* つづき画面 */
+.hero-book{flex:1;display:flex;flex-direction:column;justify-content:center;gap:20px;align-items:center;text-align:center}
+.cover{width:150px;height:222px;border-radius:2px;box-shadow:var(--shadow-lg);
+  background:linear-gradient(160deg,#3b4a5a,#222b36);position:relative;display:flex;
+  align-items:flex-end;padding:14px;color:#e8e4dc}
+.cover .t{font-family:var(--serif);font-size:15px;line-height:1.45;text-align:left}
+.cover::after{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;
+  background:linear-gradient(90deg,rgba(0,0,0,.35),transparent)}
+.h-t{font-family:var(--serif);font-size:19px;font-weight:600}
+.h-s{font-size:12.5px;color:var(--sub);margin-top:3px}
+.resume{width:100%;background:var(--acc-fill);color:var(--on-acc);border-radius:3px;
+  padding:14px;font-size:15px;font-weight:600;text-align:center}
+.lastline{font-family:var(--serif);font-size:13px;color:var(--sub);line-height:1.8;
+  border-left:2px solid var(--line);padding-left:12px;text-align:left;width:100%}
+.flow{display:flex;gap:0;width:100%;border-top:1px solid var(--line);padding-top:14px}
+.flow div{flex:1;text-align:center}
+.flow b{display:block;font-family:var(--serif);font-size:21px;font-weight:500;
+  font-variant-numeric:tabular-nums}
+.flow span{font-size:10.5px;color:var(--faint);letter-spacing:.04em}
+
+/* 棚 */
+.shelfhead{display:flex;align-items:baseline;justify-content:space-between;padding:6px 0 12px}
+.shelfhead h4{font-family:var(--serif);font-size:20px;margin:0;font-weight:600}
+.seg{display:flex;gap:0;border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-bottom:14px}
+.seg div{flex:1;text-align:center;font-size:12px;padding:7px 0;color:var(--sub)}
+.seg div.on{background:var(--surface2);color:var(--tx);font-weight:600}
+.row{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);align-items:center}
+.sc{width:38px;height:56px;border-radius:2px;flex:0 0 auto;box-shadow:var(--shadow)}
+.rt{flex:1;min-width:0}
+.rt b{display:block;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt span{font-size:11.5px;color:var(--faint)}
+.prog{height:2px;background:var(--line);margin-top:7px;position:relative;border-radius:2px}
+.prog i{position:absolute;left:0;top:0;bottom:0;background:var(--acc-fill);border-radius:2px;display:block}
+.rmin{font-size:11px;color:var(--sub);font-variant-numeric:tabular-nums;flex:0 0 auto}
+
+/* 抜き書き */
+.note{border-left:2px solid var(--acc-fill);padding:0 0 0 13px;margin:16px 0}
+.note q{font-family:var(--serif);font-size:14px;line-height:1.95;display:block;quotes:none}
+.note .src{font-size:11px;color:var(--faint);margin-top:7px;display:block}
+.note .me{font-size:12.5px;color:var(--sub);margin-top:9px;display:block;line-height:1.7}
+.chip{display:inline-block;font-size:10.5px;color:var(--sub);border:1px solid var(--line);
+  border-radius:2px;padding:2px 7px;margin-right:5px}
+
+/* タブレット分割 */
+.tabinner{flex-direction:row}
+.tleft{flex:1;min-width:0;padding:34px 46px;display:flex;flex-direction:column}
+.tright{width:330px;flex:0 0 auto;border-left:1px solid var(--line);background:var(--surface2);
+  padding:26px 24px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.tright h5{margin:0;font-size:11px;letter-spacing:.14em;color:var(--faint);text-transform:uppercase}
+.vtext{flex:1;min-height:0;writing-mode:vertical-rl;font-family:var(--serif);font-size:17px;
+  line-height:2.05;letter-spacing:.04em;overflow:hidden;text-align:justify}
+.vtext mark{background:color-mix(in srgb,var(--acc-fill) 26%,transparent);color:inherit;
+  border-radius:1px}
+.tcap{display:flex;justify-content:space-between;font-size:11px;color:var(--faint);
+  padding-top:14px;font-variant-numeric:tabular-nums}
+
+/* 表 */
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:4px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
+th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase;font-weight:600}
+tr:last-child td{border-bottom:0}
+td.j{white-space:nowrap;font-weight:600}
+td.j.y{color:var(--ok)} td.j.n{color:var(--no)}
+td.r{color:var(--sub)}
+
+/* リスト */
+.notes{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line)}
+.notes > div{padding:15px 0;border-bottom:1px solid var(--line);display:grid;
+  grid-template-columns:76px 1fr;gap:16px;align-items:start}
+.notes dt{font-size:11.5px;color:var(--faint);letter-spacing:.06em;padding-top:2px}
+.notes dd{margin:0;color:var(--sub);font-size:14px}
+.notes dd b{color:var(--tx);font-weight:600}
+@media(max-width:520px){.notes > div{grid-template-columns:1fr;gap:4px}}
+
+/* リーダー実寸デモ */
+#reader{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;flex-direction:column}
+#reader.open{display:flex}
+.rline{height:2px;background:var(--line);flex:0 0 auto;margin-top:env(safe-area-inset-top,0px)}
+.rline i{display:block;height:100%;background:var(--acc-fill);width:0;transition:width .18s}
+.stage{flex:1;min-height:0;position:relative;overflow:hidden;
+  padding:26px 22px calc(26px + env(safe-area-inset-bottom,0px))}
+.page{position:absolute;inset:26px 22px;overflow:hidden}
+#flow{position:absolute;top:0;height:100%;font-family:var(--fam,var(--serif));
+  font-size:var(--fs,17px);line-height:var(--lh,2.0);letter-spacing:.04em;
+  text-align:justify;transition:transform .22s ease;color:var(--tx)}
+#flow[data-dir="v"]{writing-mode:vertical-rl;right:0}
+#flow[data-dir="h"]{writing-mode:horizontal-tb;left:0;column-gap:0;column-fill:auto}
+#flow p{margin:0;text-indent:1em;max-width:none}
+#flow p+p{margin-block-start:0}
+.zones{position:absolute;inset:0;display:flex}
+.zones button{flex:1;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.zones button:focus-visible{outline:2px solid var(--acc);outline-offset:-4px}
+.rfoot{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;
+  padding:0 22px calc(10px + env(safe-area-inset-bottom,0px));font-size:11.5px;color:var(--faint);
+  font-variant-numeric:tabular-nums}
+.rui{position:absolute;left:0;right:0;background:var(--surface);border-block:1px solid var(--line);
+  transition:transform .2s ease,opacity .2s;z-index:2}
+.rui.top{top:0;padding:calc(9px + env(safe-area-inset-top,0px)) 16px 9px;display:flex;
+  align-items:center;gap:12px}
+.rui.bottom{bottom:0;padding:14px 18px calc(16px + env(safe-area-inset-bottom,0px));
+  display:flex;flex-direction:column;gap:12px}
+.rui[hidden]{display:none}
+.rui.top b{font-family:var(--serif);font-size:14px;font-weight:600;flex:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctl{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub)}
+.ctl > span{width:52px;flex:0 0 auto;letter-spacing:.06em}
+.ctl .opts{display:flex;gap:6px;flex:1;flex-wrap:wrap}
+.ctl .opts button{font-family:inherit;font-size:12px;padding:6px 11px;border:1px solid var(--line);
+  background:var(--bg);color:var(--sub);border-radius:2px;cursor:pointer}
+.ctl .opts button[aria-pressed="true"]{background:var(--acc-fill);color:var(--on-acc);
+  border-color:var(--acc-fill);font-weight:600}
+.xbtn{font-family:inherit;font-size:12px;border:1px solid var(--line);background:var(--bg);
+  color:var(--tx);padding:6px 12px;border-radius:2px;cursor:pointer;flex:0 0 auto}
+@media (prefers-reduced-motion:reduce){#flow{transition:none}.rui{transition:none}}
+</style>
+<style>
+html,body{margin:0}
+body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <p class="eyebrow">docs/read — 設計案</p>
+  <h1>栞</h1>
+  <p class="lede">読むための画面と、読んだ記録を1つにした個人用 PWA。ミュージック・DESK と同じ作り（ビルド不要の素の ES モジュール／GitHub Pages／IndexedDB／オフライン）に乗せる前提。</p>
+
+  <section style="margin-top:34px">
+    <div class="verdict">
+      <div><span class="vmark">1</span><span><b>管理アプリと読書アプリを分けない。1アプリ・2モード。</b>記録が発生するのは「読み終わった瞬間」「線を引いた瞬間」であって、後から別アプリを開いて入力する習慣は続かない。分けた時点で記録は埋まらなくなる。</span></div>
+      <div><span class="vmark">2</span><span><b>ただし作る順番は管理が先。</b>ビューアは DRM フリーの EPUB / PDF / テキストしか開けない。Kindle と紙の本は技術的に開けない。蔵書の大半がそちらなら、ビューアを先に作っても使う場面が無い。</span></div>
+      <div><span class="vmark">3</span><span><b>中心機能は抜き書き。</b>読了数や星の数は自分用には情報量がほぼゼロ。後で参照されるのは引用と、そのとき何を思ったかだけ。ここを一等地に置く。</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cta">
+      <button class="btn primary" id="open">実寸で読んでみる</button>
+      <small>縦組み・タップ送り・文字設定を実装済み。端末の全画面で開く</small>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">01</span><h2>スマホ — 開いたら「続きから」しかない</h2></div>
+    <p>スマホの起動直後に蔵書一覧を出すのは間違い。読む気があってアプリを開いているのだから、1冊を全面に出して1タップで本文に入れるのが正しい。棚は下タブに退ける。</p>
+    <div class="strip">
+
+      <div class="slot">
+        <div class="dev phone"><div class="scr"><div class="mini">
+          <div class="bar"><span>9:41</span><span>栞</span></div>
+          <div class="body">
+            <div class="hero-book">
+              <div class="cover"><span class="t">存在と時間<br><span style="font-size:11px;opacity:.7">ハイデガー</span></span></div>
+              <div>
+                <div class="h-t">存在と時間</div>
+                <div class="h-s">第一篇 第二章 · 残り 38 分</div>
+              </div>
+              <div class="lastline">…前回はここで止めた。「世界内存在」という<br>言い方がまだ腑に落ちていない。</div>
+              <div class="resume">続きから読む</div>
+              <div class="flow">
+                <div><b>3</b><span>読んでいる</span></div>
+                <div><b>+2</b><span>今月 入った</span></div>
+                <div><b>−1</b><span>今月 出た</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="tabs">
+            <div class="on"><i></i>つづき</div><div><i></i>棚</div>
+            <div><i></i>抜き書き</div><div><i></i>記録</div>
+          </div>
+        </div></div></div>
+        <p class="cap"><b>つづき</b>積読の総数は出さない。数字は罪悪感の装置にしかならないので、代わりに今月の出入りだけを出す。前回止まった位置の直前の一文を置いて、視線の着地点を作る。</p>
+      </div>
+
+      <div class="slot">
+        <div class="dev phone"><div class="scr"><div class="mini">
+          <div class="bar"><span>9:41</span><span>🔍</span></div>
+          <div class="body">
+            <div class="shelfhead"><h4>棚</h4><span style="font-size:12px;color:var(--faint)">並び: 最近</span></div>
+            <div class="seg"><div class="on">読んでいる</div><div>積んでいる</div><div>読んだ</div></div>
+            <div class="row"><span class="sc" style="background:linear-gradient(160deg,#3b4a5a,#222b36)"></span>
+              <span class="rt"><b>存在と時間</b><span>ハイデガー · EPUB</span>
+              <span class="prog"><i style="width:34%"></i></span></span><span class="rmin">38分</span></div>
+            <div class="row"><span class="sc" style="background:linear-gradient(160deg,#6b5040,#3a2b22)"></span>
+              <span class="rt"><b>夜と霧</b><span>フランクル · 紙</span>
+              <span class="prog"><i style="width:71%"></i></span></span><span class="rmin">p.148</span></div>
+            <div class="row"><span class="sc" style="background:linear-gradient(160deg,#4a5240,#2a2f24)"></span>
+              <span class="rt"><b>失われた時を求めて 1</b><span>プルースト · Kindle</span>
+              <span class="prog"><i style="width:12%"></i></span></span><span class="rmin">12%</span></div>
+            <div class="row" style="opacity:.55"><span class="sc" style="background:linear-gradient(160deg,#5a4550,#322430)"></span>
+              <span class="rt"><b>銀河英雄伝説 1</b><span>田中芳樹 · EPUB</span>
+              <span class="prog"><i style="width:100%"></i></span></span><span class="rmin">読了</span></div>
+          </div>
+          <div class="tabs">
+            <div><i></i>つづき</div><div class="on"><i></i>棚</div>
+            <div><i></i>抜き書き</div><div><i></i>記録</div>
+          </div>
+        </div></div></div>
+        <p class="cap"><b>棚</b>紙・Kindle・EPUB を同じ棚に並べる。開けない本は進捗を手で動かす（ページ数か %）。開ける本だけ本文に入れる。ここを分けると管理として使えなくなる。</p>
+      </div>
+
+      <div class="slot">
+        <div class="dev phone"><div class="scr"><div class="mini" style="background:var(--bg)">
+          <div style="height:2px;background:var(--line);flex:0 0 auto"><i style="display:block;height:100%;width:34%;background:var(--acc-fill)"></i></div>
+          <div style="flex:1;min-height:0;padding:26px 22px;overflow:hidden">
+            <div style="writing-mode:vertical-rl;height:100%;font-family:var(--serif);font-size:17px;line-height:2.05;letter-spacing:.04em;text-align:justify;color:var(--tx)">
+              <p style="margin:0;text-indent:1em">現存在はそのつど、みずからの存在においてこの存在そのものへとかかわっている。この存在関係のうちで、現存在は自分自身へと 開かれている。<mark style="background:color-mix(in srgb,var(--acc-fill) 26%,transparent)">問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</mark>したがって存在への問いは、外から持ちこまれるのではない。</p>
+            </div>
+          </div>
+          <div style="flex:0 0 auto;display:flex;justify-content:space-between;padding:0 22px 16px;font-size:11px;color:var(--faint)">
+            <span>第一篇 第二章</span><span>この章 あと 12 分</span>
+          </div>
+        </div></div></div>
+        <p class="cap"><b>読む</b>UI は全部消える。上端の細線と下の1行だけ。残りは「ページ数」ではなく実測の読速から出した<b style="display:inline">分</b>で出す。上下スワイプは誤爆するので使わず、左・中央・右のタップ3分割。</p>
+      </div>
+
+      <div class="slot">
+        <div class="dev phone"><div class="scr"><div class="mini">
+          <div class="bar"><span>9:41</span><span>⌄ すべて</span></div>
+          <div class="body" style="overflow:hidden">
+            <div class="shelfhead"><h4>抜き書き</h4><span style="font-size:12px;color:var(--faint)">127</span></div>
+            <div style="border:1px solid var(--line);border-radius:3px;padding:13px;background:var(--surface2);margin-bottom:4px">
+              <div style="font-size:10.5px;letter-spacing:.12em;color:var(--faint);margin-bottom:8px">1年前の今日</div>
+              <div style="font-family:var(--serif);font-size:13.5px;line-height:1.9">人間から一切を奪うことはできるが、たった一つ、与えられた状況でいかに振る舞うかという自由だけは奪えない。</div>
+              <div style="font-size:11px;color:var(--faint);margin-top:8px">夜と霧 · p.183</div>
+            </div>
+            <div class="note"><q>問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</q>
+              <span class="src">存在と時間 · 第一篇 第二章 · 今日</span>
+              <span class="me">＝循環しているのに前提の誤りにならない、という主張。論証の形が普通と違う。</span>
+              <span style="display:block;margin-top:8px"><span class="chip">#方法</span><span class="chip">#ThinkOS</span></span>
+            </div>
+            <div class="note"><q>語りえぬものについては、沈黙しなければならない。</q>
+              <span class="src">論理哲学論考 · 7 · 3日前</span></div>
+          </div>
+          <div class="tabs">
+            <div><i></i>つづき</div><div><i></i>棚</div>
+            <div class="on"><i></i>抜き書き</div><div><i></i>記録</div>
+          </div>
+        </div></div></div>
+        <p class="cap"><b>抜き書き</b>引用と、そのとき書いた自分の反応が対。上に「1年前の今日」を1枚だけ出す（毎日1枚、選べない）。Markdown で書き出して ThinkOS 側に流せる。</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">02</span><h2>タブレット — 本文とノートを同時に開く</h2></div>
+    <p>タブレットで縦持ち・1段組にするとスマホの拡大版にしかならない。横持ちの価値は「本文を読みながら右に書ける」ことにある。選択した文はそのまま右に落ち、本文側には薄い印が残る。研究読みはこの形が要る。</p>
+    <div class="dev tab"><div class="scr" id="tabscr"><div class="tabinner" id="tabinner">
+      <div class="tleft">
+        <div class="vtext">
+          <p style="margin:0;text-indent:1em">存在への問いは、今日では忘れられている。とはいえ、この問いが忘れられているということ自体は、けっして自明の事柄ではない。むしろ問いが忘却されえたという事実のうちに、問いそのものの性格が現れている。<mark>問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</mark>われわれは、存在とは何かをあらかじめ何ほどか了解しているからこそ、存在を問うことができる。この了解は漠然としており、概念の形をとっていない。しかしそれが皆無であるなら、問いを発することすらできないはずである。したがって存在への問いは、外から持ちこまれるものではなく、現存在そのものの構造から立ちあがってくる。</p>
+        </div>
+        <div class="tcap"><span>存在と時間 · 第一篇 第二章</span><span>34% · この章 あと 12 分</span></div>
+      </div>
+      <div class="tright">
+        <h5>抜き書き</h5>
+        <div style="border-left:2px solid var(--acc-fill);padding-left:13px">
+          <div style="font-family:var(--serif);font-size:14px;line-height:1.95">問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。</div>
+          <div style="font-size:11px;color:var(--faint);margin-top:7px">たった今</div>
+        </div>
+        <div style="border:1px solid var(--line);border-radius:3px;background:var(--surface);
+             padding:12px;font-size:13px;line-height:1.75;color:var(--sub);min-height:92px">
+          ＝循環しているのに前提の誤りにならない、という主張。論証の形が普通と違う。あとで<span style="color:var(--tx)">ThinkOS/概念検査</span>に回す。
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <span class="chip">#方法</span><span class="chip">#ThinkOS</span><span class="chip" style="border-style:dashed">＋</span>
+        </div>
+        <div style="border-top:1px solid var(--line);padding-top:13px;margin-top:2px">
+          <h5 style="margin-bottom:9px">この本から</h5>
+          <div style="font-size:12.5px;color:var(--sub);line-height:1.8">
+            · 存在了解は概念以前である<br>· 現存在は自分自身へ開かれている<br>· 平均的日常性から始める理由
+          </div>
+        </div>
+      </div>
+    </div></div></div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">03</span><h2>入れる機能・入れない機能</h2></div>
+    <p>「読書体験を楽しむ」で普通に挙がるものの大半は、自分ひとりで使うアプリでは効かない。判断を先に書く。</p>
+    <div class="tblwrap"><table>
+      <thead><tr><th>機能</th><th>判断</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td class="j">縦組み</td><td class="j y">入れる</td><td class="r">日本語の小説では体験差がいちばん大きい。<code>writing-mode:vertical-rl</code> で実装可能（上のデモが実物）。ただし横組みとページ送りの計算が別物になるので、実装コストは相応にある</td></tr>
+        <tr><td class="j">残り時間の実測</td><td class="j y">入れる</td><td class="r">実測の分/ページから「この章あと◯分」。ページ数より行動を決められる。DESK の予定にも流せる</td></tr>
+        <tr><td class="j">抜き書きの再会</td><td class="j y">入れる</td><td class="r">1日1枚、過去の抜き書きを出す。研究用途では復習が効く。枚数を増やすと見なくなるので1枚固定</td></tr>
+        <tr><td class="j">読了時の1問</td><td class="j y">入れる</td><td class="r">星をつけさせる代わりに「一番残った文は」を抜き書きから1つ選ばせる。読了記録が引用に繋がり、後から使える形で残る</td></tr>
+        <tr><td class="j">読書の記録</td><td class="j y">入れる</td><td class="r">いつ・何分読んだかを DESK の集中セッションと同じ形で残す。冊数ではなく時間で見る</td></tr>
+        <tr><td class="j">ページめくりアニメ</td><td class="j n">既定オフ</td><td class="r">紙をめくる演出は最初の3日で邪魔になる。60fps 維持のコストと電池も払う。設定で「なし / 薄いフェード」のみ</td></tr>
+        <tr><td class="j">星評価・点数</td><td class="j n">入れない</td><td class="r">他人に見せないなら★4と★5の区別に意味がない。付けるのが面倒になって記録自体が止まる</td></tr>
+        <tr><td class="j">連続日数・バッジ</td><td class="j n">入れない</td><td class="r">途切れた日に開かなくなる。読書は音読やゲームと違い、1日空けるのが普通</td></tr>
+        <tr><td class="j">効果音・BGM</td><td class="j n">入れない</td><td class="r">音はミュージック側の担当。両方から音を出すと事故る</td></tr>
+        <tr><td class="j">積読の総数表示</td><td class="j n">入れない</td><td class="r">数えると買わなくなる方向にしか働かない。今月の出入り（＋2 / −1）だけ出す</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">04</span><h2>正直なところ（先に潰しておく制約）</h2></div>
+    <div class="notes">
+      <div><dt>Kindle</dt><dd><b>開けない。回避策も無い。</b>DRM があり、Web から読む手段は提供されていない。Kindle の本は「棚に登録して進捗を手で動かす・抜き書きは手打ちかカメラ」までしかできない。蔵書の大半が Kindle なら、ビューアを作る意味はほぼ無い。<b>ここが設計全体の分岐点</b>なので、作り始める前に自分の蔵書の内訳を数えたほうがいい</dd></div>
+      <div><dt>EPUB</dt><dd>DRM フリーなら開ける。EPUB は zip + XHTML なので、<b>ブラウザ標準の <code>DecompressionStream('deflate-raw')</code> で展開できる</b>。epub.js のような外部ライブラリを抱えずに、ミュージックや DESK と同じ「素の ES モジュール」のまま実装できる</dd></div>
+      <div><dt>PDF</dt><dd>自炊 PDF は描画に pdf.js が要る（数 MB を同梱する形になる）。しかもスキャンした固定レイアウトは文字サイズを変えられないので、スマホでは実用に耐えない。<b>タブレット専用と割り切る</b>のが正しい</dd></div>
+      <div><dt>iPhone / iPad</dt><dd>ホーム画面への追加は Safari 限定。保存領域は長期間開かないと OS に消されうる（ミュージックと同じ話で、<code>persist()</code> は打っておく）。本の実体を端末に持つ以上、容量の確認表示は必須</dd></div>
+      <div><dt>同期</dt><dd>ミュージック・DESK と同じく端末内のみ。<b>ただし読書は「スマホで読んで、タブレットで続きから」が起きる</b>ので、進捗だけは端末をまたぎたくなる。JSON の書き出し／読み込みでは足りない。Google ドライブの appDataFolder に進捗と抜き書きだけを置く方式（本体は各端末）が現実的な落としどころ</dd></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">05</span><h2>作る順番</h2></div>
+    <p>各段階で単体で使えるようにする。v0.1 だけで止めても損にならない構成にしてある。</p>
+    <div class="tblwrap"><table>
+      <thead><tr><th>版</th><th>中身</th><th>これだけで使えるか</th></tr></thead>
+      <tbody>
+        <tr><td class="j">v0.1</td><td>棚 ＋ 手動の進捗 ＋ 抜き書き（手打ち・カメラ OCR）＋ 読書の記録</td><td class="r"><b>使える。</b>紙でも Kindle でも成立する。ビューアが無くても困らない</td></tr>
+        <tr><td class="j">v0.2</td><td>EPUB ビューア（横組み・タップ送り・文字設定）</td><td class="r">DRM フリーの蔵書がある場合のみ効く</td></tr>
+        <tr><td class="j">v0.3</td><td>縦組み ＋ 選択からの抜き書き ＋ タブレットの分割表示</td><td class="r">ここで「読書体験」の側が完成する</td></tr>
+        <tr><td class="j">v0.4</td><td>DESK / ConTodo 連携、ドライブ同期、PDF</td><td class="r">周辺。無くても本体は回る</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">06</span><h2>既存アプリとの接続</h2></div>
+    <div class="notes">
+      <div><dt>見た目</dt><dd>ミュージックのテーマ体系（墨／霧／灰／藍鉄／生成り／白磁 ＋ アクセント ＋ フォント）を<b>そのまま流用</b>する。読書アプリ側で足すのは本文の設定だけ ― 文字サイズ・行間・字送り・余白・縦横組み</dd></div>
+      <div><dt>DESK</dt><dd>同一オリジンなので localStorage を共有できる。今日の読書分数を DESK の集中セッション（<code>kind: read</code>）に書く。DESK 側は何も変えずに時間が積算される</dd></div>
+      <div><dt>ConTodo</dt><dd>「◯◯を30分読む」をタスクとして受け取り、読み終わったら消化を返す</dd></div>
+      <div><dt>ThinkOS</dt><dd>抜き書きを Markdown で書き出す。引用・出典・自分の反応・タグの4点セットで出せば、そのまま文献ノートとして使える</dd></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">07</span><h2>保存するもの</h2></div>
+    <div class="tblwrap"><table>
+      <thead><tr><th>ストア</th><th>中身</th></tr></thead>
+      <tbody>
+        <tr><td class="j">books</td><td class="r">書誌（題・著者・形式＝紙/Kindle/EPUB/PDF・状態・入手日・読了日）</td></tr>
+        <tr><td class="j">files</td><td class="r">EPUB / PDF の実体（Blob。キーは本 ID）</td></tr>
+        <tr><td class="j">marks</td><td class="r">進捗（CFI 相当の位置／ページ番号／%）と、前回止まった位置</td></tr>
+        <tr><td class="j">notes</td><td class="r">抜き書き（引用・位置・自分の反応・タグ・日時）</td></tr>
+        <tr><td class="j">sessions</td><td class="r">読書セッション（本 ID・開始・分数・進んだ量）</td></tr>
+        <tr><td class="j">settings</td><td class="r">テーマ・本文設定・最後に開いていた本</td></tr>
+      </tbody>
+    </table></div>
+    <p style="color:var(--sub);font-size:13.5px">ミュージックの <code>tracks / blobs / art / playlists / settings</code> と同じ分け方。実体（files）だけ別ストアにしておくと、本を消さずに実体だけ捨てて容量を空ける、ができる。</p>
+  </section>
+
+  <section style="margin-top:52px">
+    <div class="cta">
+      <button class="btn primary" id="open2">実寸で読んでみる</button>
+      <button class="btn" id="theme">テーマを切り替える</button>
+    </div>
+  </section>
+</div>
+
+<div id="reader" role="dialog" aria-label="読書画面のデモ">
+  <div class="rline"><i id="bar"></i></div>
+  <div class="stage">
+    <div class="page"><div id="flow" data-dir="v"></div></div>
+    <div class="zones">
+      <button id="zprev" aria-label="前のページ"></button>
+      <button id="zui" aria-label="操作を出す"></button>
+      <button id="znext" aria-label="次のページ"></button>
+    </div>
+    <div class="rui top" id="uitop" hidden>
+      <b>存在と時間</b>
+      <button class="xbtn" id="close">閉じる</button>
+    </div>
+    <div class="rui bottom" id="uibot" hidden>
+      <div class="ctl"><span>組み方</span><div class="opts" id="g-dir">
+        <button data-v="v" aria-pressed="true">縦組み</button><button data-v="h" aria-pressed="false">横組み</button>
+      </div></div>
+      <div class="ctl"><span>書体</span><div class="opts" id="g-fam">
+        <button data-v="serif" aria-pressed="true">明朝</button><button data-v="sans" aria-pressed="false">ゴシック</button>
+      </div></div>
+      <div class="ctl"><span>文字</span><div class="opts" id="g-fs">
+        <button data-v="15" aria-pressed="false">小</button><button data-v="17" aria-pressed="true">中</button>
+        <button data-v="20" aria-pressed="false">大</button><button data-v="23" aria-pressed="false">特大</button>
+      </div></div>
+      <div class="ctl"><span>行間</span><div class="opts" id="g-lh">
+        <button data-v="1.75" aria-pressed="false">詰める</button><button data-v="2" aria-pressed="true">標準</button>
+        <button data-v="2.35" aria-pressed="false">空ける</button>
+      </div></div>
+    </div>
+  </div>
+  <div class="rfoot"><span id="chap">第一篇 第二章</span><span id="left">この章 あと 12 分</span></div>
+</div>
+
+<script>
+(function(){
+  var TEXT = [
+    "存在への問いは、今日では忘れられている。とはいえ、この問いが忘れられているということ自体は、けっして自明の事柄ではない。むしろ問いが忘却されえたという事実のうちに、問いそのものの性格が現れている。",
+    "問いを立てるということ自体が、問うている当のものの存在様式にすでに属している。われわれは、存在とは何かをあらかじめ何ほどか了解しているからこそ、存在を問うことができる。この了解は漠然としており、概念の形をとっていない。しかしそれが皆無であるなら、問いを発することすらできないはずである。",
+    "したがって存在への問いは、外から持ちこまれるものではなく、現存在そのものの構造から立ちあがってくる。この事情を、循環であると言って退けることはできない。退けた瞬間に、問いを発している自分自身の足場もまた失われるからである。",
+    "現存在はそのつど、みずからの存在においてこの存在そのものへとかかわっている。かかわりのうちで、現存在は自分自身へと開かれている。開かれているとは、明るく照らされているという意味ではない。むしろ、気づかぬまま巻きこまれている、という意味に近い。",
+    "だからこそ分析は、特別な瞬間ではなく、平均的な日常性から始められなければならない。祭りの日ではなく、何でもない午後の、誰でもない振る舞いのうちに、探されているものは潜んでいる。",
+    "ここまでが準備である。以下では、この地盤の上に立って、時間という手がかりを取り出す作業に移る。急ぐ必要はない。問いの形が正確であれば、答えはあとから追いついてくる。"
+  ];
+  var R=document.getElementById('reader'), flow=document.getElementById('flow');
+  var bar=document.getElementById('bar'), left=document.getElementById('left');
+  var uitop=document.getElementById('uitop'), uibot=document.getElementById('uibot');
+  var page=0, pages=1, W=0;
+
+  flow.innerHTML = TEXT.map(function(t){return '<p>'+t+'</p>';}).join('');
+
+  function measure(){
+    var box = flow.parentNode.getBoundingClientRect();
+    W = Math.round(box.width);
+    var H = Math.round(box.height);
+    if(flow.dataset.dir==='v'){
+      flow.style.height = H+'px'; flow.style.width='auto';
+      flow.style.columnWidth=''; flow.style.columns='';
+    }else{
+      flow.style.height = H+'px'; flow.style.width = W+'px';
+      flow.style.columnWidth = W+'px';
+    }
+    var total = flow.dataset.dir==='v' ? flow.scrollWidth : flow.scrollWidth;
+    pages = Math.max(1, Math.round(total / W));
+    if(page > pages-1) page = pages-1;
+    render();
+  }
+  function render(){
+    var x = flow.dataset.dir==='v' ? page*W : -page*W;
+    flow.style.transform = 'translateX('+x+'px)';
+    var pct = pages<2 ? 1 : (page+1)/pages;
+    bar.style.width = (pct*100).toFixed(1)+'%';
+    var mins = Math.max(0, Math.round((pages-1-page)*1.6));
+    left.textContent = mins>0 ? ('この章 あと '+mins+' 分') : 'この章 おわり';
+  }
+  function go(d){ page = Math.min(pages-1, Math.max(0, page+d)); render(); }
+
+  document.getElementById('znext').onclick=function(){go(1);};
+  document.getElementById('zprev').onclick=function(){go(-1);};
+  document.getElementById('zui').onclick=function(){
+    var h = uitop.hidden; uitop.hidden=!h; uibot.hidden=!h;
+  };
+  function group(id, fn){
+    var g=document.getElementById(id);
+    g.addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b) return;
+      [].forEach.call(g.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b?'true':'false');});
+      fn(b.dataset.v);
+    });
+  }
+  group('g-dir', function(v){ flow.dataset.dir=v; flow.style.transform='none'; page=0; requestAnimationFrame(measure); });
+  group('g-fam', function(v){ flow.style.setProperty('--fam', v==='serif'?'var(--serif)':'var(--sans)'); requestAnimationFrame(measure); });
+  group('g-fs',  function(v){ flow.style.setProperty('--fs', v+'px'); requestAnimationFrame(measure); });
+  group('g-lh',  function(v){ flow.style.setProperty('--lh', v); requestAnimationFrame(measure); });
+
+  function open(){ R.classList.add('open'); page=0; requestAnimationFrame(measure); }
+  document.getElementById('open').onclick=open;
+  document.getElementById('open2').onclick=open;
+  document.getElementById('close').onclick=function(){ R.classList.remove('open'); };
+  document.addEventListener('keydown', function(e){
+    if(!R.classList.contains('open')) return;
+    if(e.key==='Escape') R.classList.remove('open');
+    if(e.key==='ArrowLeft') go(flow.dataset.dir==='v'?1:-1);
+    if(e.key==='ArrowRight') go(flow.dataset.dir==='v'?-1:1);
+  });
+  window.addEventListener('resize', function(){ if(R.classList.contains('open')) measure(); });
+
+  // タブレット枠を親の幅に合わせて縮小
+  function fitTab(){
+    var scr=document.getElementById('tabscr'), inner=document.getElementById('tabinner');
+    if(!scr) return;
+    var s = scr.clientWidth/1024;
+    inner.style.transform='scale('+s+')';
+  }
+  fitTab(); window.addEventListener('resize', fitTab);
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(fitTab);
+
+  var root=document.documentElement;
+  document.getElementById('theme').onclick=function(){
+    var cur = root.getAttribute('data-theme');
+    if(!cur){ cur = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark':'light'; }
+    root.setAttribute('data-theme', cur==='dark'?'light':'dark');
+  };
+})();
+</script>
+</body>
+</html>
