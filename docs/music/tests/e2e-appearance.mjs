@@ -221,6 +221,39 @@ async function main() {
       assert(problems.length === 0, problems.join(' / '));
     });
 
+    // ---- 8b. <html> にもテーマが当たっていること ----
+    // body だけに当てると <html> が既定の黒のまま残り、body の箱（画面1枚分）より
+    // 下にスクロールしたところで下地の色が変わってしまう（v1.7.0 で出た不具合）。
+    await step('保存したテーマが <html> にも当たり、<html> と <body> の下地が一致する', async () => {
+      // この時点で「白磁」が保存済み。読み込み直して、アプリ自身の適用処理を通す
+      await page.reload();
+      await page.waitForTimeout(900);
+      const out = await page.evaluate(() => ({
+        htmlTheme: document.documentElement.dataset.theme,
+        bodyTheme: document.body.dataset.theme,
+        htmlBg: getComputedStyle(document.documentElement).backgroundColor,
+        bodyBg: getComputedStyle(document.body).backgroundColor,
+      }));
+      assert(out.htmlTheme === 'hakuji', `html の印が当たっていない: ${JSON.stringify(out)}`);
+      assert(out.bodyTheme === 'hakuji', `body の印が当たっていない: ${JSON.stringify(out)}`);
+      assert(out.htmlBg === out.bodyBg, `下地の色が食い違う: ${JSON.stringify(out)}`);
+      assert(out.htmlBg === 'rgb(255, 255, 255)', `白磁の下地になっていない: ${JSON.stringify(out)}`);
+    });
+
+    await step('どのテーマでも <html> 側で色が解決できる（セレクタが body 限定でない）', async () => {
+      const problems = [];
+      for (const id of THEME_IDS) {
+        const out = await page.evaluate((themeId) => {
+          document.documentElement.dataset.theme = themeId;
+          return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+        }, id);
+        if (!out) problems.push(`${id}: --bg が空`);
+        if (id !== 'sumi' && out === '#0b0b0d') problems.push(`${id}: 既定の黒のまま (${out})`);
+      }
+      await page.evaluate(() => (document.documentElement.dataset.theme = 'hakuji'));
+      assert(problems.length === 0, problems.join(' / '));
+    });
+
     // ---- 9. ページ内エラーが出ていないこと ----
     await step('ページ内エラー（pageerror/console error）が出ていない', () => {
       assert(pageErrors.length === 0, JSON.stringify(pageErrors).slice(0, 500));
