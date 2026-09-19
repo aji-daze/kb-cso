@@ -499,6 +499,7 @@ body.select-mode .row .chk { display: flex; }
   border: 1.5px solid var(--sub);
 }
 .sw-dot.acc { background: var(--acc); border-color: transparent; }
+.icon-preview { width: 40px; height: 40px; border-radius: 10px; flex: none; }
 
 /* テーマ選択ダイアログの見本 */
 .theme-opt { display: flex; align-items: center; gap: 12px; padding: 13px 18px; transition: background .12s ease; }

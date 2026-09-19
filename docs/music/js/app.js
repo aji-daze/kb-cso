@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.8.0';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -54,6 +54,225 @@ function applyAppearance() {
   if (meta) meta.setAttribute('content', t.bg);
   const cs = document.querySelector('meta[name=color-scheme]');
   if (cs) cs.setAttribute('content', t.id === 'kinari' || t.id === 'hakuji' ? 'light' : 'dark');
+  // アプリアイコン（favicon / ホーム画面用）をテーマ・アクセントに合わせて作り直す。
+  // 描画は少し重いので、画面の表示は待たせない（失敗しても既存の PNG のままになるだけ）。
+  updateAppIcon().catch(() => {});
+}
+
+/* ============================ アプリアイコンをテーマ・アクセントに合わせて作る ============================
+   ホーム画面に追加済みの PWA のアイコンは、追加した時点で端末に焼き付いてしまい、
+   manifest.json や <link> の差し替えだけでは変わらない。変わるのは、
+   manifest が指す URL の「中身」が変わったとき（Service Worker がその URL への
+   リクエストに応答するときに差し替える）。ここではその中身（PNG の Blob）を作る。 */
+
+// #rrggbb / rgb(r,g,b) のどちらでも [r,g,b] に変換する
+function parseColorToRgb(str) {
+  str = String(str || '').trim();
+  let m = str.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (m) {
+    let hex = m[1];
+    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    const num = parseInt(hex, 16);
+    return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+  }
+  m = str.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return [0, 0, 0];
+}
+function rgbToHex([r, g, b]) {
+  const h = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  return `#${h(r)}${h(g)}${h(b)}`;
+}
+function relLuminance([r, g, b]) {
+  const f = (c) => {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const [rl, gl, bl] = [f(r), f(g), f(b)];
+  return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+}
+function contrastOfRgb(a, b) {
+  const la = relLuminance(a);
+  const lb = relLuminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+function mixRgb(a, b, t) {
+  return [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t);
+}
+
+// 明るいテーマに明るいアクセントだと音符の色が下地に沈むので、
+// コントラスト比が 3.0 未満の間は tx（文字色）の方へ 10% ずつ混ぜて補正する。
+function ensureIconContrast(noteRgb, bgRgb, txRgb) {
+  let cur = noteRgb;
+  for (let i = 0; i < 10 && contrastOfRgb(cur, bgRgb) < 3.0; i++) {
+    cur = mixRgb(noteRgb, txRgb, (i + 1) * 0.1);
+  }
+  return cur;
+}
+
+// index.html の SVG スプライトにある #i-note の形をそのまま使う（アプリ内アイコンと形を揃える）
+function getNotePathAndViewBox() {
+  const sym = document.querySelector('#i-note');
+  let viewBox = [0, 0, 24, 24];
+  let d = null;
+  if (sym) {
+    const vbAttr = sym.getAttribute('viewBox');
+    if (vbAttr) {
+      const parts = vbAttr.trim().split(/\s+/).map(Number);
+      if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) viewBox = parts;
+    }
+    const path = sym.querySelector('path');
+    if (path) d = path.getAttribute('d');
+  }
+  return { d, viewBox };
+}
+
+// canvas に描いて PNG の Blob を返す
+// 音符の形が viewBox いっぱいに描かれているとは限らないので、実際に塗られる範囲
+// （インクの外接矩形）を一度だけ測っておく。これを使わないと、アイコンの中で
+// 音符が小さく見えたり、中心からずれて見えたりする。
+let noteInkCache = null;
+function measureNoteInk(d, viewBox) {
+  if (noteInkCache) return noteInkCache;
+  const M = 160;
+  const [vx, vy, vw, vh] = viewBox;
+  const sc = M / Math.max(vw, vh);
+  const c = document.createElement('canvas');
+  c.width = M;
+  c.height = M;
+  const x = c.getContext('2d');
+  x.save();
+  x.scale(sc, sc);
+  x.translate(-vx, -vy);
+  x.fillStyle = '#000';
+  x.fill(new Path2D(d));
+  x.restore();
+  const data = x.getImageData(0, 0, M, M).data;
+  let minX = M, minY = M, maxX = -1, maxY = -1;
+  for (let py = 0; py < M; py++) {
+    for (let px = 0; px < M; px++) {
+      if (data[(py * M + px) * 4 + 3] > 10) {
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+    }
+  }
+  if (maxX < 0) return (noteInkCache = { x: vx, y: vy, w: vw, h: vh }); // 測れなければ viewBox のまま
+  noteInkCache = {
+    x: vx + minX / sc,
+    y: vy + minY / sc,
+    w: (maxX - minX + 1) / sc,
+    h: (maxY - minY + 1) / sc,
+  };
+  return noteInkCache;
+}
+
+async function makeIconBlob(size, { bg, note, maskable }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = bg;
+  if (maskable) {
+    // maskable は外周が切り落とされる前提なので、角丸なしで全面を塗る
+    ctx.fillRect(0, 0, size, size);
+  } else {
+    const r = size * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(size - r, 0);
+    ctx.arcTo(size, 0, size, r, r);
+    ctx.lineTo(size, size - r);
+    ctx.arcTo(size, size, size - r, size, r);
+    ctx.lineTo(r, size);
+    ctx.arcTo(0, size, 0, size - r, r);
+    ctx.lineTo(0, r);
+    ctx.arcTo(0, 0, r, 0, r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const { d, viewBox } = getNotePathAndViewBox();
+  if (d) {
+    // 実際に塗られる範囲で合わせる。maskable は外周が切り落とされるので小さめに。
+    const ink = measureNoteInk(d, viewBox);
+    const target = size * (maskable ? 0.36 : 0.46);
+    const scale = target / Math.max(ink.w, ink.h);
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-(ink.x + ink.w / 2), -(ink.y + ink.h / 2));
+    ctx.fillStyle = note;
+    ctx.fill(new Path2D(d));
+    ctx.restore();
+  }
+
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
+}
+
+// 生成した Blob から object URL を作って <link> と設定画面の見本に反映する。前の URL は revoke する。
+const iconObjectUrls = { icon192: null, icon512: null };
+function setIconLinks(icon192Blob, icon512Blob) {
+  if (icon192Blob) {
+    const prev = iconObjectUrls.icon192;
+    iconObjectUrls.icon192 = URL.createObjectURL(icon192Blob);
+    const link = document.getElementById('favicon');
+    if (link) link.href = iconObjectUrls.icon192;
+    if (prev) URL.revokeObjectURL(prev);
+  }
+  if (icon512Blob) {
+    const prev = iconObjectUrls.icon512;
+    iconObjectUrls.icon512 = URL.createObjectURL(icon512Blob);
+    const link = document.getElementById('appleIcon');
+    if (link) link.href = iconObjectUrls.icon512;
+    if (prev) URL.revokeObjectURL(prev);
+  }
+  const preview = document.getElementById('iconPreview');
+  if (preview && iconObjectUrls.icon192) preview.src = iconObjectUrls.icon192;
+}
+
+// いま効いているテーマ・アクセントに合わせてアイコンを作り直す（同じ色なら作り直さない）
+async function updateAppIcon() {
+  const cs = getComputedStyle(document.documentElement);
+  const bgRgb = parseColorToRgb(cs.getPropertyValue('--bg'));
+  const txRgb = parseColorToRgb(cs.getPropertyValue('--tx'));
+  let noteRgb = parseColorToRgb(cs.getPropertyValue('--acc'));
+  noteRgb = ensureIconContrast(noteRgb, bgRgb, txRgb);
+  const bg = rgbToHex(bgRgb);
+  const note = rgbToHex(noteRgb);
+  const key = `${bg}|${note}`;
+
+  let icon192 = null;
+  let icon512 = null;
+  if (db.setting('iconKey', null) === key) {
+    const cached192 = db.setting('icon192', null);
+    const cached512 = db.setting('icon512', null);
+    if (cached192 instanceof Blob && cached192.size > 0 && cached512 instanceof Blob && cached512.size > 0) {
+      icon192 = cached192;
+      icon512 = cached512;
+    }
+  }
+
+  if (!icon192 || !icon512) {
+    const [b192, b512, bMask] = await Promise.all([
+      makeIconBlob(192, { bg, note, maskable: false }),
+      makeIconBlob(512, { bg, note, maskable: false }),
+      makeIconBlob(512, { bg, note, maskable: true }),
+    ]);
+    await Promise.all([
+      db.setSetting('icon192', b192),
+      db.setSetting('icon512', b512),
+      db.setSetting('iconMask512', bMask),
+      db.setSetting('iconKey', key),
+    ]);
+    icon192 = b192;
+    icon512 = b512;
+  }
+
+  setIconLinks(icon192, icon512);
 }
 
 /* ---- ホーム画面へのインストール ----
@@ -2787,6 +3006,11 @@ async function renderSettings() {
       <div class="s">${esc(accentNow.name)}</div></div><span class="sw-dot acc"></span></div>
     <div class="item" data-act="font"><div class="txt"><div class="t">フォント</div>
       <div class="s">${esc(fontNow.name)}・端末に無い書体は標準で表示されます</div></div></div>
+    <div class="item" data-act="appicon"><div class="txt">
+      <div class="t">アプリのアイコン</div>
+      <div class="s">テーマとアクセントに合わせて作られます。ホーム画面のアイコンをいま変えるには、
+      いったん外してもう一度追加してください</div></div>
+      <img class="icon-preview" id="iconPreview" alt=""></div>
 
     <div class="sec">アプリとして使う</div>
     <div class="item" data-act="install"><svg style="color:${installed ? 'var(--acc)' : 'var(--sub)'}"><use href="#i-install"/></svg>
@@ -2838,8 +3062,13 @@ async function renderSettings() {
     <div class="sec">このアプリ</div>
     <div class="item"><div class="txt"><div class="t">バージョン</div><div class="s">${APP_VERSION}${navigator.onLine ? '' : ' · オフライン'}</div></div></div>`;
 
+  // 見本のアイコン（生成済みなら反映。まだなら updateAppIcon() が終わり次第 #iconPreview に反映される）
+  const iconPreviewEl = $('#iconPreview', body);
+  if (iconPreviewEl && iconObjectUrls.icon192) iconPreviewEl.src = iconObjectUrls.icon192;
+
   body.querySelectorAll('[data-act]').forEach((n) => {
     const act = n.dataset.act;
+    if (act === 'appicon') return; // 見本を出すだけ。タップしても何もしない（他の data-act に巻き込まれない）
     if (act === 'unplug') {
       n.onchange = () => db.setSetting('unplug', n.value);
       return;
