@@ -1,0 +1,34 @@
+name: aozora-index
+
+# 青空文庫の目録を取ってきて docs/read/data/ に置く。
+# ブラウザからは青空文庫を直接読めない（CORS）ので、ここで取って自分のサイトから配る。
+# 本文は入れない。作品名・著者・ダウンロード先の URL だけ。
+
+on:
+  schedule:
+    - cron: "0 18 1 * *"   # 毎月1日 JST 3:00（目録はそう頻繁に変わらない）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: build index
+        run: python tools/aozora_index.py
+      - name: commit & push
+        run: |
+          git config user.name "aozora-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs/read/data/aozora-index.json.gz
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "青空文庫の目録を更新"
+          git push

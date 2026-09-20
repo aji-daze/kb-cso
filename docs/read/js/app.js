@@ -7,11 +7,12 @@ import * as Aozora from './aozora.js';
 import * as Font from './font.js';
 import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
-import * as Bear from './bear.js';
 import * as Folder from './folder.js';
 import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
+import { readZip } from './zip.js';
+import { aozoraRuby } from './md.js';
 import { supported as zipOK } from './zip.js';
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -119,12 +120,32 @@ async function addBook(meta, chapters) {
   return book;
 }
 
-export const BOOK_EXT = /\.(epub|md|markdown|txt|text)$/i;
+export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const isBookName = (n) => BOOK_EXT.test(n || '');
 
 // 取り込みの本体。ファイル選択・Google ドライブ・OneDrive のどれからでもここに来る。
 async function importBlob(filename, blob, source) {
   const name = String(filename).replace(/\.[^.]+$/, '');
+
+  // 青空文庫のテキストは zip で配られる（中身は Shift_JIS、ルビは ｜漢字《かんじ》）
+  if (/\.zip$/i.test(filename) && !/\.epub$/i.test(filename)) {
+    if (!zipOK()) throw new Error('この端末のブラウザは zip を展開できません');
+    const zip = await readZip(blob);
+    const entry = zip.names().find((n) => /\.txt$/i.test(n) && !n.startsWith('__MACOSX'));
+    if (!entry) throw new Error('zip の中にテキストがありません');
+    const bytes = await zip.bytes(entry);
+    let text = new TextDecoder('shift_jis').decode(bytes);
+    if (/\uFFFD{3,}/.test(text.slice(0, 400))) text = new TextDecoder('utf-8').decode(bytes);
+    // 先頭2行が題名と著者になっている
+    const head = text.split(/\r?\n/, 3);
+    const title = (head[0] || name).trim() || name;
+    const author = (head[1] || '').trim();
+    const body = text.split(/\r?\n/).slice(2).join('\n');
+    return addBook({
+      title, author, kind: 'aozora', vertical: true, source: source || filename,
+    }, txtToChapters(body, title));
+  }
+
   if (/\.epub$/i.test(filename) || blob.type === 'application/epub+zip') {
     if (!zipOK()) throw new Error('この端末のブラウザは EPUB の展開に対応していません');
     const b = await readEpub(blob);
@@ -400,14 +421,7 @@ async function renderLog() {
     return m >= 60 ? Math.floor(m / 60) + '時間' + (m % 60 ? (m % 60) + '分' : '') : m + '分';
   };
 
-  const todayMin = Math.round(today.ms / 60000);
-  const bearState = Bear.stateFor(todayMin);
-
   el.innerHTML =
-    '<div class="bearbox" data-bear="' + bearState + '">' +
-      Bear.html() +
-      '<div class="say">' + esc(Bear.line(bearState, todayMin)) + '</div>' +
-    '</div>' +
     '<div class="stat">' +
       '<div><b>' + fmt(today.ms) + '</b><span>今日</span></div>' +
       '<div><b>' + fmt(week) + '</b><span>この7日</span></div>' +
@@ -539,24 +553,82 @@ async function bookSheet(id) {
 
 // ================================================================ 青空文庫
 function aozoraSheet() {
-  sheet('<h3>青空文庫</h3>' +
-    '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
-    '<b style="color:var(--danger)">いまアプリの中からは落とせません。</b><br>' +
-    '青空文庫のサーバーは、ブラウザで動くアプリからの読み取りを許可していません（CORS）。' +
-    '回線の問題ではないので、待っても通りません。</p>' +
-    '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
-    '<b style="color:var(--tx)">いまできるやり方：</b><br>' +
-    '1. 下のボタンで青空文庫を開く<br>' +
-    '2. 読みたい作品の「テキストファイル（ルビあり）」を落とす<br>' +
-    '3. 「本を入れる」→「ファイルを選ぶ」で取り込む<br>' +
-    'ルビ（<code>｜漢字《かんじ》</code>）はそのまま縦組みで出ます。</p>' +
-    '<div class="actions"><button class="btn" id="az-c">閉じる</button>' +
-    '<button class="btn primary" id="az-open">青空文庫を開く</button></div>',
-    (el) => {
-      $('#az-c', el).onclick = closeSheet;
-      $('#az-open', el).onclick = () => {
-        window.open('https://www.aozora.gr.jp/', '_blank', 'noopener');
+  sheet('<h3>青空文庫</h3><div id="az"></div>', async (el) => {
+    const box = $('#az', el);
+    const info = await Aozora.indexInfo();
+
+    if (!info) {
+      box.innerHTML = '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+        '<b style="color:var(--tx)">先に目録（作品の一覧）だけを入れます。</b>本文は入りません。<br>' +
+        '入れたあとは通信なしで検索でき、読みたい作品だけをその都度落とします。</p>' +
+        '<div class="actions"><button class="btn primary" id="az-get">目録を入れる</button></div>' +
+        '<div id="az-msg" style="font-size:12.5px;color:var(--sub);margin-top:10px;white-space:pre-wrap"></div>';
+      $('#az-get', box).onclick = async () => {
+        const msg = $('#az-msg', box);
+        $('#az-get', box).disabled = true;
+        try {
+          const n = await Aozora.buildIndex((t) => { msg.textContent = t; });
+          toast(n.toLocaleString() + '作品の目録を入れました');
+          aozoraSheet();
+        } catch (e) {
+          msg.innerHTML = e.notBuilt
+            ? '<b style="color:var(--danger)">目録がまだ作られていません。</b>\n' +
+              'GitHub の Actions で「aozora-index」を一度動かすと作られます。\n' +
+              '（月1回の自動更新も入れてあります）'
+            : '<b style="color:var(--danger)">読み込めませんでした。</b>\n' + esc(e.message);
+          $('#az-get', box).disabled = false;
+        }
       };
+      return;
+    }
+
+    const when = new Date(info.at);
+    box.innerHTML =
+      '<label class="field"><span>作者名・作品名で探す（目録 ' + info.n.toLocaleString() + '作品）</span>' +
+      '<input type="text" id="az-q" placeholder="例: 宮沢賢治 銀河" autocomplete="off"></label>' +
+      '<div id="az-hit"></div>' +
+      '<div style="font-size:11.5px;color:var(--sub);margin-top:12px;line-height:1.7">' +
+      '目録の作成: ' + when.getFullYear() + '/' + (when.getMonth() + 1) + '/' + when.getDate() + '</div>' +
+      '<div class="actions"><button class="btn sm ghost" id="az-re">目録を入れ直す</button></div>';
+
+    const q = $('#az-q', box), hit = $('#az-hit', box);
+    let t = null;
+    q.oninput = () => {
+      clearTimeout(t);
+      t = setTimeout(async () => {
+        const rows = await Aozora.search(q.value, 40);
+        if (!rows || !rows.length) { hit.innerHTML = q.value.trim() ? '<div class="empty">見つかりません</div>' : ''; return; }
+        hit.innerHTML = rows.map((r, i) =>
+          '<button class="item" data-i="' + i + '"><span class="mark">·</span><span><b>' + esc(r.title) + '</b>' +
+          '<span>' + esc(r.author) + '</span></span></button>').join('');
+        $$('.item', hit).forEach((b) => { b.onclick = () => aozoraGet(rows[+b.dataset.i]); });
+      }, 200);
+    };
+    q.focus();
+    $('#az-re', box).onclick = async () => { await Aozora.dropIndex(); aozoraSheet(); };
+  });
+}
+
+// 1作品ぶんを落とす。青空文庫のサーバーはアプリから直接読めないので、
+// ブラウザに落としてもらって、そのファイルを取り込む。
+function aozoraGet(row) {
+  const url = row.txt || row.html;
+  sheet('<h3>' + esc(row.title) + '</h3>' +
+    '<p style="color:var(--sub);font-size:12.5px;margin:0 0 12px">' + esc(row.author) + '</p>' +
+    '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+    '下のボタンでファイルが落ちてきます（zip のまま取り込めます）。<br>' +
+    'そのあと「本を入れる」→<b style="color:var(--tx)">ファイルを選ぶ</b>で、落ちてきたファイルを選んでください。<br>' +
+    'ルビと縦組みはそのまま出ます。</p>' +
+    '<div class="actions"><button class="btn" id="g-c">閉じる</button>' +
+    '<button class="btn primary" id="g-dl">落とす</button></div>' +
+    '<div class="actions" style="margin-top:8px"><button class="btn sm ghost" id="g-pick">落としたファイルを選ぶ</button></div>',
+    (el) => {
+      $('#g-c', el).onclick = closeSheet;
+      $('#g-dl', el).onclick = () => {
+        if (!url) { toast('ダウンロード先が目録にありません'); return; }
+        window.open(url, '_blank', 'noopener');
+      };
+      $('#g-pick', el).onclick = () => { closeSheet(); $('#pick').click(); };
     });
 }
 

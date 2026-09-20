@@ -14,7 +14,7 @@ const META_KEY = 'folderMeta';
 
 export const supported = () => typeof window.showDirectoryPicker === 'function';
 
-export const BOOK_EXT = /\.(epub|md|markdown|txt|text)$/i;
+export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const TEXT_EXT = /\.(md|markdown|txt|text)$/i;
 export const MAX_BYTES = 40 * 1024 * 1024;      // EPUB は大きいので広めに取る
 const MAX_TEXT_BYTES = 5 * 1024 * 1024;         // 素のテキストがこれを超えるのは本ではない
