@@ -8,6 +8,7 @@ import * as Font from './font.js';
 import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
 import * as Bear from './bear.js';
+import * as Folder from './folder.js';
 import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
@@ -142,14 +143,15 @@ async function importBlob(filename, blob, source) {
 }
 
 async function importFiles(files) {
-  let n = 0, err = 0;
+  let n = 0, err = 0, first = '';
   for (const f of files) {
     try { await importBlob(f.name, f); n++; }
-    catch (e) { console.warn(e); err++; }
+    catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
   }
   if (n) toast(n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした）' : ''));
-  else if (err) toast('読み込めませんでした');
+  else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
   render();
+  return { n, err, first };
 }
 
 // 最初に開いたとき棚が空だと何も確かめられないので、自前の短い文章を1つ入れておく。
@@ -428,8 +430,13 @@ async function renderLog() {
 // ================================================================ 本の詳細・登録
 function addSheet() {
   sheet('<h3>本を入れる</h3>' +
-    '<button class="item" id="a-file"><span class="mark">▤</span><span><b>端末から選ぶ</b>' +
-      '<span>EPUB（DRM の無いもの）・Markdown・テキスト。取り込むと端末内に保存され、以後はオフラインで読めます</span></span></button>' +
+    '<button class="item" id="a-folder"><span class="mark">▤</span><span><b>フォルダを開く</b>' +
+      '<span>OneDrive や Google ドライブの<b>同期フォルダ</b>でも構いません。' +
+      (Folder.supported()
+        ? '一度選ぶと覚えておくので、次からは選び直さずに済みます'
+        : 'この端末では毎回選び直す必要があります') + '</span></span></button>' +
+    '<button class="item" id="a-file"><span class="mark">·</span><span><b>ファイルを選ぶ</b>' +
+      '<span>1冊ずつ。EPUB（DRM の無いもの）・Markdown・テキスト</span></span></button>' +
     '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫から探す</b>' +
       '<span>著作権の切れた作品を、アプリの中で検索して落とします</span></span></button>' +
     '<button class="item" id="a-drive"><span class="mark">G</span><span><b>Google ドライブから取り込む</b>' +
@@ -442,6 +449,7 @@ function addSheet() {
       '<span>使い方を書いた短い文章。読み終えたら消してかまいません</span></span></button>',
     (el) => {
       $('#a-file', el).onclick = () => { closeSheet(); $('#pick').click(); };
+      $('#a-folder', el).onclick = folderSheet;
       $('#a-aozora', el).onclick = aozoraSheet;
       $('#a-drive', el).onclick = () => cloudSheet(Drive);
       $('#a-od', el).onclick = () => cloudSheet(OneDrive);
@@ -590,6 +598,121 @@ async function getAozora(row) {
   } catch (e) {
     toast('取れませんでした: ' + e.message);
   }
+}
+
+// ================================================================ フォルダを開く
+const folderSource = (path) => 'folder:' + path;
+
+async function folderSheet() {
+  // この API が無い端末（iOS など）は、一回きりのフォルダ選択に落とす
+  if (!Folder.supported()) {
+    sheet('<h3>フォルダを開く</h3>' +
+      '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+      'この端末のブラウザは<b style="color:var(--tx)">フォルダを覚えておけません</b>' +
+      '（対応しているのは主に PC の Chrome / Edge と Android の Chrome です）。<br>' +
+      '一回きりの選択になるので、取り込むたびにフォルダを選び直してください。</p>' +
+      '<div class="actions"><button class="btn" id="f-c">やめる</button>' +
+      '<button class="btn primary" id="f-once">フォルダを選ぶ</button></div>',
+      (el) => {
+        $('#f-c', el).onclick = closeSheet;
+        $('#f-once', el).onclick = () => { closeSheet(); $('#pickdir').click(); };
+      });
+    return;
+  }
+
+  const name = await Folder.savedName();
+  let handle = await Folder.saved();
+  const needPerm = !handle && !!name && (await Folder.needsPermission());
+
+  if (!handle) {
+    sheet('<h3>フォルダを開く</h3>' +
+      '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+      (needPerm
+        ? '前に選んだフォルダ（<b style="color:var(--tx)">' + esc(name) + '</b>）への許可が切れています。<br>もう一度許可してください。'
+        : '本の入っているフォルダを選んでください。<br>' +
+          '<b style="color:var(--tx)">OneDrive の同期フォルダ</b>でも構いません。' +
+          'クラウドにつなぐ必要はなく、同期されたファイルをそのまま読みます。<br>' +
+          '一度選ぶと覚えるので、次からは選び直さずに中身を確かめられます。') +
+      '</p>' +
+      '<div class="actions"><button class="btn" id="f-c">やめる</button>' +
+      '<button class="btn primary" id="f-pick">' + (needPerm ? '許可する' : 'フォルダを選ぶ') + '</button></div>',
+      (el) => {
+        $('#f-c', el).onclick = closeSheet;
+        $('#f-pick', el).onclick = async () => {
+          try {
+            handle = needPerm ? await Folder.saved({ ask: true }) : await Folder.pick();
+            if (!handle) { toast('許可されませんでした'); return; }
+            folderList(handle);
+          } catch (e) {
+            if (e && e.name === 'AbortError') return;   // 選択をやめただけ
+            toast('開けませんでした: ' + e.message);
+          }
+        };
+      });
+    return;
+  }
+  folderList(handle);
+}
+
+async function folderList(handle) {
+  sheet('<h3>' + esc(handle.name) + '</h3><div id="f-body" style="color:var(--sub);font-size:13px">見ています…</div>');
+  const el = sheetEl;
+  let found;
+  try { found = await Folder.scan(handle, (n) => { const b = $('#f-body', el); if (b) b.textContent = n + '件みつかりました…'; }); }
+  catch (e) { const b = $('#f-body', el); if (b) b.innerHTML = '<b style="color:var(--danger)">読めませんでした。</b><br>' + esc(e.message); return; }
+
+  const have = new Set(S.books.map((b) => b.source));
+  const fresh = found.filter((f) => !have.has(folderSource(f.path)));
+  const body = $('#f-body', el);
+  if (!body) return;
+
+  body.innerHTML =
+    '<div style="margin-bottom:10px">本 ' + found.length + '件。' +
+      (fresh.length ? '<b style="color:var(--tx)">うち ' + fresh.length + '件がまだ棚にありません。</b>' : 'すべて取り込み済みです。') + '</div>' +
+    (fresh.length ? '<div class="actions" style="margin:0 0 8px"><button class="btn sm primary" id="f-all">' +
+      'まだの ' + fresh.length + '件を取り込む</button></div>' : '') +
+    (found.length
+      ? found.slice(0, 300).map((f, i) => {
+          const got = have.has(folderSource(f.path));
+          return '<button class="item" data-i="' + i + '"' + (got ? ' disabled style="opacity:.4"' : '') + '>' +
+            '<span class="mark">' + (got ? '✓' : '·') + '</span><span><b>' + esc(f.name) + '</b>' +
+            '<span>' + esc(f.path) + (got ? '　取り込み済み' : '') + '</span></span></button>';
+        }).join('')
+      : '<div class="empty">本の形式のファイルがありません<br>（EPUB・Markdown・テキスト）</div>') +
+    (found.length > 300 ? '<div style="font-size:12px;margin-top:8px">※ 先頭300件だけ出しています</div>' : '') +
+    '<div class="actions" style="margin-top:14px">' +
+      '<button class="btn sm ghost" id="f-change">フォルダを変える</button>' +
+      '<button class="btn sm ghost" id="f-forget">覚えるのをやめる</button></div>' +
+    '<div id="f-msg" style="font-size:12px;color:var(--sub);margin-top:10px"></div>';
+
+  const msg = $('#f-msg', el);
+  $$('.item[data-i]', body).forEach((b) => {
+    b.onclick = () => folderGet([found[+b.dataset.i]], msg, handle);
+  });
+  if ($('#f-all', body)) $('#f-all', body).onclick = () => folderGet(fresh, msg, handle);
+  $('#f-change', body).onclick = async () => {
+    try { const h = await Folder.pick(); folderList(h); }
+    catch (e) { if (e && e.name !== 'AbortError') toast('開けませんでした: ' + e.message); }
+  };
+  $('#f-forget', body).onclick = async () => {
+    await Folder.forget(); closeSheet(); toast('忘れました');
+  };
+}
+
+async function folderGet(items, msg, handle) {
+  let n = 0, err = 0;
+  for (const f of items) {
+    if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
+    try {
+      const file = await Folder.read(f);
+      await importBlob(f.name, file, folderSource(f.path));
+      n++;
+    } catch (e) { console.warn(e); err++; }
+  }
+  if (msg) msg.textContent = n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした）' : '');
+  toast(n ? n + '冊を棚に入れました' : '取り込めませんでした');
+  render();
+  if (handle) folderList(handle);
 }
 
 // ================================================================ クラウド（Google ドライブ / OneDrive）
@@ -1202,7 +1325,17 @@ async function boot() {
   $$('#tabs button').forEach((b) => { b.onclick = () => { S.view = b.dataset.view; render(); }; });
   $('#btn-gear').onclick = gearSheet;
   $('#btn-search').onclick = searchSheet;
-  $('#pick').onchange = (e) => { importFiles([...e.target.files]); e.target.value = ''; };
+  // input を空にするのは取り込みが終わってから。先に空にすると
+  // ファイルの参照が外れて、2件目以降が NotReadableError で読めなくなる。
+  $('#pick').onchange = async (e) => {
+    const files = [...e.target.files];
+    try { await importFiles(files); } finally { e.target.value = ''; }
+  };
+  $('#pickdir').onchange = async (e) => {
+    const files = [...e.target.files].filter((f) => Folder.BOOK_EXT.test(f.name));
+    if (!files.length) { e.target.value = ''; toast('本の形式のファイルがありませんでした'); return; }
+    try { await importFiles(files); } finally { e.target.value = ''; }
+  };
 
   // 読書画面
   const uiOpen = () => !$('#rtop').hidden || !$('#toc').hidden;
