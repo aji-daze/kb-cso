@@ -12,7 +12,7 @@ import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
-import { aozoraRuby } from './md.js';
+import { splitAozora } from './md.js';
 import { supported as zipOK } from './zip.js';
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -136,14 +136,11 @@ async function importBlob(filename, blob, source) {
     const bytes = await zip.bytes(entry);
     let text = new TextDecoder('shift_jis').decode(bytes);
     if (/\uFFFD{3,}/.test(text.slice(0, 400))) text = new TextDecoder('utf-8').decode(bytes);
-    // 先頭2行が題名と著者になっている
-    const head = text.split(/\r?\n/, 3);
-    const title = (head[0] || name).trim() || name;
-    const author = (head[1] || '').trim();
-    const body = text.split(/\r?\n/).slice(2).join('\n');
+    const a = splitAozora(text);
+    const title = a.title || name;
     return addBook({
-      title, author, kind: 'aozora', vertical: true, source: source || filename,
-    }, txtToChapters(body, title));
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+    }, txtToChapters(a.body, title));
   }
 
   if (/\.epub$/i.test(filename) || blob.type === 'application/epub+zip') {

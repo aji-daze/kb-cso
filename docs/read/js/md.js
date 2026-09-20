@@ -118,3 +118,46 @@ export function txtToChapters(src, fallbackTitle) {
   if (parts.length) chs.push({ title, html: parts.join('') });
   return chs.length ? chs : [{ title: fallbackTitle || '本文', html: '<p></p>' }];
 }
+
+// 青空文庫のテキストファイルを、題名・著者・本文に分ける。
+//
+// 実ファイルはこういう形をしている：
+//   題名 / （副題）/ 著者名 / （訳者名）
+//   （空行）
+//   -------------------------------------------------------
+//   【テキスト中に現れる記号について】… 凡例
+//   -------------------------------------------------------
+//   本文…
+//   底本：「…」…  ← 以降は奥付
+//
+// 凡例と奥付を落とさないと、それが本文として棚に並ぶ。
+export function splitAozora(raw) {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n');
+
+  // 先頭の空行を飛ばし、最初の空行までを見出しの塊とする
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  const head = [];
+  while (i < lines.length && lines[i].trim()) head.push(lines[i++].trim());
+
+  const title = head[0] || '';
+  // 2行目に題名の読み（仮名だけの行）が入ることがある。著者に混ぜない。
+  const rest = head.slice(1).filter((l) => !/^[\u3040-\u309F\u30A0-\u30FF\u30FC\s]+$/.test(l));
+  const author = rest.join(' ').trim();
+
+  let body = lines.slice(i);
+
+  // 凡例（----- で挟まれた塊）を落とす
+  const isRule = (l) => /^-{10,}$/.test(l.trim());
+  const first = body.findIndex(isRule);
+  if (first >= 0) {
+    const second = body.findIndex((l, k) => k > first && isRule(l));
+    if (second > first) body = body.slice(0, first).concat(body.slice(second + 1));
+  }
+
+  // 奥付（底本：以降）を落とす
+  const end = body.findIndex((l) => /^\s*底本[：:]/.test(l));
+  if (end >= 0) body = body.slice(0, end);
+
+  return { title, author, body: body.join('\n').trim() };
+}
