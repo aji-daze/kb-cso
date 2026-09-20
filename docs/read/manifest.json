@@ -1,6 +1,6 @@
 {
-  "name": "栞",
-  "short_name": "栞",
+  "name": "ぽちゃ文庫",
+  "short_name": "ぽちゃ文庫",
   "description": "読むための画面と読んだ記録を1つにした、個人用の読書アプリ",
   "start_url": "./",
   "scope": "./",

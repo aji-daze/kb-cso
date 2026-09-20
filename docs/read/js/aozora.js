@@ -6,11 +6,46 @@
 import { readZip } from './zip.js';
 import * as DB from './db.js';
 
-const MIRROR = 'https://aozorabunko.github.io/aozorabunko/';
-const INDEX_ZIP = MIRROR + 'index_pages/list_person_all_extended_utf8.zip';
+// 取得元は複数用意して順に試す。どこが生きているかは環境によって変わるので、
+// 失敗したら「どれをどう試してどう駄目だったか」を画面に出す。
+const MIRRORS = [
+  'https://aozorabunko.github.io/aozorabunko/',
+  'https://raw.githubusercontent.com/aozorabunko/aozorabunko/master/',
+  'https://www.aozora.gr.jp/',
+];
+const INDEX_PATH = 'index_pages/list_person_all_extended_utf8.zip';
 
-export const toMirror = (url) =>
-  String(url || '').replace(/^https?:\/\/(www\.)?aozora\.gr\.jp\//, MIRROR);
+export const toMirror = (url, base) =>
+  String(url || '').replace(/^https?:\/\/(www\.)?aozora\.gr\.jp\//, base || MIRRORS[0]);
+
+// 直前にうまくいった取得元を覚えて、次からそこを先に試す
+let preferred = 0;
+const order = () => {
+  const idx = [...MIRRORS.keys()];
+  return [idx[preferred], ...idx.filter((i) => i !== preferred)];
+};
+
+async function tryFetch(makeUrl) {
+  const tried = [];
+  for (const i of order()) {
+    const url = makeUrl(MIRRORS[i]);
+    try {
+      const r = await fetch(url, { mode: 'cors' });
+      if (!r.ok) { tried.push(host(url) + ' → HTTP ' + r.status); continue; }
+      preferred = i;
+      return r;
+    } catch (e) {
+      // CORS で弾かれた場合もここに来る（ブラウザは理由を教えてくれない）
+      tried.push(host(url) + ' → 届かない（通信か CORS）');
+    }
+  }
+  const err = new Error('どの取得元からも取れませんでした：\n' + tried.join('\n'));
+  err.tried = tried;
+  throw err;
+}
+
+const host = (u) => { try { return new URL(u).host; } catch { return u; } };
+export const sources = () => MIRRORS.map(host);
 
 function parseCSV(text) {
   const rows = [];
@@ -32,9 +67,8 @@ function parseCSV(text) {
 // 索引を落として端末に入れる。以後の検索はオフラインで済む。
 export async function buildIndex(onStep) {
   const say = (s) => onStep && onStep(s);
-  say('索引をダウンロードしています…');
-  const res = await fetch(INDEX_ZIP, { mode: 'cors' });
-  if (!res.ok) throw new Error('索引が取得できません（HTTP ' + res.status + '）');
+  say('目録をダウンロードしています…');
+  const res = await tryFetch((base) => base + INDEX_PATH);
   const zip = await readZip(await res.blob());
   const name = zip.names().find((n) => /\.csv$/i.test(n));
   if (!name) throw new Error('索引に CSV が入っていません');
@@ -61,7 +95,7 @@ export async function buildIndex(onStep) {
       r[iTitle],
       (r[iKana] || ''),
       ((r[iSei] || '') + (r[iMei] || '')).trim(),
-      toMirror(url),
+      url,
     ]);
   }
   say('索引を保存しています…');
@@ -124,8 +158,7 @@ function clean(node, out) {
 }
 
 export async function fetchWork(url) {
-  const res = await fetch(toMirror(url), { mode: 'cors' });
-  if (!res.ok) throw new Error('本文が取得できません（HTTP ' + res.status + '）');
+  const res = await tryFetch((base) => toMirror(url, base));
   const buf = await res.arrayBuffer();
   // 青空文庫の XHTML は Shift_JIS。ブラウザ標準のデコーダで読める。
   let html = new TextDecoder('shift_jis').decode(buf);

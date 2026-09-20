@@ -1,4 +1,4 @@
-// 栞 — 画面制御。
+// ぽちゃ文庫 — 画面制御。
 import * as DB from './db.js';
 import * as Paper from './paper.js';
 import * as Notes from './notes.js';
@@ -7,6 +7,7 @@ import * as Aozora from './aozora.js';
 import * as Font from './font.js';
 import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
+import * as Bear from './bear.js';
 import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
@@ -152,7 +153,7 @@ async function importFiles(files) {
 }
 
 // 最初に開いたとき棚が空だと何も確かめられないので、自前の短い文章を1つ入れておく。
-const SAMPLE = `# 栞のこと
+const SAMPLE = `# ぽちゃ文庫のこと
 
 紙の本を読むとき、指は次のページの端をさわっている。残りがどれだけあるかを、数えずに知っている。画面にはこれが無い。だから残量は数字で補うしかないのだが、ページ数は補いになっていない。読む速さを知らない数字だからだ。
 
@@ -183,7 +184,7 @@ const SAMPLE = `# 栞のこと
 `;
 
 async function addSample() {
-  await addBook({ title: '栞のこと', author: '見本', kind: 'md' }, mdToChapters(SAMPLE, '栞のこと'));
+  await addBook({ title: 'ぽちゃ文庫のこと', author: '見本', kind: 'md' }, mdToChapters(SAMPLE, 'ぽちゃ文庫のこと'));
   toast('見本を入れました');
   render();
 }
@@ -397,7 +398,14 @@ async function renderLog() {
     return m >= 60 ? Math.floor(m / 60) + '時間' + (m % 60 ? (m % 60) + '分' : '') : m + '分';
   };
 
+  const todayMin = Math.round(today.ms / 60000);
+  const bearState = Bear.stateFor(todayMin);
+
   el.innerHTML =
+    '<div class="bearbox" data-bear="' + bearState + '">' +
+      '<div class="art">' + Bear.svg() + '</div>' +
+      '<div class="say">' + esc(Bear.line(bearState, todayMin)) + '</div>' +
+    '</div>' +
     '<div class="stat">' +
       '<div><b>' + fmt(today.ms) + '</b><span>今日</span></div>' +
       '<div><b>' + fmt(week) + '</b><span>この7日</span></div>' +
@@ -528,29 +536,31 @@ function aozoraSheet() {
     const info = await Aozora.indexInfo();
     if (!info) {
       box.innerHTML = '<p style="color:var(--sub);font-size:13px;line-height:1.8;margin:0 0 14px">' +
-        '最初に作品の索引を落とします（数 MB）。一度入れれば、以後の検索は通信なしで動きます。<br>' +
-        '取得元は GitHub のミラーです。本家のサーバーはブラウザからの読み取りを許可していないため、そちらは使えません。</p>' +
-        '<div class="actions"><button class="btn primary" id="az-get">索引を取り込む</button></div>' +
-        '<div id="az-msg" style="font-size:12.5px;color:var(--sub);margin-top:10px"></div>';
+        '<b style="color:var(--tx)">先に目録（作品の一覧）だけを落とします。</b>本文は入りません。<br>' +
+        '一度入れれば検索は通信なしで動き、<b style="color:var(--tx)">読みたい作品だけ、その都度</b>本文を落とします。<br>' +
+        '取得元はこの順に試します：' + esc(Aozora.sources().join(' → ')) + '</p>' +
+        '<div class="actions"><button class="btn primary" id="az-get">目録を取り込む</button></div>' +
+        '<div id="az-msg" style="font-size:12.5px;color:var(--sub);margin-top:10px;white-space:pre-wrap"></div>';
       $('#az-get', box).onclick = async () => {
         const msg = $('#az-msg', box);
         $('#az-get', box).disabled = true;
         try {
           const n = await Aozora.buildIndex((s) => { msg.textContent = s; });
-          toast(n.toLocaleString() + '作品の索引を入れました');
+          toast(n.toLocaleString() + '作品の目録を入れました');
           aozoraSheet();
         } catch (e) {
-          msg.innerHTML = '<b style="color:var(--danger)">取得できませんでした。</b><br>' + esc(e.message) +
-            '<br>回線か、配信元の設定が変わっている可能性があります。他の機能には影響しません。';
+          msg.innerHTML = '<b style="color:var(--danger)">取得できませんでした。</b>\n' + esc(e.message) +
+            '\n\n回線か、配信元の設定が変わっている可能性があります。' +
+            'この文面をそのまま伝えてもらえれば原因が絞れます。他の機能には影響しません。';
           $('#az-get', box).disabled = false;
         }
       };
       return;
     }
-    box.innerHTML = '<label class="field"><span>作者名・作品名で探す（' + info.n.toLocaleString() + '作品）</span>' +
+    box.innerHTML = '<label class="field"><span>作者名・作品名で探す（目録 ' + info.n.toLocaleString() + '作品・本文は選んだときに落とします）</span>' +
       '<input type="text" id="az-q" placeholder="例: 宮沢賢治 銀河" autocomplete="off"></label>' +
       '<div id="az-hit"></div>' +
-      '<div class="actions"><button class="btn sm ghost" id="az-re">索引を入れ直す</button></div>';
+      '<div class="actions"><button class="btn sm ghost" id="az-re">目録を入れ直す</button></div>';
     const q = $('#az-q', box), hit = $('#az-hit', box);
     let t = null;
     q.oninput = () => {
@@ -1033,7 +1043,7 @@ async function gearSheet() {
     '<div class="actions"><button class="btn sm" id="g-persist">保存を固定する</button>' +
     '<button class="btn sm" id="g-export">全部を書き出す</button></div>' +
     '<div class="h">この画面について</div>' +
-    '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">栞 v0.2 — 端末の中だけで動きます。どこにも送りません。</div>',
+    '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">ぽちゃ文庫 v0.5 — 端末の中だけで動きます。どこにも送りません。</div>',
     (el) => {
       const bind = (id, key) => {
         $('#' + id, el).onclick = async (ev) => {
@@ -1153,7 +1163,7 @@ function render() {
   $('#v-notes').hidden = S.view !== 'notes';
   $('#v-log').hidden = S.view !== 'log';
   $('#btn-search').hidden = S.view !== 'shelf';
-  $('#top-title').textContent = { now: '栞', shelf: '棚', notes: '抜き書き', log: '記録' }[S.view];
+  $('#top-title').textContent = { now: 'ぽちゃ文庫', shelf: '棚', notes: '抜き書き', log: '記録' }[S.view];
   $$('#tabs button').forEach((b) => b.setAttribute('aria-current', b.dataset.view === S.view));
   ({ now: renderNow, shelf: renderShelf, notes: renderNotes, log: renderLog })[S.view]();
 }

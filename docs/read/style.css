@@ -1,4 +1,4 @@
-/* 栞 — 画面の見た目。
+/* ぽちゃ文庫 — 画面の見た目。
    テーマ・アクセント・フォントの token はミュージックと同じ体系に揃えてある。
    読書画面の「紙」は別系統で、js/paper.js が --pg / --ink などを直接書き込む。 */
 
@@ -296,4 +296,85 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   .stage { padding-inline: max(var(--mg), calc((100% - 760px) / 2)); }
   .rpage { inset: var(--mg) max(var(--mg), calc((100% - 760px) / 2)); }
   .rfoot { padding-inline: max(var(--mg), calc((100% - 760px) / 2)); }
+}
+
+/* ---------- 記録のシロクマ ---------- */
+.bearbox { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 18px; }
+.bearbox .art { width: 100%; max-width: 268px; }
+.bearbox .say {
+  font-size: 12.5px; color: var(--sub); letter-spacing: .04em;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 5px 14px; position: relative;
+}
+.bearbox .say::before {
+  content: ""; position: absolute; top: -5px; left: 50%; margin-left: -5px;
+  width: 9px; height: 9px; background: var(--surface);
+  border-left: 1px solid var(--line); border-top: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+
+#bear { display: block; overflow: visible; }
+#bear .b-fur, #bear .b-ear circle:first-child, #bear .b-paw {
+  fill: #fdfbf7; stroke: color-mix(in srgb, var(--tx) 13%, transparent); stroke-width: 1.5;
+}
+#bear .b-inner { fill: color-mix(in srgb, var(--tx) 12%, transparent); stroke: none; }
+#bear .b-shade { fill: rgba(96,116,138,.16); }
+#bear .b-shadow { fill: color-mix(in srgb, var(--tx) 12%, transparent); }
+#bear .b-blush { fill: rgba(232,150,150,.34); }
+#bear .b-eye { fill: #333a45; }
+#bear .b-glint { fill: #fff; }
+#bear .b-lid { fill: #fdfbf7; transform: translateY(-27px); }
+#bear .b-sleepeyes { fill: none; stroke: #333a45; stroke-width: 4; stroke-linecap: round; display: none; }
+#bear .b-nose { fill: #3f4652; }
+#bear .b-mouth { fill: none; stroke: #3f4652; stroke-width: 3.4; stroke-linecap: round; }
+#bear .b-glasses { fill: none; stroke: #6f7b8a; stroke-width: 4.2; stroke-linecap: round; }
+#bear .b-cover { fill: var(--acc); }
+#bear .b-page { fill: #fdfbf7; }
+#bear .b-lines { fill: color-mix(in srgb, var(--acc) 55%, #6b7280); opacity: .5; }
+#bear .b-zzz text { fill: var(--sub); font-size: 22px; font-weight: 600; opacity: 0; }
+
+/* 息づかい */
+#bear .b-body { transform-origin: 160px 224px; animation: b-breathe 3.6s ease-in-out infinite; }
+@keyframes b-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.014,.986); } }
+
+/* まばたき */
+#bear .b-lid { animation: b-blink 5.2s infinite; }
+@keyframes b-blink {
+  0%, 92%, 100% { transform: translateY(-27px); }
+  94%, 96% { transform: translateY(0); }
+}
+
+/* 耳がときどき動く */
+#bear .b-ear-l { transform-origin: 106px 80px; animation: b-ear 7s ease-in-out infinite; }
+#bear .b-ear-r { transform-origin: 214px 80px; animation: b-ear 7s ease-in-out infinite .9s; }
+@keyframes b-ear { 0%, 88%, 100% { transform: rotate(0); } 92% { transform: rotate(-7deg); } 96% { transform: rotate(4deg); } }
+
+/* 本が少し揺れる（読んでいる感じ） */
+#bear .b-book { transform-origin: 160px 206px; animation: b-book 4.4s ease-in-out infinite; }
+@keyframes b-book { 0%,100% { transform: rotate(-.8deg); } 50% { transform: rotate(.8deg); } }
+
+/* --- 寝ている --- */
+[data-bear="sleep"] #bear .b-eyes { display: none; }
+[data-bear="sleep"] #bear .b-sleepeyes { display: block; }
+[data-bear="sleep"] #bear .b-book, [data-bear="sleep"] #bear .b-paw { opacity: .5; }
+[data-bear="sleep"] #bear .b-body { animation-duration: 5.2s; }
+[data-bear="sleep"] #bear .b-zzz text { animation: b-zzz 3.6s ease-in-out infinite; }
+[data-bear="sleep"] #bear .b-z2 { animation-delay: 1.2s; }
+[data-bear="sleep"] #bear .b-z3 { animation-delay: 2.4s; }
+@keyframes b-zzz {
+  0% { opacity: 0; transform: translate(0, 6px) scale(.8); }
+  30% { opacity: .9; }
+  100% { opacity: 0; transform: translate(10px, -18px) scale(1.15); }
+}
+
+/* --- ごきげん --- */
+[data-bear="happy"] #bear { animation: b-hop 1.9s ease-in-out infinite; }
+@keyframes b-hop { 0%,100% { transform: translateY(0); } 40% { transform: translateY(-5px); } 60% { transform: translateY(0); } }
+[data-bear="happy"] #bear .b-mouth { d: path("M150,162 q10,13 22,2"); }
+[data-bear="happy"] #bear .b-blush { fill: rgba(232,150,150,.5); }
+[data-bear="happy"] #bear .b-book { animation-duration: 2.6s; }
+
+@media (prefers-reduced-motion: reduce) {
+  #bear, #bear * { animation: none !important; }
+  #bear .b-lid { transform: translateY(-27px); }
 }
