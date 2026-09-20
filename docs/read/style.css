@@ -21,6 +21,8 @@
 [data-theme="hai"]     { --bg:#1a1a1a; --surface:#222; --surface2:#2b2b2b; --line:#383838; --tx:#ededed; --sub:#9a9a9a; --ph:#4a4a4a; --scrim:rgba(0,0,0,.6); --toast-bg:#333; --toast-tx:#f5f5f5; --danger:#df6f68; --shadow:0 6px 20px rgba(0,0,0,.4); --shadow-lg:0 18px 44px rgba(0,0,0,.5); }
 [data-theme="aitetsu"] { --bg:#0e1319; --surface:#151c24; --surface2:#1d252f; --line:#2a333f; --tx:#e6ebf1; --sub:#8593a3; --ph:#3b4653; --scrim:rgba(4,8,12,.65); --toast-bg:#26313d; --toast-tx:#eef2f6; --danger:#e0736b; --shadow:0 6px 20px rgba(0,0,0,.45); --shadow-lg:0 18px 44px rgba(0,0,0,.55); }
 [data-theme="kinari"]  { --bg:#f5f3ef; --surface:#fffdf9; --surface2:#ebe7e0; --line:#dcd6cc; --tx:#26231f; --sub:#6e675d; --ph:#c3bcb0; --scrim:rgba(40,35,28,.4); --toast-bg:#332f2a; --toast-tx:#f8f6f2; --danger:#bf4f47; --shadow:0 6px 20px rgba(80,70,55,.16); --shadow-lg:0 16px 40px rgba(80,70,55,.22); }
+/* しろくま：アイコンの地（#a7b6c6）と毛の色（#fbf8f2）から起こした配色 */
+[data-theme="shirokuma"] { --bg:#eceff2; --surface:#ffffff; --surface2:#dde4ea; --line:#ccd6df; --tx:#222a33; --sub:#4d5a66; --ph:#aab6c2; --scrim:rgba(26,34,44,.42); --toast-bg:#222a33; --toast-tx:#f6f9fb; --danger:#a8504a; --shadow:0 6px 20px rgba(40,55,72,.14); --shadow-lg:0 16px 40px rgba(40,55,72,.20); }
 [data-theme="hakuji"]  { --bg:#fff; --surface:#fff; --surface2:#f3f3f5; --line:#e6e6e9; --tx:#17171a; --sub:#717179; --ph:#cdcdd3; --scrim:rgba(20,20,25,.38); --toast-bg:#26262b; --toast-tx:#fff; --danger:#c8483f; --shadow:0 6px 20px rgba(20,20,30,.12); --shadow-lg:0 16px 40px rgba(20,20,30,.16); }
 
 [data-accent="kohaku"]  { --acc:#d79a5f; --on-acc:#1a1510; }
@@ -32,6 +34,7 @@
 [data-accent="ai"]      { --acc:#7186ab; --on-acc:#101319; }
 [data-accent="karashi"] { --acc:#c0a95e; --on-acc:#1a1710; }
 [data-accent="kuwa"]    { --acc:#a98c6e; --on-acc:#1a1510; }
+[data-accent="mizu"] { --acc:#7bc0de; --on-acc:#0d2b36; }
 [data-accent="mono"]    { --acc:var(--tx); --on-acc:var(--bg); }
 
 [data-font="gothic"] { --font: "Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif; }
@@ -79,9 +82,16 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 3px; font-size: 10px; color: var(--sub); letter-spacing: .04em;
 }
-#tabs button[aria-current="true"] { color: var(--acc); }
+/* 選択中は文字色をアクセントにしない。明るいアクセント（水色など）だと
+   地に沈んで読めなくなるため。塗りつぶしたアイコンと下の帯で示す。 */
+#tabs button[aria-current="true"] { color: var(--tx); font-weight: 600; }
+#tabs button[aria-current="true"]::before {
+  content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 26px; height: 2.5px; border-radius: 0 0 2px 2px; background: var(--acc);
+}
+#tabs button { position: relative; }
 #tabs svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; }
-#tabs button[aria-current="true"] svg { stroke-width: 2.1; }
+#tabs button[aria-current="true"] svg { stroke: var(--acc); fill: color-mix(in srgb, var(--acc) 22%, transparent); stroke-width: 2.1; }
 
 /* ---------- つづき ---------- */
 .now { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 18px 0 8px; text-align: center; }

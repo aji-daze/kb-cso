@@ -5,6 +5,8 @@ import * as Notes from './notes.js';
 import * as Stats from './stats.js';
 import * as Aozora from './aozora.js';
 import * as Font from './font.js';
+import * as Drive from './drive.js';
+import * as OneDrive from './onedrive.js';
 import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
@@ -115,26 +117,34 @@ async function addBook(meta, chapters) {
   return book;
 }
 
+export const BOOK_EXT = /\.(epub|md|markdown|txt|text)$/i;
+const isBookName = (n) => BOOK_EXT.test(n || '');
+
+// 取り込みの本体。ファイル選択・Google ドライブ・OneDrive のどれからでもここに来る。
+async function importBlob(filename, blob, source) {
+  const name = String(filename).replace(/\.[^.]+$/, '');
+  if (/\.epub$/i.test(filename) || blob.type === 'application/epub+zip') {
+    if (!zipOK()) throw new Error('この端末のブラウザは EPUB の展開に対応していません');
+    const b = await readEpub(blob);
+    return addBook({
+      title: b.title || name, author: b.author, kind: 'epub',
+      vertical: b.vertical, cover: b.cover, source: source || filename,
+    }, b.chapters);
+  }
+  const text = await blob.text();
+  const isMd = /\.(md|markdown)$/i.test(filename);
+  const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
+  return addBook({
+    title: name, kind: isMd ? 'md' : 'txt',
+    vertical: !isMd && /[《》｜]/.test(text), source: source || filename,
+  }, chs);
+}
+
 async function importFiles(files) {
   let n = 0, err = 0;
   for (const f of files) {
-    try {
-      const name = f.name.replace(/\.[^.]+$/, '');
-      if (/\.epub$/i.test(f.name) || f.type === 'application/epub+zip') {
-        if (!zipOK()) { toast('この端末のブラウザは EPUB の展開に対応していません'); err++; continue; }
-        const b = await readEpub(f);
-        await addBook({ title: b.title || name, author: b.author, kind: 'epub', vertical: b.vertical, cover: b.cover, source: f.name }, b.chapters);
-      } else {
-        const text = await f.text();
-        const isMd = /\.(md|markdown)$/i.test(f.name);
-        const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
-        await addBook({ title: name, kind: isMd ? 'md' : 'txt', vertical: !isMd && /[《》｜]/.test(text), source: f.name }, chs);
-      }
-      n++;
-    } catch (e) {
-      console.warn(e);
-      err++;
-    }
+    try { await importBlob(f.name, f); n++; }
+    catch (e) { console.warn(e); err++; }
   }
   if (n) toast(n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした');
@@ -414,6 +424,10 @@ function addSheet() {
       '<span>EPUB（DRM の無いもの）・Markdown・テキスト。取り込むと端末内に保存され、以後はオフラインで読めます</span></span></button>' +
     '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫から探す</b>' +
       '<span>著作権の切れた作品を、アプリの中で検索して落とします</span></span></button>' +
+    '<button class="item" id="a-drive"><span class="mark">G</span><span><b>Google ドライブから取り込む</b>' +
+      '<span>フォルダを辿って、本を選んで落とします。落としたあとはオフラインで読めます</span></span></button>' +
+    '<button class="item" id="a-od"><span class="mark">OD</span><span><b>OneDrive から取り込む</b>' +
+      '<span>同上。初回だけ Microsoft 側でのアプリ登録が必要です</span></span></button>' +
     '<button class="item" id="a-manual"><span class="mark">▭</span><span><b>紙・Kindle の本を登録する</b>' +
       '<span>本文は開けません。棚に置いて、進みを手で書き込みます</span></span></button>' +
     '<button class="item" id="a-sample"><span class="mark">?</span><span><b>見本を入れる</b>' +
@@ -421,6 +435,8 @@ function addSheet() {
     (el) => {
       $('#a-file', el).onclick = () => { closeSheet(); $('#pick').click(); };
       $('#a-aozora', el).onclick = aozoraSheet;
+      $('#a-drive', el).onclick = () => cloudSheet(Drive);
+      $('#a-od', el).onclick = () => cloudSheet(OneDrive);
       $('#a-manual', el).onclick = manualNewSheet;
       $('#a-sample', el).onclick = () => { closeSheet(); addSample(); };
     });
@@ -564,6 +580,115 @@ async function getAozora(row) {
   } catch (e) {
     toast('取れませんでした: ' + e.message);
   }
+}
+
+// ================================================================ クラウド（Google ドライブ / OneDrive）
+const CID_KEY = { drive: 'driveClientId', onedrive: 'onedriveClientId' };
+
+function cloudSetupSheet(prov, current) {
+  sheet('<h3>' + esc(prov.label) + 'の設定</h3>' +
+    '<p style="color:var(--sub);font-size:12.5px;line-height:1.85;margin:0 0 12px">' + prov.setupText + '</p>' +
+    '<label class="field"><span>クライアント ID</span><input type="text" id="cid" autocomplete="off" spellcheck="false"></label>' +
+    '<div class="actions"><button class="btn" id="cid-c">やめる</button>' +
+    '<button class="btn primary" id="cid-s">保存してつなぐ</button></div>',
+    (el) => {
+      $('#cid', el).value = current || '';
+      $('#cid-c', el).onclick = closeSheet;
+      $('#cid-s', el).onclick = async () => {
+        const v = $('#cid', el).value.trim();
+        if (!v) { toast('クライアント ID を入れてください'); return; }
+        await DB.setting(CID_KEY[prov.key], v);
+        cloudSheet(prov);
+      };
+    });
+}
+
+async function cloudSheet(prov) {
+  const clientId = await DB.setting(CID_KEY[prov.key]);
+  if (!clientId) return cloudSetupSheet(prov, '');
+
+  sheet('<h3>' + esc(prov.label) + '</h3><div id="cl" style="color:var(--sub);font-size:13px">つないでいます…</div>');
+  const box = () => $('#cl');
+
+  try {
+    if (prov.key === 'onedrive') {
+      const ok = await prov.resume();
+      if (!ok) {
+        // 認証画面へ飛ぶ。戻ってきたら boot がこのシートを開き直す
+        await DB.setting('cloudReopen', prov.key);
+        await prov.connect(clientId);
+        return;
+      }
+    } else {
+      await prov.connect(clientId);
+    }
+  } catch (e) {
+    if (!box()) return;
+    box().innerHTML = '<b style="color:var(--danger)">つなげませんでした。</b><br>' + esc(e.message) +
+      '<div class="actions"><button class="btn sm" id="cl-set">設定をやり直す</button></div>';
+    $('#cl-set', box()).onclick = () => cloudSetupSheet(prov, clientId);
+    return;
+  }
+  cloudBrowse(prov, [{ id: null, name: prov.label }]);
+}
+
+async function cloudBrowse(prov, stack) {
+  const here = stack[stack.length - 1];
+  const el = sheetEl;
+  if (!el) return;
+  const crumb = stack.map((f, i) => '<button class="chip" data-i="' + i + '">' + esc(f.name) + '</button>').join(' ');
+  el.innerHTML = '<div class="grab"></div><h3>' + esc(prov.label) + '</h3>' +
+    '<div style="margin-bottom:8px">' + crumb + '</div>' +
+    '<div id="cl-list" style="color:var(--sub);font-size:13px">読み込んでいます…</div>';
+
+  $$('.chip[data-i]', el).forEach((c) => {
+    c.onclick = () => cloudBrowse(prov, stack.slice(0, +c.dataset.i + 1));
+  });
+
+  let items;
+  try { items = await prov.list(here.id); }
+  catch (e) { $('#cl-list', el).innerHTML = '<b style="color:var(--danger)">一覧が取れませんでした。</b><br>' + esc(e.message); return; }
+
+  const books = items.filter((x) => !x.isFolder && BOOK_EXT.test(x.name));
+  const list = $('#cl-list', el);
+  list.innerHTML =
+    (books.length ? '<div class="actions" style="margin:0 0 6px"><button class="btn sm primary" id="cl-all">' +
+      'このフォルダの本を全部取り込む（' + books.length + '）</button></div>' : '') +
+    (items.length
+      ? items.map((x, i) => {
+          const ok = x.isFolder || BOOK_EXT.test(x.name);
+          const mb = x.size ? '　' + (x.size / 1048576).toFixed(1) + ' MB' : '';
+          return '<button class="item" data-i="' + i + '"' + (ok ? '' : ' disabled style="opacity:.35"') + '>' +
+            '<span class="mark">' + (x.isFolder ? '▸' : '·') + '</span><span><b>' + esc(x.name) + '</b>' +
+            '<span>' + (x.isFolder ? 'フォルダ' : (ok ? '本' + mb : '対応していない形式')) + '</span></span></button>';
+        }).join('')
+      : '<div class="empty">空です</div>') +
+    '<div id="cl-msg" style="font-size:12px;color:var(--sub);margin-top:10px"></div>';
+
+  const msg = $('#cl-msg', el);
+  $$('.item[data-i]', list).forEach((b) => {
+    b.onclick = async () => {
+      const x = items[+b.dataset.i];
+      if (x.isFolder) return cloudBrowse(prov, stack.concat([{ id: x.id, name: x.name }]));
+      await cloudGet(prov, [x], msg);
+    };
+  });
+  if ($('#cl-all', list)) $('#cl-all', list).onclick = () => cloudGet(prov, books, msg);
+}
+
+async function cloudGet(prov, items, msg) {
+  let n = 0, err = 0;
+  for (const x of items) {
+    if (msg) msg.textContent = '落としています… ' + (n + err + 1) + ' / ' + items.length + '：' + x.name;
+    try {
+      const blob = await prov.download(x);
+      await importBlob(x.name, blob, prov.label + ':' + x.name);
+      n++;
+    } catch (e) { console.warn(e); err++; }
+  }
+  if (msg) msg.textContent = n + '冊を棚に入れました' + (err ? '（' + err + '件は取れませんでした）' : '');
+  toast(n ? n + '冊を棚に入れました' : '取り込めませんでした');
+  render();
 }
 
 // ================================================================ 読書画面
@@ -886,8 +1011,8 @@ function saveSelection() {
 async function gearSheet() {
   const u = await DB.usage();
   const mb = (n) => (n / 1048576).toFixed(0) + ' MB';
-  const themes = { sumi: '墨', kiri: '霧', hai: '灰', aitetsu: '藍鉄', kinari: '生成り', hakuji: '白磁' };
-  const accents = { kohaku: '琥珀', sabi: '錆', koke: '苔', fuji: '藤', toki: '鴇', asagi: '浅葱', ai: '藍', karashi: '芥子', kuwa: '桑', mono: 'モノクロ' };
+  const themes = { sumi: '墨', kiri: '霧', hai: '灰', aitetsu: '藍鉄', kinari: '生成り', hakuji: '白磁', shirokuma: 'しろくま' };
+  const accents = { kohaku: '琥珀', sabi: '錆', koke: '苔', fuji: '藤', toki: '鴇', asagi: '浅葱', ai: '藍', karashi: '芥子', kuwa: '桑', mizu: '水色', mono: 'モノクロ' };
   const fonts = { system: 'システム標準', gothic: 'ゴシック', mincho: '明朝', maru: '丸ゴシック' };
   const row = (label, id, map, cur) =>
     '<div class="h">' + label + '</div><div id="' + id + '">' + Object.entries(map).map(([k, v]) =>
@@ -897,6 +1022,8 @@ async function gearSheet() {
     row('テーマ（アプリの画面）', 'g-theme', themes, S.chrome.theme) +
     row('アクセント', 'g-accent', accents, S.chrome.accent) +
     row('フォント', 'g-font', fonts, S.chrome.font) +
+    '<div class="h">クラウド</div>' +
+    '<div id="g-cloud"></div>' +
     '<div class="h">明朝（本文の書体）</div>' +
     '<div id="g-mincho"></div>' +
     '<div class="h">保存</div>' +
@@ -918,6 +1045,7 @@ async function gearSheet() {
         };
       };
       bind('g-theme', 'theme'); bind('g-accent', 'accent'); bind('g-font', 'font');
+      cloudPanel($('#g-cloud', el));
       minchoPanel($('#g-mincho', el));
       $('#g-persist', el).onclick = async () => {
         const ok = await DB.persist();
@@ -926,6 +1054,44 @@ async function gearSheet() {
       $('#g-export', el).onclick = async () => {
         const rows = await Notes.list();
         exportNotes(rows);
+      };
+    });
+}
+
+async function cloudPanel(box) {
+  const rows = [];
+  for (const prov of [Drive, OneDrive]) {
+    const cid = await DB.setting(CID_KEY[prov.key]);
+    const linked = prov.key === 'onedrive' ? await prov.linked() : false;
+    const state = !cid ? '未設定' : (prov.key === 'onedrive' ? (linked ? 'つながっています' : 'クライアント ID のみ設定済み') : 'クライアント ID 設定済み');
+    rows.push('<button class="item" data-k="' + prov.key + '"><span class="mark">' + (cid ? '●' : '○') + '</span>' +
+      '<span><b>' + esc(prov.label) + '</b><span>' + state + '</span></span></button>');
+  }
+  box.innerHTML = rows.join('') +
+    '<div style="color:var(--sub);font-size:12px;line-height:1.7;margin-top:8px">' +
+    '読み取り専用でつなぎます。落とした本は端末に保存され、以後はオフラインで読めます。' +
+    'クライアント ID と認証の記録はこの端末の中にだけ残ります。</div>';
+  $$('.item[data-k]', box).forEach((b) => {
+    b.onclick = () => cloudManageSheet(b.dataset.k === 'drive' ? Drive : OneDrive);
+  });
+}
+
+async function cloudManageSheet(prov) {
+  const cid = await DB.setting(CID_KEY[prov.key]);
+  const linked = prov.key === 'onedrive' ? await prov.linked() : false;
+  sheet('<h3>' + esc(prov.label) + '</h3>' +
+    '<button class="item" id="m-open"><span class="mark">▸</span><span><b>フォルダを開いて取り込む</b></span></button>' +
+    '<button class="item" id="m-set"><span class="mark">✎</span><span><b>クライアント ID を' + (cid ? '変える' : '入れる') + '</b>' +
+      (cid ? '<span style="word-break:break-all">' + esc(cid.slice(0, 44)) + (cid.length > 44 ? '…' : '') + '</span>' : '') + '</span></button>' +
+    (linked || prov.key === 'drive'
+      ? '<button class="item" id="m-out"><span class="mark">✕</span><span><b style="color:var(--danger)">つなぎを切る</b>' +
+        '<span>取り込み済みの本はそのまま残ります</span></span></button>' : ''),
+    (el) => {
+      $('#m-open', el).onclick = () => cloudSheet(prov);
+      $('#m-set', el).onclick = () => cloudSetupSheet(prov, cid || '');
+      if ($('#m-out', el)) $('#m-out', el).onclick = async () => {
+        await prov.signOut();
+        closeSheet(); toast('切りました');
       };
     });
 }
@@ -1067,6 +1233,17 @@ async function boot() {
     else { Stats.resume(); R.turnAt = Date.now(); }
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
+
+  // OneDrive の認証から戻ってきていたら受け取って、開いていたシートを開き直す
+  try {
+    const r = await OneDrive.finishSignIn();
+    if (r) {
+      const reopen = await DB.setting('cloudReopen');
+      await DB.del('settings', 'cloudReopen');
+      if (r.ok) { toast('OneDrive につながりました'); if (reopen === 'onedrive') cloudSheet(OneDrive); }
+      else toast('OneDrive につなげませんでした: ' + r.message);
+    }
+  } catch (e) { console.warn(e); }
 
   DB.persist();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

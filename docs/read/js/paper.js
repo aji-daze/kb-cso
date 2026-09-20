@@ -6,6 +6,7 @@ export const PAPERS = {
   kinari: { label: '生成り', bg: [40, 26, 94], ink: [35, 14, 13], dark: false },
   koshi:  { label: '古紙', bg: [40, 34, 86], ink: [34, 26, 16], dark: false },
   sepia:  { label: 'セピア', bg: [37, 42, 80], ink: [28, 42, 18], dark: false },
+  usurai: { label: '薄氷', bg: [208, 34, 90], ink: [212, 24, 21], dark: false },
   kiri:   { label: '霧', bg: [215, 10, 13], ink: [210, 10, 86], dark: true },
   sumi:   { label: '墨', bg: [220, 8, 5], ink: [40, 6, 85], dark: true },
 };
