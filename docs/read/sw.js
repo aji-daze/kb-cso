@@ -1,10 +1,10 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'shiori-v0.2.0';
+const VERSION = 'shiori-v0.3.0';
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',
   './js/app.js', './js/db.js', './js/zip.js', './js/md.js', './js/epub.js',
-  './js/aozora.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
+  './js/aozora.js', './js/font.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
   './icons/icon-192.png', './icons/icon-512.png',
 ];
 

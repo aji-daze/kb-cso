@@ -4,6 +4,7 @@ import * as Paper from './paper.js';
 import * as Notes from './notes.js';
 import * as Stats from './stats.js';
 import * as Aozora from './aozora.js';
+import * as Font from './font.js';
 import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
@@ -896,6 +897,8 @@ async function gearSheet() {
     row('テーマ（アプリの画面）', 'g-theme', themes, S.chrome.theme) +
     row('アクセント', 'g-accent', accents, S.chrome.accent) +
     row('フォント', 'g-font', fonts, S.chrome.font) +
+    '<div class="h">明朝（本文の書体）</div>' +
+    '<div id="g-mincho"></div>' +
     '<div class="h">保存</div>' +
     '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">' +
       (u && u.usage != null ? '使用 ' + mb(u.usage) + ' / 空き見込み ' + mb(u.quota || 0) + '<br>' : '') +
@@ -915,6 +918,7 @@ async function gearSheet() {
         };
       };
       bind('g-theme', 'theme'); bind('g-accent', 'accent'); bind('g-font', 'font');
+      minchoPanel($('#g-mincho', el));
       $('#g-persist', el).onclick = async () => {
         const ok = await DB.persist();
         toast(ok ? '固定しました' : '固定できませんでした（端末の判断です）');
@@ -924,6 +928,56 @@ async function gearSheet() {
         exportNotes(rows);
       };
     });
+}
+
+// 明朝の取り込み。端末に明朝がある人（iOS など）は落とす必要がない。
+async function minchoPanel(box) {
+  const have = Font.deviceMincho();
+  const got = await Font.info();
+  const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+
+  if (have && !got) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">' +
+      'この端末には明朝（' + esc(have) + '）が入っています。<b style="color:var(--tx)">取り込む必要はありません。</b></div>' +
+      '<div class="actions"><button class="btn sm ghost" id="mi-get">それでも取り込む</button></div>';
+  } else if (got) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">' +
+      '取り込み済み（' + mb(got.bytes) + '・' + got.n + '個）。' +
+      (got.failed ? '<b style="color:var(--danger)">' + got.failed + '個は落とせませんでした。</b>一部の字がゴシックのまま出ます。' : 'オフラインでも明朝で出ます。') +
+      (have ? '<br>この端末には ' + esc(have) + ' もあるので、そちらが優先されます。' : '') + '</div>' +
+      '<div class="actions">' + (got.failed ? '<button class="btn sm" id="mi-get">取り直す</button>' : '') +
+      '<button class="btn sm ghost" id="mi-del">消す</button></div>';
+  } else {
+    box.innerHTML = '<div style="color:var(--sub);font-size:12.5px;line-height:1.8">' +
+      '<b style="color:var(--tx)">この端末には明朝が入っていません。</b>' +
+      'Android の標準はゴシックだけなので、書体で「明朝」を選んでも黙ってゴシックで出ます。<br>' +
+      '一度だけ落として端末に置くと、以後はオフラインでも明朝で読めます（約 3.8 MB）。' +
+      '必要な字の分だけ読み込むので、表示が重くなることはありません。</div>' +
+      '<div class="actions"><button class="btn sm primary" id="mi-get">明朝を取り込む</button></div>';
+  }
+  box.insertAdjacentHTML('beforeend', '<div id="mi-msg" style="font-size:12px;color:var(--sub);margin-top:8px"></div>');
+
+  const msg = $('#mi-msg', box);
+  const get = $('#mi-get', box);
+  if (get) get.onclick = async () => {
+    get.disabled = true;
+    try {
+      const r = await Font.download((s2) => { msg.textContent = s2; });
+      toast('明朝を取り込みました（' + mb(r.bytes) + '）');
+      minchoPanel(box);
+    } catch (e) {
+      msg.innerHTML = '<b style="color:var(--danger)">取り込めませんでした。</b>' + esc(e.message) +
+        '<br>回線を確かめてやり直してください。他の機能には影響しません。';
+      get.disabled = false;
+    }
+  };
+  const del = $('#mi-del', box);
+  if (del) del.onclick = async () => {
+    if (!(await confirmSheet('取り込んだ明朝を消しますか', '読むのに支障はありません。書体はゴシックで出るようになります。', '消す', true))) return;
+    await Font.remove();
+    toast('消しました。次に開き直すと外れます');
+    minchoPanel(box);
+  };
 }
 
 // ---------------------------------------------------------------- 画面切替
@@ -964,6 +1018,7 @@ async function boot() {
   const paper = await DB.setting('paper');
   if (paper) S.paper = Object.assign(Paper.defaults(), paper);
   applyChrome();
+  Font.install().catch(() => {});
   await Stats.load();
   await loadBooks();
   render();

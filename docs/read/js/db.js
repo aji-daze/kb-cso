@@ -1,6 +1,6 @@
 // IndexedDB。ミュージックの db.js と同じ作りに寄せてある。
 const NAME = 'shiori';
-const VER = 1;
+const VER = 2;
 let _db = null;
 
 export const STORES = {
@@ -10,6 +10,7 @@ export const STORES = {
   notes:    { keyPath: 'id', idx: { bookId: 'bookId', at: 'at' } },
   sessions: { keyPath: 'id', idx: { at: 'at', bookId: 'bookId' } },
   aozora:   { keyPath: 'id' },
+  fonts:    { keyPath: 'id' },
   settings: { keyPath: 'k' },
 };
 

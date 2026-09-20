@@ -11,7 +11,8 @@ export const PAPERS = {
 };
 
 export const FAMS = {
-  serif:   { label: '明朝', css: '"Hiragino Mincho ProN","Yu Mincho",YuMincho,"Noto Serif JP",serif' },
+  // 端末に明朝があればそれを使う。無い端末（Android）では、取り込んだ書体が効く。
+  serif:   { label: '明朝', css: '"Hiragino Mincho ProN","Yu Mincho",YuMincho,"Noto Serif CJK JP","Shiori Mincho",serif' },
   sans:    { label: 'ゴシック', css: '-apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",Roboto,sans-serif' },
   maru:    { label: '丸ゴシック', css: '"Hiragino Maru Gothic ProN","Rounded Mplus 1c","Yu Gothic UI",sans-serif' },
   enserif: { label: '欧文セリフ', css: 'Iowan Old Style,"Palatino Linotype",Palatino,Georgia,"Hiragino Mincho ProN",serif' },
