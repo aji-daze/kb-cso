@@ -405,7 +405,7 @@ async function renderLog() {
 
   el.innerHTML =
     '<div class="bearbox" data-bear="' + bearState + '">' +
-      '<div class="art">' + Bear.svg() + '</div>' +
+      Bear.html() +
       '<div class="say">' + esc(Bear.line(bearState, todayMin)) + '</div>' +
     '</div>' +
     '<div class="stat">' +
@@ -438,7 +438,7 @@ function addSheet() {
     '<button class="item" id="a-file"><span class="mark">·</span><span><b>ファイルを選ぶ</b>' +
       '<span>1冊ずつ。EPUB（DRM の無いもの）・Markdown・テキスト</span></span></button>' +
     '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫から探す</b>' +
-      '<span>著作権の切れた作品を、アプリの中で検索して落とします</span></span></button>' +
+      '<span>取り込み方の案内を出します（いまアプリの中からは落とせません）</span></span></button>' +
     '<button class="item" id="a-drive"><span class="mark">G</span><span><b>Google ドライブから取り込む</b>' +
       '<span>フォルダを辿って、本を選んで落とします。落としたあとはオフラインで読めます</span></span></button>' +
     '<button class="item" id="a-od"><span class="mark">OD</span><span><b>OneDrive から取り込む</b>' +
@@ -539,51 +539,25 @@ async function bookSheet(id) {
 
 // ================================================================ 青空文庫
 function aozoraSheet() {
-  sheet('<h3>青空文庫</h3><div id="az"></div>', async (el) => {
-    const box = $('#az', el);
-    const info = await Aozora.indexInfo();
-    if (!info) {
-      box.innerHTML = '<p style="color:var(--sub);font-size:13px;line-height:1.8;margin:0 0 14px">' +
-        '<b style="color:var(--tx)">先に目録（作品の一覧）だけを落とします。</b>本文は入りません。<br>' +
-        '一度入れれば検索は通信なしで動き、<b style="color:var(--tx)">読みたい作品だけ、その都度</b>本文を落とします。<br>' +
-        '取得元はこの順に試します：' + esc(Aozora.sources().join(' → ')) + '</p>' +
-        '<div class="actions"><button class="btn primary" id="az-get">目録を取り込む</button></div>' +
-        '<div id="az-msg" style="font-size:12.5px;color:var(--sub);margin-top:10px;white-space:pre-wrap"></div>';
-      $('#az-get', box).onclick = async () => {
-        const msg = $('#az-msg', box);
-        $('#az-get', box).disabled = true;
-        try {
-          const n = await Aozora.buildIndex((s) => { msg.textContent = s; });
-          toast(n.toLocaleString() + '作品の目録を入れました');
-          aozoraSheet();
-        } catch (e) {
-          msg.innerHTML = '<b style="color:var(--danger)">取得できませんでした。</b>\n' + esc(e.message) +
-            '\n\n回線か、配信元の設定が変わっている可能性があります。' +
-            'この文面をそのまま伝えてもらえれば原因が絞れます。他の機能には影響しません。';
-          $('#az-get', box).disabled = false;
-        }
+  sheet('<h3>青空文庫</h3>' +
+    '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+    '<b style="color:var(--danger)">いまアプリの中からは落とせません。</b><br>' +
+    '青空文庫のサーバーは、ブラウザで動くアプリからの読み取りを許可していません（CORS）。' +
+    '回線の問題ではないので、待っても通りません。</p>' +
+    '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
+    '<b style="color:var(--tx)">いまできるやり方：</b><br>' +
+    '1. 下のボタンで青空文庫を開く<br>' +
+    '2. 読みたい作品の「テキストファイル（ルビあり）」を落とす<br>' +
+    '3. 「本を入れる」→「ファイルを選ぶ」で取り込む<br>' +
+    'ルビ（<code>｜漢字《かんじ》</code>）はそのまま縦組みで出ます。</p>' +
+    '<div class="actions"><button class="btn" id="az-c">閉じる</button>' +
+    '<button class="btn primary" id="az-open">青空文庫を開く</button></div>',
+    (el) => {
+      $('#az-c', el).onclick = closeSheet;
+      $('#az-open', el).onclick = () => {
+        window.open('https://www.aozora.gr.jp/', '_blank', 'noopener');
       };
-      return;
-    }
-    box.innerHTML = '<label class="field"><span>作者名・作品名で探す（目録 ' + info.n.toLocaleString() + '作品・本文は選んだときに落とします）</span>' +
-      '<input type="text" id="az-q" placeholder="例: 宮沢賢治 銀河" autocomplete="off"></label>' +
-      '<div id="az-hit"></div>' +
-      '<div class="actions"><button class="btn sm ghost" id="az-re">目録を入れ直す</button></div>';
-    const q = $('#az-q', box), hit = $('#az-hit', box);
-    let t = null;
-    q.oninput = () => {
-      clearTimeout(t);
-      t = setTimeout(async () => {
-        const rows = await Aozora.search(q.value, 40);
-        if (!rows || !rows.length) { hit.innerHTML = q.value.trim() ? '<div class="empty">見つかりません</div>' : ''; return; }
-        hit.innerHTML = rows.map((r, i) =>
-          '<button class="item" data-i="' + i + '"><span class="mark">·</span><span><b>' + esc(r.title) + '</b><span>' + esc(r.author) + '</span></span></button>').join('');
-        $$('.item', hit).forEach((b) => { b.onclick = () => getAozora(rows[+b.dataset.i]); });
-      }, 200);
-    };
-    q.focus();
-    $('#az-re', box).onclick = async () => { await Aozora.dropIndex(); aozoraSheet(); };
-  });
+    });
 }
 
 async function getAozora(row) {
@@ -632,7 +606,9 @@ async function folderSheet() {
         : '本の入っているフォルダを選んでください。<br>' +
           '<b style="color:var(--tx)">OneDrive の同期フォルダ</b>でも構いません。' +
           'クラウドにつなぐ必要はなく、同期されたファイルをそのまま読みます。<br>' +
-          '一度選ぶと覚えるので、次からは選び直さずに中身を確かめられます。') +
+          '一度選ぶと覚えるので、次からは選び直さずに中身を確かめられます。<br>' +
+          '<span style="font-size:12px">次の名前のフォルダは見に行きません（ポメラと同じ扱い）：' +
+          esc(Folder.DEFAULT_EXCLUDE.join('・')) + '、先頭が「.」のもの</span>') +
       '</p>' +
       '<div class="actions"><button class="btn" id="f-c">やめる</button>' +
       '<button class="btn primary" id="f-pick">' + (needPerm ? '許可する' : 'フォルダを選ぶ') + '</button></div>',
@@ -640,7 +616,7 @@ async function folderSheet() {
         $('#f-c', el).onclick = closeSheet;
         $('#f-pick', el).onclick = async () => {
           try {
-            handle = needPerm ? await Folder.saved({ ask: true }) : await Folder.pick();
+            handle = needPerm ? await Folder.saved({ ask: true }) : await Folder.pickFolder();
             if (!handle) { toast('許可されませんでした'); return; }
             folderList(handle);
           } catch (e) {
@@ -662,21 +638,34 @@ async function folderList(handle) {
   catch (e) { const b = $('#f-body', el); if (b) b.innerHTML = '<b style="color:var(--danger)">読めませんでした。</b><br>' + esc(e.message); return; }
 
   const have = new Set(S.books.map((b) => b.source));
-  const fresh = found.filter((f) => !have.has(folderSource(f.path)));
+  const seen = await Folder.meta();
+  const isNew = (f) => !have.has(folderSource(f.path));
+  // 取り込み済みでも、PC 側で書き換えられていれば入れ直せるようにする
+  const isChanged = (f) => {
+    if (isNew(f)) return false;
+    const m = seen[f.path];
+    return !!m && (m.m !== f.mtime || m.s !== f.size);
+  };
+  const fresh = found.filter(isNew);
+  const changed = found.filter(isChanged);
   const body = $('#f-body', el);
   if (!body) return;
 
   body.innerHTML =
     '<div style="margin-bottom:10px">本 ' + found.length + '件。' +
-      (fresh.length ? '<b style="color:var(--tx)">うち ' + fresh.length + '件がまだ棚にありません。</b>' : 'すべて取り込み済みです。') + '</div>' +
+      (fresh.length ? '<b style="color:var(--tx)">うち ' + fresh.length + '件がまだ棚にありません。</b>' : 'すべて取り込み済みです。') +
+      (changed.length ? '<br><b style="color:var(--tx)">' + changed.length + '件は、あとで書き換えられています。</b>' : '') + '</div>' +
     (fresh.length ? '<div class="actions" style="margin:0 0 8px"><button class="btn sm primary" id="f-all">' +
       'まだの ' + fresh.length + '件を取り込む</button></div>' : '') +
+    (changed.length ? '<div class="actions" style="margin:0 0 8px"><button class="btn sm" id="f-upd">' +
+      '書き換えられた ' + changed.length + '件を入れ直す</button></div>' : '') +
     (found.length
       ? found.slice(0, 300).map((f, i) => {
-          const got = have.has(folderSource(f.path));
-          return '<button class="item" data-i="' + i + '"' + (got ? ' disabled style="opacity:.4"' : '') + '>' +
-            '<span class="mark">' + (got ? '✓' : '·') + '</span><span><b>' + esc(f.name) + '</b>' +
-            '<span>' + esc(f.path) + (got ? '　取り込み済み' : '') + '</span></span></button>';
+          const got = !isNew(f), chg = isChanged(f);
+          const note = chg ? '　書き換えられています' : (got ? '　取り込み済み' : '');
+          return '<button class="item" data-i="' + i + '"' + (got && !chg ? ' disabled style="opacity:.4"' : '') + '>' +
+            '<span class="mark">' + (chg ? '↻' : got ? '✓' : '·') + '</span><span><b>' + esc(f.name) + '</b>' +
+            '<span>' + esc(f.path) + note + '</span></span></button>';
         }).join('')
       : '<div class="empty">本の形式のファイルがありません<br>（EPUB・Markdown・テキスト）</div>') +
     (found.length > 300 ? '<div style="font-size:12px;margin-top:8px">※ 先頭300件だけ出しています</div>' : '') +
@@ -690,8 +679,9 @@ async function folderList(handle) {
     b.onclick = () => folderGet([found[+b.dataset.i]], msg, handle);
   });
   if ($('#f-all', body)) $('#f-all', body).onclick = () => folderGet(fresh, msg, handle);
+  if ($('#f-upd', body)) $('#f-upd', body).onclick = () => folderGet(changed, msg, handle, true);
   $('#f-change', body).onclick = async () => {
-    try { const h = await Folder.pick(); folderList(h); }
+    try { const h = await Folder.pickFolder(); folderList(h); }
     catch (e) { if (e && e.name !== 'AbortError') toast('開けませんでした: ' + e.message); }
   };
   $('#f-forget', body).onclick = async () => {
@@ -699,17 +689,34 @@ async function folderList(handle) {
   };
 }
 
-async function folderGet(items, msg, handle) {
-  let n = 0, err = 0;
+async function folderGet(items, msg, handle, replace) {
+  let n = 0, err = 0, first = '';
+  const done = [];
   for (const f of items) {
     if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
     try {
       const file = await Folder.read(f);
-      await importBlob(f.name, file, folderSource(f.path));
-      n++;
-    } catch (e) { console.warn(e); err++; }
+      const src = folderSource(f.path);
+      // 入れ直しのときは古いほうを先に片づける（抜き書きは残す）
+      if (replace) {
+        const olds = S.books.filter((b) => b.source === src);
+        for (const b of olds) {
+          await DB.del('files', b.id); await DB.del('marks', b.id); await DB.del('books', b.id);
+          S.covers.delete(b.id);
+        }
+        if (olds.length) await loadBooks();
+      }
+      await importBlob(f.name, file, src);
+      done.push(f); n++;
+    } catch (e) {
+      console.warn(f.path, e); err++;
+      if (!first) first = (e && e.message) || String(e);
+    }
   }
-  if (msg) msg.textContent = n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした）' : '');
+  if (done.length) await Folder.remember(done);
+  if (msg) msg.textContent = n
+    ? n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした：' + first.slice(0, 40) + '）' : '')
+    : '取り込めませんでした：' + first.slice(0, 60);
   toast(n ? n + '冊を棚に入れました' : '取り込めませんでした');
   render();
   if (handle) folderList(handle);

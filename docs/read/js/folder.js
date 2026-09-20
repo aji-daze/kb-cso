@@ -1,41 +1,62 @@
 // 端末のフォルダを開いて、その中の本を取り込む。
 //
 // OneDrive・Google ドライブ・Dropbox は、PC では同期フォルダとして端末の中にある。
-// ならクラウドの API を通す必要はなく、そのフォルダを直接開けばいい。認証も要らない。
+// ならクラウドの API を通す必要はなく、そのフォルダを直接開けばいい。トークンも要らない。
 //
-// File System Access API を使うと、**一度選んだフォルダを覚えておける**。
-// 次に開いたときは選び直さずに中を読めるので、同期で増えた本がそのまま出てくる。
-// この API が無い端末（iOS / Safari）では、一回きりのフォルダ選択に落とす。
+// 作法は pomera-tab の localfs.js に合わせてある（同じ OneDrive フォルダを
+// 両方のアプリから開くので、除外するフォルダや許可の扱いがズレると混乱するため）。
+// 違いは、こちらは読むだけ（mode: 'read'）で書き戻さないこと。
 import * as DB from './db.js';
 
 const KEY = 'folderHandle';
 const NAME_KEY = 'folderName';
+const META_KEY = 'folderMeta';
 
 export const supported = () => typeof window.showDirectoryPicker === 'function';
 
 export const BOOK_EXT = /\.(epub|md|markdown|txt|text)$/i;
+const TEXT_EXT = /\.(md|markdown|txt|text)$/i;
+export const MAX_BYTES = 40 * 1024 * 1024;      // EPUB は大きいので広めに取る
+const MAX_TEXT_BYTES = 5 * 1024 * 1024;         // 素のテキストがこれを超えるのは本ではない
 
-export async function pick() {
+// pomera-tab の DEFAULT_EXCLUDE と同じ。どの階層でも、この名前のフォルダは見ない。
+export const DEFAULT_EXCLUDE = [
+  'Personal Vault', 'Microsoft Copilot Chat ファイル', 'アプリ',
+  'Desktop', '画像', '動画', 'music',
+];
+
+export const getHandle = () => DB.setting(KEY);
+export const savedName = () => DB.setting(NAME_KEY);
+
+export async function pickFolder() {
   if (!supported()) throw new Error('この端末のブラウザはフォルダを覚えられません');
-  const handle = await window.showDirectoryPicker({ id: 'pocha-books', mode: 'read' });
+  const handle = await window.showDirectoryPicker({ id: 'pocha-books', mode: 'read', startIn: 'documents' });
+  // 別のフォルダに変えたなら、覚えていた更新日時などは捨てる
+  const prev = await getHandle();
+  if (!prev || !(await prev.isSameEntry(handle))) await DB.setting(META_KEY, {});
   await DB.setting(KEY, handle);
   await DB.setting(NAME_KEY, handle.name);
   return handle;
 }
 
-export async function savedName() { return DB.setting(NAME_KEY); }
+// ブラウザを開き直すと許可が「確認」に戻ることがある。
+// request はボタンを押した直後など、ユーザー操作のときだけ true にする。
+export async function permission(handle, request = false) {
+  if (!handle || !handle.queryPermission) return false;
+  const opts = { mode: 'read' };
+  let p = await handle.queryPermission(opts);
+  if (p !== 'granted' && request) p = await handle.requestPermission(opts);
+  return p === 'granted';
+}
 
-// 覚えてあるフォルダを返す。権限が切れていたら null（呼ぶ側が pick し直す）。
 export async function saved({ ask = false } = {}) {
-  const handle = await DB.setting(KEY);
-  if (!handle || !handle.queryPermission) return null;
-  let st = await handle.queryPermission({ mode: 'read' });
-  if (st === 'prompt' && ask) st = await handle.requestPermission({ mode: 'read' });
-  return st === 'granted' ? handle : null;
+  const handle = await getHandle();
+  if (!handle) return null;
+  return (await permission(handle, ask)) ? handle : null;
 }
 
 export async function needsPermission() {
-  const handle = await DB.setting(KEY);
+  const handle = await getHandle();
   if (!handle || !handle.queryPermission) return false;
   return (await handle.queryPermission({ mode: 'read' })) === 'prompt';
 }
@@ -43,20 +64,29 @@ export async function needsPermission() {
 export async function forget() {
   await DB.del('settings', KEY);
   await DB.del('settings', NAME_KEY);
+  await DB.del('settings', META_KEY);
 }
 
-// 中を再帰的に辿って本のファイルを集める。パスも返す（重複を弾くのに使う）。
-export async function scan(handle, onStep, max = 4000) {
+// 中を辿って本のファイルを集める。ここでは中身を読まない（フォルダが大きいと遅くなるため）。
+// 更新日時と大きさは覚えておいて、PC 側で書き換えられた本を見分けるのに使う。
+export async function scan(handle, onStep, { exclude = DEFAULT_EXCLUDE, max = 4000 } = {}) {
+  const skip = new Set(exclude);
   const out = [];
   const walk = async (dir, path, depth) => {
     if (out.length >= max || depth > 8) return;
     for await (const [name, h] of dir.entries()) {
       if (out.length >= max) return;
-      if (name.startsWith('.')) continue;
-      const p = path ? path + '/' + name : name;
-      if (h.kind === 'directory') { await walk(h, p, depth + 1); continue; }
+      if (name.startsWith('.')) continue;          // .obsidian・.trash など
+      if (h.kind === 'directory') {
+        if (!skip.has(name)) await walk(h, path ? path + '/' + name : name, depth + 1);
+        continue;
+      }
       if (!BOOK_EXT.test(name)) continue;
-      out.push({ name, path: p, handle: h });
+      const p = path ? path + '/' + name : name;
+      let file = null;
+      try { file = await h.getFile(); } catch { continue; }
+      if (file.size > MAX_BYTES) continue;
+      out.push({ name, path: p, handle: h, size: file.size, mtime: file.lastModified });
       if (onStep && out.length % 25 === 0) onStep(out.length);
     }
   };
@@ -65,4 +95,22 @@ export async function scan(handle, onStep, max = 4000) {
   return out;
 }
 
-export const read = (entry) => entry.handle.getFile();
+export const meta = () => DB.setting(META_KEY).then((m) => m || {});
+export async function remember(entries) {
+  const m = await meta();
+  for (const e of entries) m[e.path] = { m: e.mtime, s: e.size };
+  await DB.setting(META_KEY, m);
+}
+
+// UTF-8 でないテキストは本として扱わない（文字化けした「本」が棚に並ぶのを防ぐ）
+const fatal = new TextDecoder('utf-8', { fatal: true });
+
+export async function read(entry) {
+  const file = await entry.handle.getFile();
+  if (TEXT_EXT.test(entry.name)) {
+    if (file.size > MAX_TEXT_BYTES) throw new Error('テキストとしては大きすぎます');
+    try { fatal.decode(await file.arrayBuffer()); }
+    catch { throw new Error('UTF-8 ではないので読めません'); }
+  }
+  return file;
+}
