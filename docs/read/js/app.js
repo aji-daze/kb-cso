@@ -160,16 +160,34 @@ async function importBlob(filename, blob, source) {
   }, chs);
 }
 
+// 取り込んだ本を、覚えているフォルダ（OneDrive の同期先など）へ複製する。
+// OneDrive が同期してくれるので、他の端末の「フォルダを開く」に出てくる。
+async function mirrorToFolder(files) {
+  if (!Folder.supported()) return 0;
+  if ((await DB.setting('mirror')) === false) return 0;
+  if (!(await Folder.getHandle())) return 0;
+  if (!(await Folder.canWrite())) return 0;
+  let n = 0;
+  for (const f of files) {
+    try { await Folder.saveInto(f.name, f, { sub: '' }); n++; }
+    catch (e) { console.warn('複製できません', f.name, e); }
+  }
+  return n;
+}
+
 async function importFiles(files) {
   let n = 0, err = 0, first = '';
+  const ok = [];
   for (const f of files) {
-    try { await importBlob(f.name, f); n++; }
+    try { await importBlob(f.name, f); ok.push(f); n++; }
     catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
   }
-  if (n) toast(n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした）' : ''));
+  const copied = ok.length ? await mirrorToFolder(ok) : 0;
+  if (n) toast(n + '冊を棚に入れました' + (copied ? '／' + copied + '件をフォルダにも保存' : '') +
+    (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
   render();
-  return { n, err, first };
+  return { n, err, first, copied };
 }
 
 // 最初に開いたとき棚が空だと何も確かめられないので、自前の短い文章を1つ入れておく。
@@ -1231,6 +1249,8 @@ async function gearSheet() {
     row('テーマ（アプリの画面）', 'g-theme', themes, S.chrome.theme) +
     row('アクセント', 'g-accent', accents, S.chrome.accent) +
     row('フォント', 'g-font', fonts, S.chrome.font) +
+    '<div class="h">フォルダ</div>' +
+    '<div id="g-folder"></div>' +
     '<div class="h">クラウド</div>' +
     '<div id="g-cloud"></div>' +
     '<div class="h">明朝（本文の書体）</div>' +
@@ -1254,6 +1274,7 @@ async function gearSheet() {
         };
       };
       bind('g-theme', 'theme'); bind('g-accent', 'accent'); bind('g-font', 'font');
+      folderPanel($('#g-folder', el));
       cloudPanel($('#g-cloud', el));
       minchoPanel($('#g-mincho', el));
       $('#g-persist', el).onclick = async () => {
@@ -1265,6 +1286,46 @@ async function gearSheet() {
         exportNotes(rows);
       };
     });
+}
+
+async function folderPanel(box) {
+  if (!Folder.supported()) {
+    box.innerHTML = '<div style="color:var(--sub);font-size:12.5px;line-height:1.75">' +
+      'この端末のブラウザはフォルダを覚えられません（iPhone / iPad など）。' +
+      'その都度フォルダを選ぶ形になり、取り込んだ本の複製もできません。</div>';
+    return;
+  }
+  const name = await Folder.savedName();
+  const writable = name ? await Folder.canWrite() : false;
+  const on = (await DB.setting('mirror')) !== false;
+
+  box.innerHTML = name
+    ? '<button class="item" id="fp-open"><span class="mark">▤</span><span><b>' + esc(name) + '</b>' +
+        '<span>' + (writable ? '読み書きできます' : '書き込みが許可されていません') + '</span></span></button>' +
+      '<button class="item" id="fp-mir"><span class="mark">' + (on ? '●' : '○') + '</span>' +
+        '<span><b>取り込んだ本をこのフォルダにも保存する</b>' +
+        '<span>OneDrive が同期して、他の端末の「フォルダを開く」に出てきます</span></span></button>' +
+      (writable ? '' :
+        '<div class="actions"><button class="btn sm primary" id="fp-perm">書き込みを許可する</button></div>')
+    : '<div style="color:var(--sub);font-size:12.5px;line-height:1.75;margin-bottom:8px">' +
+      'まだフォルダを選んでいません。OneDrive の「書籍」フォルダなどを選ぶと、' +
+      '取り込んだ本がそこにも保存され、他の端末と同じ本を読めます。</div>' +
+      '<div class="actions"><button class="btn sm primary" id="fp-pick">フォルダを選ぶ</button></div>';
+
+  if ($('#fp-open', box)) $('#fp-open', box).onclick = () => folderSheet();
+  if ($('#fp-pick', box)) $('#fp-pick', box).onclick = async () => {
+    try { await Folder.pickFolder(); folderPanel(box); toast('選びました'); }
+    catch (e) { if (e && e.name !== 'AbortError') toast('開けませんでした: ' + e.message); }
+  };
+  if ($('#fp-perm', box)) $('#fp-perm', box).onclick = async () => {
+    const ok2 = await Folder.canWrite(true);
+    toast(ok2 ? '許可されました' : '許可されませんでした');
+    folderPanel(box);
+  };
+  if ($('#fp-mir', box)) $('#fp-mir', box).onclick = async () => {
+    await DB.setting('mirror', !on);
+    folderPanel(box);
+  };
 }
 
 async function cloudPanel(box) {

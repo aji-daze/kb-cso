@@ -30,7 +30,9 @@ export const savedName = () => DB.setting(NAME_KEY);
 
 export async function pickFolder() {
   if (!supported()) throw new Error('この端末のブラウザはフォルダを覚えられません');
-  const handle = await window.showDirectoryPicker({ id: 'pocha-books', mode: 'read', startIn: 'documents' });
+  // 読むだけでなく書き込みも許可してもらう。取り込んだ本をこのフォルダへ複製し、
+  // OneDrive の同期で他の端末にも届けるため。
+  const handle = await window.showDirectoryPicker({ id: 'pocha-books', mode: 'readwrite', startIn: 'documents' });
   // 別のフォルダに変えたなら、覚えていた更新日時などは捨てる
   const prev = await getHandle();
   if (!prev || !(await prev.isSameEntry(handle))) await DB.setting(META_KEY, {});
@@ -41,12 +43,21 @@ export async function pickFolder() {
 
 // ブラウザを開き直すと許可が「確認」に戻ることがある。
 // request はボタンを押した直後など、ユーザー操作のときだけ true にする。
-export async function permission(handle, request = false) {
-  if (!handle || !handle.queryPermission) return false;
-  const opts = { mode: 'read' };
+export async function permission(handle, request = false, mode = 'read') {
+  if (!handle) return false;
+  // queryPermission を持たないハンドル（ブラウザ内の領域など）は、許可を聞く先が無い＝そのまま使える
+  if (!handle.queryPermission) return true;
+  const opts = { mode };
   let p = await handle.queryPermission(opts);
   if (p !== 'granted' && request) p = await handle.requestPermission(opts);
   return p === 'granted';
+}
+
+// 書き込みまで許されているか
+export async function canWrite(ask = false) {
+  const handle = await getHandle();
+  if (!handle) return false;
+  return permission(handle, ask, 'readwrite');
 }
 
 export async function saved({ ask = false } = {}) {
@@ -59,6 +70,39 @@ export async function needsPermission() {
   const handle = await getHandle();
   if (!handle || !handle.queryPermission) return false;
   return (await handle.queryPermission({ mode: 'read' })) === 'prompt';
+}
+
+// 取り込んだ本をフォルダへ複製する。OneDrive が同期して他の端末にも届く。
+// 同じ名前があれば「名前 (2).拡張子」にして、既存のファイルは壊さない。
+export async function saveInto(name, blob, { sub = '' } = {}) {
+  const root = await getHandle();
+  if (!root) throw new Error('保存先のフォルダが選ばれていません');
+  if (!(await permission(root, false, 'readwrite'))) {
+    const e = new Error('フォルダへの書き込みが許可されていません');
+    e.needPermission = true;
+    throw e;
+  }
+  let dir = root;
+  for (const part of String(sub).split('/').filter(Boolean)) {
+    dir = await dir.getDirectoryHandle(part, { create: true });
+  }
+  const m = String(name).match(/^(.*?)(\.[^.]*)?$/);
+  const stem = m[1] || 'book';
+  const ext = m[2] || '';
+  let fname = stem + ext;
+  for (let k = 2; ; k++) {
+    try { await dir.getFileHandle(fname); } catch (e) {
+      if (e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError')) break;
+      throw e;
+    }
+    fname = stem + ' (' + k + ')' + ext;
+    if (k > 50) break;
+  }
+  const fh = await dir.getFileHandle(fname, { create: true });
+  const w = await fh.createWritable();
+  await w.write(blob);
+  await w.close();
+  return (sub ? sub + '/' : '') + fname;
 }
 
 export async function forget() {
