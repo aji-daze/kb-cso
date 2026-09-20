@@ -161,3 +161,19 @@ export function splitAozora(raw) {
 
   return { title, author, body: body.join('\n').trim() };
 }
+
+// テキストの文字コードを判別して読む。
+// 青空文庫のテキストは Shift_JIS。UTF-8 として読むと文字化けするので、
+// まず UTF-8 で厳密に試し、通らなければ Shift_JIS とみなす。
+export function decodeText(buf) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch { /* UTF-8 ではなかった */ }
+  try { return new TextDecoder('shift_jis').decode(buf); }
+  catch { return new TextDecoder('utf-8').decode(buf); }
+}
+
+// 青空文庫のテキストかどうか。奥付か凡例があれば、そう扱ってよい。
+export function looksAozora(text) {
+  const head = text.slice(0, 4000);
+  return /^\s*底本[：:]/m.test(text) || /^-{10,}$/m.test(head) || /《[^》]+》/.test(head);
+}

@@ -1,6 +1,6 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'pocha-v0.9.0';
+const VERSION = 'pocha-v0.9.1';
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',
   './js/app.js', './js/db.js', './js/zip.js', './js/md.js', './js/epub.js',

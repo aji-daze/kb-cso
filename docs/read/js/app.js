@@ -12,7 +12,7 @@ import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
-import { splitAozora } from './md.js';
+import { splitAozora, decodeText, looksAozora } from './md.js';
 import { supported as zipOK } from './zip.js';
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -134,8 +134,7 @@ async function importBlob(filename, blob, source) {
     const entry = zip.names().find((n) => /\.txt$/i.test(n) && !n.startsWith('__MACOSX'));
     if (!entry) throw new Error('zip の中にテキストがありません');
     const bytes = await zip.bytes(entry);
-    let text = new TextDecoder('shift_jis').decode(bytes);
-    if (/\uFFFD{3,}/.test(text.slice(0, 400))) text = new TextDecoder('utf-8').decode(bytes);
+    const text = decodeText(bytes);
     const a = splitAozora(text);
     const title = a.title || name;
     return addBook({
@@ -151,8 +150,20 @@ async function importBlob(filename, blob, source) {
       vertical: b.vertical, cover: b.cover, source: source || filename,
     }, b.chapters);
   }
-  const text = await blob.text();
+  // 文字コードは中身から判別する。青空文庫のテキストは Shift_JIS なので、
+  // UTF-8 と決めつけると読めない（zip を展開した .txt がこれに当たる）。
+  const text = decodeText(await blob.arrayBuffer());
   const isMd = /\.(md|markdown)$/i.test(filename);
+
+  // 展開済みの青空文庫テキストも、zip と同じように扱う
+  if (!isMd && looksAozora(text)) {
+    const a = splitAozora(text);
+    const title = a.title || name;
+    return addBook({
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+    }, txtToChapters(a.body, title));
+  }
+
   const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
   return addBook({
     title: name, kind: isMd ? 'md' : 'txt',
@@ -460,26 +471,33 @@ async function renderLog() {
 function addSheet() {
   sheet('<h3>本を入れる</h3>' +
     '<button class="item" id="a-folder"><span class="mark">▤</span><span><b>フォルダを開く</b>' +
-      '<span>OneDrive や Google ドライブの<b>同期フォルダ</b>でも構いません。' +
-      (Folder.supported()
-        ? '一度選ぶと覚えておくので、次からは選び直さずに済みます'
-        : 'この端末では毎回選び直す必要があります') + '</span></span></button>' +
+      '<span>本の入ったフォルダごと。OneDrive の同期フォルダでよい' +
+      (Folder.supported() ? '。一度選ぶと覚える' : '（この端末では毎回選び直し）') + '</span></span></button>' +
     '<button class="item" id="a-file"><span class="mark">·</span><span><b>ファイルを選ぶ</b>' +
-      '<span>1冊ずつ。EPUB（DRM の無いもの）・Markdown・テキスト</span></span></button>' +
-    '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫から探す</b>' +
-      '<span>取り込み方の案内を出します（いまアプリの中からは落とせません）</span></span></button>' +
-    '<button class="item" id="a-drive"><span class="mark">G</span><span><b>Google ドライブから取り込む</b>' +
-      '<span>フォルダを辿って、本を選んで落とします。落としたあとはオフラインで読めます</span></span></button>' +
-    '<button class="item" id="a-od"><span class="mark">OD</span><span><b>OneDrive から取り込む</b>' +
-      '<span>同上。初回だけ Microsoft 側でのアプリ登録が必要です</span></span></button>' +
-    '<button class="item" id="a-manual"><span class="mark">▭</span><span><b>紙・Kindle の本を登録する</b>' +
-      '<span>本文は開けません。棚に置いて、進みを手で書き込みます</span></span></button>' +
-    '<button class="item" id="a-sample"><span class="mark">?</span><span><b>見本を入れる</b>' +
-      '<span>使い方を書いた短い文章。読み終えたら消してかまいません</span></span></button>',
+      '<span>EPUB・Markdown・テキスト・青空文庫の zip</span></span></button>' +
+    '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫</b>' +
+      '<span>目録から探して落とす</span></span></button>' +
+    '<button class="item" id="a-more"><span class="mark">⋯</span><span><b>その他</b>' +
+      '<span>クラウド・紙の本・見本</span></span></button>',
     (el) => {
-      $('#a-file', el).onclick = () => { closeSheet(); $('#pick').click(); };
       $('#a-folder', el).onclick = folderSheet;
+      $('#a-file', el).onclick = () => { closeSheet(); $('#pick').click(); };
       $('#a-aozora', el).onclick = aozoraSheet;
+      $('#a-more', el).onclick = addMoreSheet;
+    });
+}
+
+function addMoreSheet() {
+  sheet('<h3>その他</h3>' +
+    '<button class="item" id="a-drive"><span class="mark">G</span><span><b>Google ドライブ</b>' +
+      '<span>クラウド側を直接たどる。同期フォルダが無い端末向け</span></span></button>' +
+    '<button class="item" id="a-od"><span class="mark">OD</span><span><b>OneDrive</b>' +
+      '<span>同上。初回だけ Microsoft 側でアプリ登録が要る</span></span></button>' +
+    '<button class="item" id="a-manual"><span class="mark">▭</span><span><b>紙・Kindle の本</b>' +
+      '<span>本文は開けない。棚に置いて、進みを手で書き込む</span></span></button>' +
+    '<button class="item" id="a-sample"><span class="mark">?</span><span><b>見本を入れる</b>' +
+      '<span>使い方を書いた短い文章</span></span></button>',
+    (el) => {
       $('#a-drive', el).onclick = () => cloudSheet(Drive);
       $('#a-od', el).onclick = () => cloudSheet(OneDrive);
       $('#a-manual', el).onclick = manualNewSheet;
@@ -740,10 +758,10 @@ async function folderList(handle) {
 
   body.innerHTML =
     '<div style="margin-bottom:10px">本 ' + found.length + '件。' +
-      (fresh.length ? '<b style="color:var(--tx)">うち ' + fresh.length + '件がまだ棚にありません。</b>' : 'すべて取り込み済みです。') +
+      (fresh.length ? '<b style="color:var(--tx)">うち ' + fresh.length + '件が棚にありません。</b>' : 'すべて取り込み済みです。') +
       (changed.length ? '<br><b style="color:var(--tx)">' + changed.length + '件は、あとで書き換えられています。</b>' : '') + '</div>' +
     (fresh.length ? '<div class="actions" style="margin:0 0 8px"><button class="btn sm primary" id="f-all">' +
-      'まだの ' + fresh.length + '件を取り込む</button></div>' : '') +
+      '棚にない ' + fresh.length + '件を取り込む</button></div>' : '') +
     (changed.length ? '<div class="actions" style="margin:0 0 8px"><button class="btn sm" id="f-upd">' +
       '書き換えられた ' + changed.length + '件を入れ直す</button></div>' : '') +
     (found.length

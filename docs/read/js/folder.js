@@ -146,15 +146,12 @@ export async function remember(entries) {
   await DB.setting(META_KEY, m);
 }
 
-// UTF-8 でないテキストは本として扱わない（文字化けした「本」が棚に並ぶのを防ぐ）
-const fatal = new TextDecoder('utf-8', { fatal: true });
-
 export async function read(entry) {
   const file = await entry.handle.getFile();
-  if (TEXT_EXT.test(entry.name)) {
-    if (file.size > MAX_TEXT_BYTES) throw new Error('テキストとしては大きすぎます');
-    try { fatal.decode(await file.arrayBuffer()); }
-    catch { throw new Error('UTF-8 ではないので読めません'); }
+  // 文字コードはここで決めない。青空文庫のテキストは Shift_JIS なので、
+  // UTF-8 でないものを弾くと読めなくなる（取り込み側で判別する）。
+  if (TEXT_EXT.test(entry.name) && file.size > MAX_TEXT_BYTES) {
+    throw new Error('テキストとしては大きすぎます');
   }
   return file;
 }
