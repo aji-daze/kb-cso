@@ -59,10 +59,21 @@ export class Pager {
     return this.n;
   }
 
+  // 落ち着いているときの位置
+  baseX() { return this.dir === 'v' ? this.i * this.W : -this.i * this.W; }
+
   paint() {
-    const x = this.dir === 'v' ? this.i * this.W : -this.i * this.W;
-    this.flow.style.transform = 'translateX(' + x + 'px)';
+    this.flow.style.transform = 'translateX(' + this.baseX() + 'px)';
   }
+
+  // 指に追従させる。アニメーションを切って、そのぶんだけずらす。
+  drag(px) {
+    this.flow.style.transition = 'none';
+    this.flow.style.transform = 'translateX(' + (this.baseX() + px) + 'px)';
+  }
+
+  // 追従をやめて、元のアニメーションに戻す
+  endDrag() { this.flow.style.transition = ''; }
 
   go(i) {
     const v = Math.min(this.n - 1, Math.max(0, i));

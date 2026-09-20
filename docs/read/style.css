@@ -206,7 +206,7 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 }
 .rline { height: 2px; background: var(--pg2); flex: 0 0 auto; margin-top: var(--safe-t); }
 .rline i { display: block; height: 100%; width: 0; background: var(--ink); opacity: .42; transition: width .2s; }
-.stage { flex: 1; min-height: 0; position: relative; overflow: hidden; padding: var(--mg); }
+.stage { flex: 1; min-height: 0; position: relative; overflow: hidden; padding: var(--mg); touch-action: pan-y; }
 .rpage { position: absolute; inset: var(--mg); overflow: hidden; }
 #rflow {
   position: absolute; top: 0; height: 100%; color: var(--ink);
@@ -249,7 +249,30 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   background: linear-gradient(to left, var(--pg3), transparent 10%); }
 #reader[data-dirmode="h"] .gutterfx { background: linear-gradient(to right, var(--pg3), transparent 10%); }
 
+/* ページの継ぎ目。指でずらしている間だけ、紙の端らしい影を出す。
+   本文は1本の流れなので、ずらせば隣のページがそのまま見える。 */
+.seam {
+  position: absolute; top: 0; bottom: 0; width: 64px; margin-left: -32px;
+  pointer-events: none; opacity: 0; left: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ink) 7%, transparent) 42%,
+    color-mix(in srgb, var(--ink) 16%, transparent) 49%,
+    color-mix(in srgb, #fff 34%, transparent) 51%,
+    transparent 100%);
+}
+#reader[data-dark="1"] .seam {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(0,0,0,.30) 42%,
+    rgba(0,0,0,.46) 49%,
+    color-mix(in srgb, var(--ink) 22%, transparent) 51%,
+    transparent 100%);
+}
+#reader:not([data-anim="turn"]) .seam { display: none; }
+
 .zones { position: absolute; inset: 0; display: flex; }
+.zones button { touch-action: pan-y; }
 .zones button { flex: 1; }
 .rfoot {
   flex: 0 0 auto; display: flex; justify-content: space-between; gap: 12px;

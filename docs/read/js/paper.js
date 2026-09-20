@@ -29,7 +29,7 @@ export const MOODS = {
 };
 
 export function defaults() {
-  return Object.assign({ mood: 'wa_v', anim: 'fade' }, MOODS.wa_v.s);
+  return Object.assign({ mood: 'wa_v', anim: 'turn' }, MOODS.wa_v.s);
 }
 
 // 触れる値の一覧。設定画面はこの表から組み立てる。

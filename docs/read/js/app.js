@@ -941,6 +941,7 @@ const R = {
   book: null, chapters: [], ch: 0, pager: null,
   open: false, turnAt: 0, saveT: null, selTimer: null,
   off: 0,   // 落ち着いた時点の文字位置。組み直しのときはここへ戻す
+  drag: null, dragged: false,
 };
 
 function readerEls() {
@@ -1116,6 +1117,75 @@ function tocOpen() {
   });
 }
 
+// 指に追従してページをずらす。
+// 本文は1本の流れなので、ずらした分だけ隣のページがそのまま見える。
+// 離したところで「送る」か「戻す」かを決める。
+const DRAG_START = 10;        // これだけ横に動いたらドラッグとみなす
+const COMMIT_RATIO = 0.22;    // 版面の何割ずらしたら送るか
+const COMMIT_SPEED = 0.45;    // 速く払ったときは、ずれが小さくても送る（px/ms）
+
+function seamAt(dx, W) {
+  const e = readerEls();
+  const seam = $('#seam');
+  if (!seam) return;
+  if (!dx) { seam.style.opacity = '0'; return; }
+  seam.style.left = (dx > 0 ? dx : W + dx) + 'px';
+  seam.style.opacity = Math.min(1, Math.abs(dx) / (W * 0.5)).toFixed(2);
+}
+
+function dragStart(ev) {
+  if (!R.open || !R.pager) return;
+  if (S.paper.anim !== 'turn') return;     // 「めくる」のときだけ指で送る
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+  if (!$('#rtop').hidden || !$('#toc').hidden) return;      // 操作を出している間は送らない
+  const sel = getSelection();
+  if (sel && !sel.isCollapsed) return;                      // 文字を選んでいる最中は触らない
+  R.drag = { id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, dx: 0, on: false, t: performance.now(), lx: ev.clientX, v: 0 };
+}
+
+function dragMove(ev) {
+  const d = R.drag;
+  if (!d || ev.pointerId !== d.id || !R.pager) return;
+  const dx = ev.clientX - d.x0;
+  const dy = ev.clientY - d.y0;
+  if (!d.on) {
+    if (Math.abs(dx) < DRAG_START || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    d.on = true;
+    R.dragged = true;
+  }
+  const now = performance.now();
+  const dt = now - d.t;
+  if (dt > 0) d.v = (ev.clientX - d.lx) / dt;
+  d.t = now; d.lx = ev.clientX;
+  d.dx = dx;
+  R.pager.drag(dx);
+  seamAt(dx, R.pager.W);
+  ev.preventDefault();
+}
+
+async function dragEnd(ev) {
+  const d = R.drag;
+  R.drag = null;
+  if (!d || !d.on || !R.pager) { if (d) R.dragged = false; return; }
+  const W = R.pager.W;
+  const far = Math.abs(d.dx) > W * COMMIT_RATIO;
+  const fast = Math.abs(d.v) > COMMIT_SPEED;
+  seamAt(0, W);
+  R.pager.endDrag();
+
+  if (far || fast) {
+    // 縦組みは右へ払うと先へ進む（右から左へ読むため）。横組みは逆。
+    const fwd = R.pager.dir === 'v' ? d.dx > 0 : d.dx < 0;
+    await turn(fwd ? 1 : -1);
+    // turn() は端で何もせず返ることがある。そのときずれたままになるので、
+    // どの道を通っても最後に正しい位置へ戻す。
+    if (R.pager) R.pager.paint();
+  } else {
+    R.pager.paint();   // 戻す
+  }
+  setTimeout(() => { R.dragged = false; }, 60);
+}
+
 function hideUI() { const e = readerEls(); e.top.hidden = e.bot.hidden = true; }
 function toggleUI() {
   const e = readerEls();
@@ -1151,7 +1221,10 @@ function buildReadSheet() {
     '<div class="rhint">紙の目は強くしても読みやすくはなりません。文字と地の差が縮むだけです。効くのは、効いていると気づかない程度までです。' +
       '暗い紙にのせると画面が真っ黒でなくなるので、有機 EL の省電力は効かなくなります。</div>' +
     '<div class="rsep"></div>' +
-    '<div class="ctl"><span class="lbl">ページ送り</span>' + opts('g-anim', { none: { label: 'なし' }, fade: { label: '薄く' } }, s.anim) + '</div>' +
+    '<div class="ctl"><span class="lbl">ページ送り</span>' +
+      opts('g-anim', { none: { label: 'なし' }, fade: { label: '薄く' }, turn: { label: 'めくる' } }, s.anim) + '</div>' +
+    '<div class="rhint">「めくる」にすると、指で左右にずらせます。' +
+      'ずらした分だけ隣のページが見え、離すと送るか戻るかが決まります。</div>' +
     '<div class="ctl" style="gap:8px;padding-top:12px">' +
       '<button class="rbtn" id="g-reset">既定に戻す</button>' +
       '<button class="rbtn" id="g-close">閉じる</button></div>';
@@ -1495,6 +1568,7 @@ async function boot() {
   // 読書画面
   const uiOpen = () => !$('#rtop').hidden || !$('#toc').hidden;
   const z = (which) => async () => {
+    if (R.dragged) return;   // 指でずらした直後のタップは送らない
     // 操作を出している間は、どこを触っても片づけるだけ。送らない。
     if (uiOpen()) { $('#toc').hidden = true; hideUI(); return; }
     // 縦組みは右から左へ進むので、左のタップが「次」になる
@@ -1503,7 +1577,17 @@ async function boot() {
   };
   $('#z-a').onclick = z('a');
   $('#z-b').onclick = z('b');
-  $('#z-ui').onclick = () => { if (!$('#toc').hidden) { $('#toc').hidden = true; hideUI(); return; } toggleUI(); };
+  $('#z-ui').onclick = () => {
+    if (R.dragged) return;
+    if (!$('#toc').hidden) { $('#toc').hidden = true; hideUI(); return; }
+    toggleUI();
+  };
+
+  const stage = $('#stage');
+  stage.addEventListener('pointerdown', dragStart);
+  stage.addEventListener('pointermove', dragMove, { passive: false });
+  stage.addEventListener('pointerup', dragEnd);
+  stage.addEventListener('pointercancel', dragEnd);
   $('#r-close').onclick = closeReader;
   $('#r-toc').onclick = tocOpen;
   $('#sel-note').onclick = saveSelection;
