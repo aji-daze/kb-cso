@@ -1,0 +1,30 @@
+{
+  "name": "栞",
+  "short_name": "栞",
+  "description": "読むための画面と読んだ記録を1つにした、個人用の読書アプリ",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "lang": "ja",
+  "dir": "ltr",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        { "name": "file", "accept": ["application/epub+zip", "text/plain", "text/markdown", ".epub", ".md", ".txt"] }
+      ]
+    }
+  }
+}
