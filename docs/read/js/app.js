@@ -606,8 +606,7 @@ function aozoraSheet() {
         } catch (e) {
           msg.innerHTML = e.notBuilt
             ? '<b style="color:var(--danger)">目録がまだ作られていません。</b>\n' +
-              'GitHub の Actions で「aozora-index」を一度動かすと作られます。\n' +
-              '（月1回の自動更新も入れてあります）'
+              'GitHub の Actions で「aozora-index」を一度動かすと作られます。'
             : '<b style="color:var(--danger)">読み込めませんでした。</b>\n' + esc(e.message);
           $('#az-get', box).disabled = false;
         }
@@ -615,26 +614,41 @@ function aozoraSheet() {
       return;
     }
 
-    const when = new Date(info.at);
     box.innerHTML =
       '<label class="field"><span>作者名・作品名で探す（目録 ' + info.n.toLocaleString() + '作品）</span>' +
-      '<input type="text" id="az-q" placeholder="例: 宮沢賢治 銀河" autocomplete="off"></label>' +
+      '<input type="text" id="az-q" placeholder="例: 有島武郎／銀河" autocomplete="off"></label>' +
       '<div id="az-hit"></div>' +
-      '<div style="font-size:11.5px;color:var(--sub);margin-top:12px;line-height:1.7">' +
-      '目録の作成: ' + when.getFullYear() + '/' + (when.getMonth() + 1) + '/' + when.getDate() + '</div>' +
-      '<div class="actions"><button class="btn sm ghost" id="az-re">目録を入れ直す</button></div>';
+      '<div class="actions" style="margin-top:14px"><button class="btn sm ghost" id="az-re">目録を入れ直す</button></div>';
 
     const q = $('#az-q', box), hit = $('#az-hit', box);
     let t = null;
     q.oninput = () => {
       clearTimeout(t);
       t = setTimeout(async () => {
-        const rows = await Aozora.search(q.value, 40);
-        if (!rows || !rows.length) { hit.innerHTML = q.value.trim() ? '<div class="empty">見つかりません</div>' : ''; return; }
-        hit.innerHTML = rows.map((r, i) =>
-          '<button class="item" data-i="' + i + '"><span class="mark">·</span><span><b>' + esc(r.title) + '</b>' +
-          '<span>' + esc(r.author) + '</span></span></button>').join('');
-        $$('.item', hit).forEach((b) => { b.onclick = () => aozoraGet(rows[+b.dataset.i]); });
+        const v = q.value.trim();
+        if (!v) { hit.innerHTML = ''; return; }
+        const [authors, works] = await Promise.all([Aozora.searchAuthors(v), Aozora.search(v)]);
+        if ((!authors || !authors.length) && (!works || !works.length)) {
+          hit.innerHTML = '<div class="empty">見つかりません</div>';
+          return;
+        }
+        const shown = works.slice(0, 80);
+        hit.innerHTML =
+          (authors.length
+            ? '<div class="h">作家 ' + authors.length + '人</div>' +
+              authors.slice(0, 12).map((a, i) =>
+                '<button class="item" data-a="' + i + '"><span class="mark">▸</span><span>' +
+                '<b>' + esc(a.author) + '</b><span>' + a.n + '件　まとめて落とせます</span></span></button>').join('')
+            : '') +
+          (works.length
+            ? '<div class="h">作品 ' + works.length + '件' +
+              (works.length > shown.length ? '（先頭 ' + shown.length + '件）' : '') + '</div>' +
+              shown.map((r, i) =>
+                '<button class="item" data-w="' + i + '"><span class="mark">·</span><span>' +
+                '<b>' + esc(r.title) + '</b><span>' + esc(r.author) + '</span></span></button>').join('')
+            : '');
+        $$('[data-a]', hit).forEach((b2) => { b2.onclick = () => aozoraAuthor(authors[+b2.dataset.a].author); });
+        $$('[data-w]', hit).forEach((b2) => { b2.onclick = () => aozoraGet(shown[+b2.dataset.w]); });
       }, 200);
     };
     q.focus();
@@ -642,16 +656,83 @@ function aozoraSheet() {
   });
 }
 
-// 1作品ぶんを落とす。青空文庫のサーバーはアプリから直接読めないので、
-// ブラウザに落としてもらって、そのファイルを取り込む。
+// 作家ごとの一覧。ここから全作品をまとめて落とせる。
+async function aozoraAuthor(author) {
+  const rows = await Aozora.byAuthor(author);
+  sheet('<h3>' + esc(author) + '</h3>' +
+    '<div style="color:var(--sub);font-size:12.5px;margin-bottom:10px">' + rows.length + '件</div>' +
+    '<div class="actions" style="margin:0 0 10px">' +
+    '<button class="btn sm primary" id="aa-all">' + rows.length + '件まとめて落とす</button></div>' +
+    '<div id="aa-list">' + rows.map((r, i) =>
+      '<button class="item" data-i="' + i + '"><span class="mark">·</span><span><b>' + esc(r.title) + '</b>' +
+      (r.txt ? '' : '<span>テキスト版なし</span>') + '</span></button>').join('') + '</div>',
+    (el) => {
+      $$('.item[data-i]', el).forEach((b) => { b.onclick = () => aozoraGet(rows[+b.dataset.i]); });
+      $('#aa-all', el).onclick = () => aozoraBulk(rows);
+    });
+}
+
+// まとめて落とす。
+// 青空文庫のサーバーはアプリから直接読めない（CORS）ので、ブラウザに落としてもらう。
+// 窓を開くと途中で止められるため、隠しフレームで1件ずつ流す。
+async function aozoraBulk(rows) {
+  const list = rows.filter((r) => r.txt || r.html);
+  if (!list.length) { toast('落とせる版がありません'); return; }
+
+  const ok = await confirmSheet(
+    list.length + '件をまとめて落としますか',
+    '<b>本文はアプリの外に落ちます。</b>落ちきったら「本を入れる」→「ファイルを選ぶ」で、' +
+    '落ちてきたファイルを<b>まとめて選んで</b>ください（複数選べます）。<br><br>' +
+    'ブラウザが「複数のファイルをダウンロードしますか」と一度聞いてきます。許可してください。<br>' +
+    'おおよそ ' + Math.ceil(list.length * 0.3) + ' 秒かかります。',
+    list.length + '件を落とす');
+  if (!ok) return;
+
+  // 確認の画面が閉じたあとで、進み具合を出す先を作り直す
+  sheet('<h3>落としています</h3>' +
+    '<div id="bk-msg" style="font-size:13px;color:var(--sub);line-height:1.8;min-height:52px"></div>' +
+    '<div class="prog" style="margin:10px 0"><i id="bk-bar" style="width:0%"></i></div>' +
+    '<div class="actions" id="bk-act"></div>');
+  const msg = $('#bk-msg'), bar = $('#bk-bar');
+
+  const frames = [];
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (msg) msg.textContent = (i + 1) + ' / ' + list.length + '　' + r.title;
+    if (bar) bar.style.width = Math.round((i + 1) / list.length * 100) + '%';
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = r.txt || r.html;
+    document.body.appendChild(f);
+    frames.push(f);
+    // 役目が済んだ枠は個別に片づける。全部抱えたままにしない。
+    setTimeout(() => { f.remove(); }, 8000);
+    await new Promise((res) => setTimeout(res, 300));
+  }
+
+  if (msg) {
+    msg.innerHTML = '<b style="color:var(--tx)">' + list.length + '件を落としました。</b><br>' +
+      '「ファイルを選ぶ」で、落ちてきたファイルをまとめて選んでください。';
+  }
+  const act = $('#bk-act');
+  if (act) {
+    act.innerHTML = '<button class="btn" id="bk-c">閉じる</button>' +
+      '<button class="btn primary" id="bk-pick">ファイルを選ぶ</button>';
+    $('#bk-c', act).onclick = closeSheet;
+    $('#bk-pick', act).onclick = () => { closeSheet(); $('#pick').click(); };
+  }
+  toast(list.length + '件を落としました');
+}
+
+// 1作品ぶんを落とす。
 function aozoraGet(row) {
   const url = row.txt || row.html;
   sheet('<h3>' + esc(row.title) + '</h3>' +
     '<p style="color:var(--sub);font-size:12.5px;margin:0 0 12px">' + esc(row.author) + '</p>' +
     '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
-    '下のボタンでファイルが落ちてきます（zip のまま取り込めます）。<br>' +
+    '下のボタンでファイルが落ちてきます。<br>' +
     'そのあと「本を入れる」→<b style="color:var(--tx)">ファイルを選ぶ</b>で、落ちてきたファイルを選んでください。<br>' +
-    'ルビと縦組みはそのまま出ます。</p>' +
+    'zip のままでも、展開した .txt でも取り込めます。</p>' +
     '<div class="actions"><button class="btn" id="g-c">閉じる</button>' +
     '<button class="btn primary" id="g-dl">落とす</button></div>' +
     '<div class="actions" style="margin-top:8px"><button class="btn sm ghost" id="g-pick">落としたファイルを選ぶ</button></div>',
@@ -663,20 +744,6 @@ function aozoraGet(row) {
       };
       $('#g-pick', el).onclick = () => { closeSheet(); $('#pick').click(); };
     });
-}
-
-async function getAozora(row) {
-  toast('落としています…');
-  try {
-    const w = await Aozora.fetchWork(row.url);
-    await addBook({
-      title: w.title || row.title, author: w.author || row.author,
-      kind: 'aozora', vertical: true, source: row.url,
-    }, w.chapters);
-    closeSheet(); render(); toast('「' + (w.title || row.title) + '」を入れました');
-  } catch (e) {
-    toast('取れませんでした: ' + e.message);
-  }
 }
 
 // ================================================================ フォルダを開く

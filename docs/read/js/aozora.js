@@ -55,20 +55,47 @@ export async function indexInfo() {
 export async function dropIndex() { _cache = null; return DB.del('aozora', 'index'); }
 
 // 行の形： [作品ID, 作品名, 読み, 著者, テキストURL, HTMLのURL]
-export async function search(q, limit) {
+const toWork = (r) => ({ id: r[0], title: r[1], kana: r[2], author: r[3], txt: r[4], html: r[5] });
+
+function match(r, words) {
+  const hay = r[1] + '\u0000' + r[2] + '\u0000' + r[3];
+  for (const w of words) if (!hay.includes(w)) return false;
+  return true;
+}
+const words = (q) => String(q || '').trim().split(/\s+/).filter(Boolean);
+
+// 当たったものを全部返す。打ち切らない（作家1人で50件を超えることがある）。
+export async function search(q) {
   const rows = await index();
   if (!rows) return null;
-  const words = String(q || '').trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return [];
-  const hit = [];
+  const w = words(q);
+  if (!w.length) return [];
+  return rows.filter((r) => match(r, w)).map(toWork);
+}
+
+// 著者名そのものに当たったものを、作家ごとにまとめる
+export async function searchAuthors(q) {
+  const rows = await index();
+  if (!rows) return null;
+  const w = words(q);
+  if (!w.length) return [];
+  const m = new Map();
   for (const r of rows) {
-    const hay = r[1] + '\u0000' + r[2] + '\u0000' + r[3];
+    const a = r[3];
+    if (!a) continue;
     let ok = true;
-    for (const w of words) if (!hay.includes(w)) { ok = false; break; }
-    if (ok) {
-      hit.push({ id: r[0], title: r[1], author: r[3], txt: r[4], html: r[5] });
-      if (hit.length >= (limit || 60)) break;
-    }
+    for (const x of w) if (!a.includes(x)) { ok = false; break; }
+    if (!ok) continue;
+    if (!m.has(a)) m.set(a, 0);
+    m.set(a, m.get(a) + 1);
   }
-  return hit;
+  return [...m.entries()].map(([author, n]) => ({ author, n })).sort((x, y) => y.n - x.n);
+}
+
+// ある作家の作品をすべて返す
+export async function byAuthor(author) {
+  const rows = await index();
+  if (!rows) return [];
+  return rows.filter((r) => r[3] === author).map(toWork)
+    .sort((a, b) => a.title.localeCompare(b.title, 'ja'));
 }
