@@ -148,6 +148,8 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   flex: 1; height: 4px; border-radius: 2px;
   background: color-mix(in srgb, var(--tx) 20%, transparent);
 }
+/* <picture> は箱を作らせない。中の img が親の中で今までどおりに並ぶ。 */
+picture { display: contents; }
 .shelfcase .bear {
   position: absolute; right: 2px; bottom: 100%; margin-bottom: -7px;
   width: 96px; height: auto; pointer-events: none; user-select: none;

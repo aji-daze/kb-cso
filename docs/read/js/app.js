@@ -272,7 +272,7 @@ function remainLabel(b, m) {
   return mins >= 60 ? Math.floor(mins / 60) + '時間' + (mins % 60 ? (mins % 60) + '分' : '') : mins + '分';
 }
 
-// ================================================================ 画面: つづき（ホーム）
+// ================================================================ 画面: ホーム
 // 日替わりで同じ並びになるように、日付から決まる値でかき混ぜる。
 function dayKey() {
   const d = new Date();
@@ -301,6 +301,12 @@ function spineHTML(b) {
     '<span>' + esc(label) + '</span></span></button>';
 }
 
+// しろくま。動く絵（WebP）を出すが、動きを嫌う設定の端末では静止画に落とす。
+function bearHTML(mod) {
+  return '<picture><source media="(prefers-reduced-motion: reduce)" srcset="./art/bear.png">' +
+    '<img class="bear' + mod + '" src="./art/bear.webp" alt=""></picture>';
+}
+
 // 今日の一節の1枚。棚が空でも出す（蔵書と関係なく決まるため）。
 function quoteCard(q) {
   return '<button class="quote" id="n-quote">' +
@@ -320,7 +326,7 @@ async function renderNow() {
       '<div style="display:flex;flex-direction:column;gap:10px;align-items:center">' +
       '<button class="btn primary wide" id="n-add">本を入れる</button>' +
       '<button class="btn wide" id="n-sample">見本を入れて試す</button></div>' +
-      '<img class="bear solo" src="./art/bear.png" alt="">';
+      bearHTML(' solo');
     $('#n-quote', el).onclick = () => aozoraSheet(q.work);
     $('#n-add', el).onclick = addSheet;
     $('#n-sample', el).onclick = addSample;
@@ -361,7 +367,7 @@ async function renderNow() {
 
       '<section class="shelfcase">' +
         '<div class="cap"><span>本棚</span><em>' + S.books.length + '冊</em>' +
-          '<i class="rail"></i><img class="bear" src="./art/bear.png" alt=""></div>' +
+          '<i class="rail"></i>' + bearHTML('') + '</div>' +
         '<div class="spines">' +
           order.map(spineHTML).join('') +
         '</div>' +
