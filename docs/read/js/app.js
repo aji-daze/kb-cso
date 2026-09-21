@@ -384,6 +384,23 @@ async function renderNow() {
 }
 
 // ================================================================ 画面: 棚
+// 表紙を並べる。書影のない本は、題名と著者を刷った表紙をその場で作る。
+function coverCell(b, m) {
+  const p = Math.round(progressOf(b, m) * 100);
+  const img = S.covers.has(b.id);
+  const left = remainLabel(b, m);
+  return '<button class="bk' + (b.status === 'done' ? ' done' : '') + '" data-id="' + b.id + '">' +
+    '<span class="bc' + (img ? ' has-img' : '') + '" style="' + coverStyle(b) + '">' +
+      '<span class="bt">' + esc(b.title) + '</span>' +
+      (b.author ? '<span class="ba">' + esc(b.author) + '</span>' : '') +
+      (b.status === 'done' ? '<span class="chk" aria-hidden="true">✓</span>' : '') +
+    '</span>' +
+    '<span class="prog"' + (p ? '' : ' hidden') + '><i style="width:' + p + '%"></i></span>' +
+    '<span class="bn">' + esc(b.title) + '</span>' +
+    '<span class="bs">' + (b.status === 'done' ? '読了' : (left || esc(KINDS[b.kind] || ''))) + '</span>' +
+  '</button>';
+}
+
 async function renderShelf() {
   const el = $('#v-shelf');
   const list = S.books.filter((b) => b.status === S.shelfTab);
@@ -396,21 +413,14 @@ async function renderShelf() {
         '<button data-k="' + k + '" aria-pressed="' + (S.shelfTab === k) + '">' + v + '</button>').join('') +
     '</div>' +
     (list.length
-      ? list.map((b) => {
-          const m = marks.get(b.id);
-          const p = Math.round(progressOf(b, m) * 100);
-          return '<button class="row' + (b.status === 'done' ? ' done' : '') + '" data-id="' + b.id + '">' +
-            '<span class="sc" style="' + coverStyle(b) + '"></span>' +
-            '<span class="rt"><b>' + esc(b.title) + '</b>' +
-            '<span>' + (b.author ? esc(b.author) + ' · ' : '') + esc(KINDS[b.kind] || '') + '</span>' +
-            '<span class="prog"><i style="width:' + p + '%"></i></span></span>' +
-            '<span class="rmin">' + esc(remainLabel(b, m)) + '</span></button>';
-        }).join('')
+      ? '<div class="grid">' + list.map((b) => coverCell(b, marks.get(b.id))).join('') + '</div>'
       : '<div class="empty">ここには何もありません</div>') +
     '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>';
 
-  $$('#s-seg button', el).forEach((b) => { b.onclick = () => { S.shelfTab = b.dataset.k; renderShelf(); }; });
-  $$('.row', el).forEach((r) => { r.onclick = () => bookSheet(r.dataset.id); });
+  $$('#s-seg button', el).forEach((b) => {
+    b.onclick = () => { S.shelfTab = b.dataset.k; remember(); renderShelf(); };
+  });
+  $$('.bk', el).forEach((r) => { r.onclick = () => bookSheet(r.dataset.id); });
   $('#s-add', el).onclick = addSheet;
 }
 
@@ -1639,6 +1649,20 @@ async function minchoPanel(box) {
 }
 
 // ---------------------------------------------------------------- 画面切替
+// 下に引っ張って更新したときに、見ていた画面へ戻ってくるようにする。
+// 端末ごとの見た目の話なので localStorage に置く。読めない環境でも困らない。
+const VIEWS = ['now', 'shelf', 'notes', 'log'];
+function remember() {
+  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab); } catch {}
+}
+function recallView() {
+  let v = '';
+  try { v = localStorage.getItem('pocha.view') || ''; } catch {}
+  const [view, tab] = v.split('/');
+  if (VIEWS.includes(view)) S.view = view;
+  if (STATUS[tab]) S.shelfTab = tab;
+}
+
 function render() {
   $('#v-now').hidden = S.view !== 'now';
   $('#v-shelf').hidden = S.view !== 'shelf';
@@ -1679,9 +1703,12 @@ async function boot() {
   Font.install().catch(() => {});
   await Stats.load();
   await loadBooks();
+  recallView();
   render();
 
-  $$('#tabs button').forEach((b) => { b.onclick = () => { S.view = b.dataset.view; render(); }; });
+  $$('#tabs button').forEach((b) => {
+    b.onclick = () => { S.view = b.dataset.view; remember(); render(); };
+  });
   $('#btn-gear').onclick = gearSheet;
   $('#btn-search').onclick = searchSheet;
   // input を空にするのは取り込みが終わってから。先に空にすると

@@ -195,16 +195,52 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 .seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; margin-bottom: 12px; }
 .seg button { flex: 1; padding: 8px 0; font-size: 12.5px; color: var(--sub); }
 .seg button[aria-pressed="true"] { background: var(--surface2); color: var(--tx); font-weight: 600; }
-.row { display: flex; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--line); align-items: center; text-align: left; width: 100%; }
-.row:hover { background: var(--surface); }
-.row .sc { width: 40px; height: 58px; border-radius: 2px; flex: 0 0 auto; box-shadow: var(--shadow); background-size: cover; background-position: center; }
-.row .rt { flex: 1; min-width: 0; }
-.row .rt b { display: block; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .rt span { font-size: 11.5px; color: var(--sub); }
 .prog { height: 2px; background: var(--line); margin-top: 7px; border-radius: 2px; overflow: hidden; }
 .prog i { display: block; height: 100%; background: var(--acc); }
-.row .rmin { font-size: 11px; color: var(--sub); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-.row.done { opacity: .55; }
+
+/* 表紙を並べる。書影のない本は、題名と著者を刷った表紙をその場で作る。 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 22px 13px; }
+@media (min-width: 600px) { .grid { grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 26px 16px; } }
+/* button は中身を上下中央に寄せるので、段の高さが揃ったときに表紙が下がる。
+   縦並びの flex にして、上詰めを明示する。 */
+.bk {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+  width: 100%; padding: 0; background: none; text-align: left;
+}
+.bc {
+  display: block; position: relative; width: 100%; aspect-ratio: 2 / 3;
+  border-radius: 2px; overflow: hidden; box-shadow: var(--shadow);
+  background-size: cover; background-position: center; color: #ece8e0;
+}
+.bc::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+  background: linear-gradient(90deg, rgba(0,0,0,.4), transparent);
+}
+.bc .bt {
+  position: absolute; left: 11px; right: 10px; top: 13px;
+  font-size: 11.5px; line-height: 1.5; font-weight: 600; letter-spacing: .01em;
+  text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bc .ba {
+  position: absolute; left: 11px; right: 10px; bottom: 11px;
+  font-size: 9.5px; opacity: .8; text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.bc.has-img .bt, .bc.has-img .ba { display: none; }
+.bc .chk {
+  position: absolute; right: 6px; top: 6px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--acc); color: var(--on-acc); font-size: 11px; line-height: 18px; text-align: center;
+}
+.bk:hover .bc { outline: 2px solid var(--acc); outline-offset: -1px; }
+.bk .prog { display: block; margin-top: 7px; }
+.bk .prog[hidden] { display: none; }
+.bn {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 11.5px; line-height: 1.45; color: var(--tx); margin-top: 6px;
+}
+.bs { display: block; font-size: 10px; color: var(--sub); margin-top: 2px; }
+.bk.done .bc { opacity: .68; }
 
 /* ---------- 抜き書き ---------- */
 .recall { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 13px; background: var(--surface2); margin-bottom: 14px; }
