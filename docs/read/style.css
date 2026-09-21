@@ -93,22 +93,85 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 #tabs svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 #tabs button[aria-current="true"] svg { stroke: var(--acc); fill: color-mix(in srgb, var(--acc) 22%, transparent); stroke-width: 2.1; }
 
-/* ---------- つづき ---------- */
-.now { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 18px 0 8px; text-align: center; }
-.cover {
-  width: 152px; aspect-ratio: 2/3; border-radius: 2px; box-shadow: var(--shadow-lg);
-  display: flex; align-items: flex-end; padding: 12px; color: #e9e5dd; position: relative;
-  overflow: hidden; background-size: cover; background-position: center;
+/* ---------- つづき（ホーム） ---------- */
+.home { display: flex; flex-direction: column; }
+
+/* 今日の一節 */
+.quote {
+  border-left: 2px solid var(--acc); padding: 2px 0 2px 14px; text-align: left;
 }
-.cover::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: linear-gradient(90deg, rgba(0,0,0,.35), transparent); }
-.cover span { font-size: 14px; line-height: 1.45; text-align: left; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
-.cover.has-img span { display: none; }
-.now h2 { margin: 0; font-size: 19px; font-weight: 600; }
-.now .meta { color: var(--sub); font-size: 12.5px; margin-top: 3px; }
-.lastline {
-  font-size: 13px; color: var(--sub); line-height: 1.85; border-left: 2px solid var(--line);
-  padding-left: 12px; text-align: left; width: 100%; max-width: 420px;
+.quote .lbl { font-size: 10.5px; letter-spacing: .12em; color: var(--acc); margin-bottom: 7px; }
+.quote q { display: block; quotes: none; font-size: 15px; line-height: 1.95; color: var(--tx); }
+.quote q.none { color: var(--sub); font-size: 13.5px; }
+.quote .src { font-size: 11.5px; color: var(--sub); margin-top: 8px; }
+
+/* つづきの本 */
+.cont {
+  display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
+  margin-top: 22px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); color: var(--tx); box-shadow: var(--shadow);
 }
+.cont:hover { border-color: var(--acc); }
+.cont .cv {
+  flex: none; width: 46px; height: 69px; border-radius: 2px; position: relative;
+  background-size: cover; background-position: center;
+}
+.cont .cv::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: linear-gradient(90deg, rgba(0,0,0,.35), transparent);
+}
+.cont .ct { flex: 1; min-width: 0; }
+.cont .lbl { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--acc); }
+.cont b {
+  display: block; font-size: 15.5px; font-weight: 600; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cont .meta {
+  display: block; font-size: 11.5px; color: var(--sub); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cont .go { flex: none; color: var(--sub); font-size: 15px; }
+
+/* 本棚 */
+.shelfcase { position: relative; margin-top: 84px; }
+/* 棚の天板。しろくまはここに座っている。 */
+.shelfcase .cap {
+  position: relative; display: flex; align-items: center; gap: 9px; margin-bottom: 11px;
+  font-size: 12.5px; color: var(--sub); letter-spacing: .06em;
+}
+.shelfcase .cap em { font-style: normal; font-size: 11px; color: var(--ph); }
+.shelfcase .cap .rail {
+  flex: 1; height: 4px; border-radius: 2px;
+  background: color-mix(in srgb, var(--tx) 20%, transparent);
+}
+.shelfcase .bear {
+  position: absolute; right: 2px; bottom: 100%; margin-bottom: -7px;
+  width: 96px; height: auto; pointer-events: none; user-select: none;
+  filter: drop-shadow(0 8px 14px rgba(0,0,0,.20));
+}
+.bear.solo { display: block; width: 168px; margin: 26px auto 0; opacity: .95; }
+
+.spines {
+  display: flex; flex-wrap: wrap; align-items: flex-end; align-content: flex-start;
+  column-gap: 3px; row-gap: 7px; padding: 0 10px 7px; border-radius: var(--r-sm);
+  background:
+    repeating-linear-gradient(to bottom,
+      transparent 0 150px,
+      color-mix(in srgb, var(--tx) 26%, transparent) 150px 152px,
+      color-mix(in srgb, var(--tx) 9%, transparent) 152px 157px);
+}
+.spine { height: 150px; padding: 0; background: none; display: flex; align-items: flex-end; }
+.spine .sp {
+  width: 100%; border-radius: 2px 2px 0 0; overflow: hidden; color: #eae6de;
+  display: flex; justify-content: center; align-items: center; padding: 10px 0;
+  box-shadow: inset -2px 0 4px rgba(0,0,0,.28), inset 2px 0 2px rgba(255,255,255,.07);
+}
+/* 背表紙の題名は一列に流す。入りきらないところで切る。 */
+.spine .sp > span {
+  writing-mode: vertical-rl; font-size: 10.5px; line-height: 1; letter-spacing: .02em;
+  white-space: nowrap; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,.45);
+}
+.spine:hover .sp { outline: 1.5px solid var(--acc); outline-offset: -1px; }
 .btn {
   border: 1px solid var(--line); background: var(--surface); color: var(--tx);
   padding: 11px 16px; border-radius: var(--r-sm); font-size: 14px; font-weight: 600;
@@ -119,7 +182,7 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 .btn.ghost { background: none; }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.sm { padding: 7px 11px; font-size: 12.5px; font-weight: 500; }
-.flow-row { display: flex; width: 100%; max-width: 420px; border-top: 1px solid var(--line); padding-top: 14px; }
+.flow-row { display: flex; width: 100%; max-width: 420px; margin: 26px auto 0; border-top: 1px solid var(--line); padding-top: 14px; }
 .flow-row div { flex: 1; text-align: center; }
 .flow-row b { display: block; font-size: 21px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .flow-row span { font-size: 10.5px; color: var(--sub); letter-spacing: .04em; }

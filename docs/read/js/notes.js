@@ -28,6 +28,18 @@ export async function allTags() {
   return [...m.entries()].sort((a, b) => b[1] - a[1]);
 }
 
+// 今日の一節。日付で決まる一件を返す。同じ日なら何度開いても同じものが出る。
+export async function quoteOfDay() {
+  const rows = (await DB.all('notes')).filter((r) => r.quote);
+  if (!rows.length) return null;
+  rows.sort((a, b) => a.at - b.at);
+  const d = new Date();
+  const k = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  let x = (Math.imul(k, 2654435761) ^ 0x9e3779b9) >>> 0;
+  x = Math.imul(x ^ (x >>> 15), 2246822519) >>> 0;
+  return rows[x % rows.length];
+}
+
 // 「1年前の今日」。無ければ「去年の近い日」→「いちばん古いもの」の順で降りる。
 export async function recall() {
   const rows = await DB.all('notes');

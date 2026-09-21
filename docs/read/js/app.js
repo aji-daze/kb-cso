@@ -271,44 +271,99 @@ function remainLabel(b, m) {
   return mins >= 60 ? Math.floor(mins / 60) + '時間' + (mins % 60 ? (mins % 60) + '分' : '') : mins + '分';
 }
 
-// ================================================================ 画面: つづき
+// ================================================================ 画面: つづき（ホーム）
+// 日替わりで同じ並びになるように、日付から決まる値でかき混ぜる。
+function dayKey() {
+  const d = new Date();
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+function hash32(s) {
+  let x = 2166136261;
+  for (const c of String(s)) { x ^= c.codePointAt(0); x = Math.imul(x, 16777619); }
+  return (x ^ (x >>> 15)) >>> 0;
+}
+
+// 背表紙。題名から色・幅・高さを決めるので、同じ本はいつも同じ姿になる。
+// 外側の button は高さを揃えてあり（段を等間隔にするため）、中の span だけが伸び縮みする。
+function spineHTML(b) {
+  const h = hash32(b.title || '?') % 360;
+  const s = 13 + (h % 4) * 4;
+  const w = 23 + Math.min(21, Math.round((b.chars || 12000) / 9000));
+  const ht = 122 + (hash32(b.id) % 5) * 7;
+  const bg = 'linear-gradient(100deg,hsl(' + h + ' ' + s + '% 33%),hsl(' + ((h + 26) % 360) + ' ' + s + '% 21%) 58%,hsl(' + h + ' ' + s + '% 28%))';
+  // 縦一列に流すので、入る字数で切る（背の高さ − 余白 ÷ 一字の送り）。
+  const cap = Math.max(4, Math.floor((ht - 22) / 11.2));
+  const t = [...(b.title || '')];
+  const label = t.length > cap ? t.slice(0, cap - 1).join('') + '…' : t.join('');
+  return '<button class="spine" data-id="' + b.id + '" style="width:' + w + 'px" title="' + esc(b.title) + '">' +
+    '<span class="sp" style="height:' + ht + 'px;background:' + bg + '">' +
+    '<span>' + esc(label) + '</span></span></button>';
+}
+
 async function renderNow() {
   const el = $('#v-now');
-  const reading = S.books.filter((b) => b.status === 'reading');
   if (!S.books.length) {
     el.innerHTML = '<div class="empty"><b>棚に本がありません</b>' +
       'EPUB・Markdown・テキストを取り込むか、青空文庫から落としてください。</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px;align-items:center">' +
       '<button class="btn primary wide" id="n-add">本を入れる</button>' +
-      '<button class="btn wide" id="n-sample">見本を入れて試す</button></div>';
+      '<button class="btn wide" id="n-sample">見本を入れて試す</button></div>' +
+      '<img class="bear solo" src="./art/bear.png" alt="">';
     $('#n-add', el).onclick = addSheet;
     $('#n-sample', el).onclick = addSample;
     return;
   }
 
-  let cur = null, mark = null;
+  const reading = S.books.filter((b) => b.status === 'reading');
   const lastId = await DB.setting('lastBook');
-  cur = reading.find((b) => b.id === lastId) || reading[0] || S.books[0];
-  mark = await markOf(cur.id);
+  const cur = reading.find((b) => b.id === lastId) || reading[0] || S.books[0];
+  const mark = await markOf(cur.id);
+  const pct = Math.round(progressOf(cur, mark) * 100);
+
+  // 今日の一節 — 自分の抜き書きから、日付で決まる一件を出す。
+  const q = await Notes.quoteOfDay();
+
+  // 本棚 — 日替わりの順に並べる。
+  const k = dayKey();
+  const order = S.books.slice().sort((a, b) => hash32(a.id + ':' + k) - hash32(b.id + ':' + k));
 
   const now = new Date();
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const inM = S.books.filter((b) => b.added >= mStart).length;
   const outM = S.books.filter((b) => b.finished && b.finished >= mStart).length;
-  const pct = Math.round(progressOf(cur, mark) * 100);
 
   el.innerHTML =
-    '<div class="now">' +
-      '<div class="cover' + (S.covers.has(cur.id) ? ' has-img' : '') + '" style="' + coverStyle(cur) + '"><span>' + esc(cur.title) + '</span></div>' +
-      '<div><h2>' + esc(cur.title) + '</h2><div class="meta">' +
-        (cur.author ? esc(cur.author) + ' · ' : '') + esc(KINDS[cur.kind] || '') +
-        (pct ? ' · ' + pct + '%' : '') +
-        (remainLabel(cur, mark) && !cur.manual ? ' · 残り ' + remainLabel(cur, mark) : '') +
-      '</div></div>' +
-      (mark.lastLine ? '<div class="lastline">…' + esc(mark.lastLine) + '</div>' : '') +
-      (cur.manual
-        ? '<button class="btn wide" id="n-manual">進みを書き込む</button>'
-        : '<button class="btn primary wide" id="n-open">' + (mark.pct ? '続きから読む' : '読みはじめる') + '</button>') +
+    '<div class="home">' +
+      '<section class="quote">' +
+        '<div class="lbl">今日の一節</div>' +
+        (q
+          ? '<q>' + esc(q.quote) + '</q>' +
+            '<div class="src">' + esc(q.bookTitle) + (q.chapter ? ' · ' + esc(q.chapter) : '') + '</div>'
+          : '<q class="none">' + esc(mark.lastLine || 'まだ抜き書きがありません。') + '</q>' +
+            '<div class="src">' + (mark.lastLine ? esc(cur.title) + ' · いま読んでいるところ' : '本文を長押しして選ぶと、ここに残ります') + '</div>') +
+      '</section>' +
+
+      '<button class="cont" id="n-cont">' +
+        '<span class="cv' + (S.covers.has(cur.id) ? ' has-img' : '') + '" style="' + coverStyle(cur) + '"></span>' +
+        '<span class="ct">' +
+          '<span class="lbl">' + (cur.manual ? '書きとめる' : (mark.pct ? 'つづきから' : 'はじめから')) + '</span>' +
+          '<b>' + esc(cur.title) + '</b>' +
+          '<span class="meta">' + (cur.author ? esc(cur.author) + ' · ' : '') +
+            (pct ? pct + '%' : esc(KINDS[cur.kind] || '')) +
+            (remainLabel(cur, mark) && !cur.manual ? ' · 残り ' + remainLabel(cur, mark) : '') + '</span>' +
+          '<span class="prog"><i style="width:' + pct + '%"></i></span>' +
+        '</span>' +
+        '<span class="go" aria-hidden="true">▸</span>' +
+      '</button>' +
+
+      '<section class="shelfcase">' +
+        '<div class="cap"><span>本棚</span><em>' + S.books.length + '冊</em>' +
+          '<i class="rail"></i><img class="bear" src="./art/bear.png" alt=""></div>' +
+        '<div class="spines">' +
+          order.map(spineHTML).join('') +
+        '</div>' +
+      '</section>' +
+
       '<div class="flow-row">' +
         '<div><b>' + reading.length + '</b><span>読んでいる</span></div>' +
         '<div><b>' + (inM ? '+' + inM : '0') + '</b><span>今月 入った</span></div>' +
@@ -316,8 +371,8 @@ async function renderNow() {
       '</div>' +
     '</div>';
 
-  if ($('#n-open', el)) $('#n-open', el).onclick = () => openBook(cur.id);
-  if ($('#n-manual', el)) $('#n-manual', el).onclick = () => manualSheet(cur);
+  $('#n-cont', el).onclick = () => (cur.manual ? manualSheet(cur) : openBook(cur.id));
+  $$('.spine', el).forEach((s) => { s.onclick = () => bookSheet(s.dataset.id); });
 }
 
 // ================================================================ 画面: 棚
