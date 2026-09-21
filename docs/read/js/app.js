@@ -4,6 +4,7 @@ import * as Paper from './paper.js';
 import * as Notes from './notes.js';
 import * as Stats from './stats.js';
 import * as Aozora from './aozora.js';
+import * as Quotes from './quotes.js';
 import * as Font from './font.js';
 import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
@@ -300,15 +301,27 @@ function spineHTML(b) {
     '<span>' + esc(label) + '</span></span></button>';
 }
 
+// 今日の一節の1枚。棚が空でも出す（蔵書と関係なく決まるため）。
+function quoteCard(q) {
+  return '<button class="quote" id="n-quote">' +
+    '<span class="lbl">今日の一節</span>' +
+    '<q>' + esc(q.q) + '</q>' +
+    '<span class="src">' + esc(q.by) + '『' + esc(q.work) + '』</span>' +
+  '</button>';
+}
+
 async function renderNow() {
   const el = $('#v-now');
+  const q = Quotes.ofDay();
   if (!S.books.length) {
-    el.innerHTML = '<div class="empty"><b>棚に本がありません</b>' +
+    el.innerHTML = quoteCard(q) +
+      '<div class="empty"><b>棚に本がありません</b>' +
       'EPUB・Markdown・テキストを取り込むか、青空文庫から落としてください。</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px;align-items:center">' +
       '<button class="btn primary wide" id="n-add">本を入れる</button>' +
       '<button class="btn wide" id="n-sample">見本を入れて試す</button></div>' +
       '<img class="bear solo" src="./art/bear.png" alt="">';
+    $('#n-quote', el).onclick = () => aozoraSheet(q.work);
     $('#n-add', el).onclick = addSheet;
     $('#n-sample', el).onclick = addSample;
     return;
@@ -319,9 +332,6 @@ async function renderNow() {
   const cur = reading.find((b) => b.id === lastId) || reading[0] || S.books[0];
   const mark = await markOf(cur.id);
   const pct = Math.round(progressOf(cur, mark) * 100);
-
-  // 今日の一節 — 自分の抜き書きから、日付で決まる一件を出す。
-  const q = await Notes.quoteOfDay();
 
   // 本棚 — 日替わりの順に並べる。
   const k = dayKey();
@@ -334,14 +344,7 @@ async function renderNow() {
 
   el.innerHTML =
     '<div class="home">' +
-      '<section class="quote">' +
-        '<div class="lbl">今日の一節</div>' +
-        (q
-          ? '<q>' + esc(q.quote) + '</q>' +
-            '<div class="src">' + esc(q.bookTitle) + (q.chapter ? ' · ' + esc(q.chapter) : '') + '</div>'
-          : '<q class="none">' + esc(mark.lastLine || 'まだ抜き書きがありません。') + '</q>' +
-            '<div class="src">' + (mark.lastLine ? esc(cur.title) + ' · いま読んでいるところ' : '本文を長押しして選ぶと、ここに残ります') + '</div>') +
-      '</section>' +
+      quoteCard(q) +
 
       '<button class="cont" id="n-cont">' +
         '<span class="cv' + (S.covers.has(cur.id) ? ' has-img' : '') + '" style="' + coverStyle(cur) + '"></span>' +
@@ -371,6 +374,11 @@ async function renderNow() {
       '</div>' +
     '</div>';
 
+  // 一節を押したら、その作品へ。棚にあれば開き、無ければ青空文庫で探す。
+  $('#n-quote', el).onclick = () => {
+    const owned = S.books.find((b) => b.title === q.work);
+    if (owned) openBook(owned.id); else aozoraSheet(q.work);
+  };
   $('#n-cont', el).onclick = () => (cur.manual ? manualSheet(cur) : openBook(cur.id));
   $$('.spine', el).forEach((s) => { s.onclick = () => bookSheet(s.dataset.id); });
 }
@@ -640,7 +648,7 @@ async function bookSheet(id) {
 }
 
 // ================================================================ 青空文庫
-function aozoraSheet() {
+function aozoraSheet(preset) {
   sheet('<h3>青空文庫</h3><div id="az"></div>', async (el) => {
     const box = $('#az', el);
     const info = await Aozora.indexInfo();
@@ -706,6 +714,7 @@ function aozoraSheet() {
         $$('[data-w]', hit).forEach((b2) => { b2.onclick = () => aozoraGet(shown[+b2.dataset.w]); });
       }, 200);
     };
+    if (preset) { q.value = preset; q.dispatchEvent(new Event('input')); }
     q.focus();
     $('#az-re', box).onclick = async () => { await Aozora.dropIndex(); aozoraSheet(); };
   });
