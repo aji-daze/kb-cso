@@ -49,6 +49,30 @@ jobs:
           path: android/out/*.apk
           if-no-files-found: error
 
+      # APK を apk-build ブランチに1ファイルだけ置く。
+      # Actions の成果物はログインと zip 展開が要るため、端末から直接落とせるようにするもの。
+      # 毎回 orphan で作り直すので履歴に APK が積み上がらない。
+      - name: publish apk to apk-build branch
+        working-directory: ${{ github.workspace }}
+        run: |
+          cp android/out/*.apk /tmp/desk.apk
+          git config user.name "apk-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git checkout --orphan apk-build
+          git reset --hard
+          cp /tmp/desk.apk desk.apk
+          {
+            echo "# DESK の APK 置き場"
+            echo
+            echo "ビルド元: ${GITHUB_SHA}"
+            echo "作成: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "このブランチはワークフローが毎回作り直す。手で触らないこと。"
+          } > README.md
+          git add desk.apk README.md
+          git commit -m "apk ${GITHUB_SHA::7}"
+          git push -f origin apk-build
+
       # タグ（android-v1.0 など）を押したときだけ Releases に置く。
       - name: release
         if: startsWith(github.ref, 'refs/tags/android-v')
