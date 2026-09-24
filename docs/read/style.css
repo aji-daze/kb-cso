@@ -138,12 +138,15 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 
 /* 本棚 */
 .shelfcase { position: relative; margin-top: 84px; }
-/* 棚の天板。しろくまはここに座っている。 */
+/* 棚の天板。しろくまはここに座っている。押すと棚の画面へ。 */
 .shelfcase .cap {
   position: relative; display: flex; align-items: center; gap: 9px; margin-bottom: 11px;
+  width: 100%; padding: 0; background: none; text-align: left;
   font-size: 12.5px; color: var(--sub); letter-spacing: .06em;
 }
 .shelfcase .cap em { font-style: normal; font-size: 11px; color: var(--ph); }
+.shelfcase .cap .to { color: var(--sub); }
+.shelfcase .cap:hover .to { color: var(--acc); }
 .shelfcase .cap .rail {
   flex: 1; height: 4px; border-radius: 2px;
   background: color-mix(in srgb, var(--tx) 20%, transparent);
@@ -157,27 +160,40 @@ picture { display: contents; }
 }
 .bear.solo { display: block; width: 168px; margin: 26px auto 0; opacity: .95; }
 
+/* 二段ぶんだけ見せる（150px の段 + 板 7px が2つ）。あふれた本は切る。 */
 .spines {
   display: flex; flex-wrap: wrap; align-items: flex-end; align-content: flex-start;
   column-gap: 3px; row-gap: 7px; padding: 0 10px 7px; border-radius: var(--r-sm);
+  max-height: 314px; overflow: hidden;
   background:
     repeating-linear-gradient(to bottom,
       transparent 0 150px,
-      color-mix(in srgb, var(--tx) 26%, transparent) 150px 152px,
-      color-mix(in srgb, var(--tx) 9%, transparent) 152px 157px);
+      color-mix(in srgb, var(--tx) 32%, transparent) 150px 152px,
+      color-mix(in srgb, var(--tx) 12%, transparent) 152px 157px);
 }
 .spine { height: 150px; padding: 0; background: none; display: flex; align-items: flex-end; }
+/* 背表紙。薄い地に天地の罫線を2本ずつ、左に光、右に陰。
+   色は JS から --base / --rule / --edge / --ink で渡す。 */
 .spine .sp {
-  width: 100%; border-radius: 2px 2px 0 0; overflow: hidden; color: #eae6de;
-  display: flex; justify-content: center; align-items: center; padding: 10px 0;
-  box-shadow: inset -2px 0 4px rgba(0,0,0,.28), inset 2px 0 2px rgba(255,255,255,.07);
+  width: 100%; border-radius: 2px 2px 0 0; overflow: hidden; color: var(--ink);
+  display: flex; justify-content: center; align-items: center; padding: 19px 0;
+  background:
+    linear-gradient(180deg, transparent 0 8px, var(--rule) 8px 9px,
+      transparent 9px 12px, var(--rule) 12px 13px, transparent 13px),
+    linear-gradient(0deg, transparent 0 8px, var(--rule) 8px 9px,
+      transparent 9px 12px, var(--rule) 12px 13px, transparent 13px),
+    linear-gradient(90deg, rgba(255,255,255,.65) 0 2px, rgba(255,255,255,.3) 2px 5px,
+      transparent 34%, rgba(0,0,0,.05) 74%, rgba(0,0,0,.15));
+  background-color: var(--base);
+  box-shadow: inset 0 0 0 1px var(--edge), 0 1px 3px rgba(0,0,0,.2);
 }
 /* 背表紙の題名は一列に流す。入りきらないところで切る。 */
 .spine .sp > span {
   writing-mode: vertical-rl; font-size: 10.5px; line-height: 1; letter-spacing: .02em;
-  white-space: nowrap; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,.45);
+  font-weight: 600; white-space: nowrap; overflow: hidden;
 }
 .spine:hover .sp { outline: 1.5px solid var(--acc); outline-offset: -1px; }
+.noshelf { align-self: center; font-size: 12.5px; color: var(--sub); padding: 60px 0; }
 .btn {
   border: 1px solid var(--line); background: var(--surface); color: var(--tx);
   padding: 11px 16px; border-radius: var(--r-sm); font-size: 14px; font-weight: 600;
@@ -194,9 +210,58 @@ picture { display: contents; }
 .flow-row span { font-size: 10.5px; color: var(--sub); letter-spacing: .04em; }
 
 /* ---------- 棚 ---------- */
-.seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; margin-bottom: 12px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; margin-bottom: 10px; }
 .seg button { flex: 1; padding: 8px 0; font-size: 12.5px; color: var(--sub); }
 .seg button[aria-pressed="true"] { background: var(--surface2); color: var(--tx); font-weight: 600; }
+.seg button em { font-style: normal; font-size: 10.5px; color: var(--ph); margin-left: 5px; }
+.seg button[aria-pressed="true"] em { color: var(--sub); }
+
+/* 棚の道具立て。作家で絞る・並べ替え・まとめて選ぶ */
+.bar { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; flex-wrap: wrap; }
+.tag {
+  border: 1px solid var(--line); background: var(--surface); color: var(--tx);
+  padding: 6px 10px; border-radius: 999px; font-size: 12px;
+  max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tag:hover { border-color: var(--acc); }
+.tag[aria-pressed="true"] { background: var(--acc); color: var(--on-acc); border-color: var(--acc); font-weight: 600; }
+.bar .cnt { margin-left: auto; font-size: 11.5px; color: var(--sub); font-variant-numeric: tabular-nums; }
+
+.ghead {
+  display: flex; align-items: baseline; gap: 8px; margin: 20px 0 9px;
+  font-size: 12.5px; font-weight: 600; color: var(--tx);
+  border-bottom: 1px solid var(--line); padding-bottom: 6px;
+}
+.ghead em { font-style: normal; font-weight: 400; font-size: 11px; color: var(--sub); }
+.ghead:first-of-type { margin-top: 4px; }
+
+.view.picking { padding-bottom: calc(76px + var(--safe-b)); }
+
+/* まとめて動かす帯。タブの上に出す。 */
+.pickbar {
+  position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + var(--safe-b));
+  z-index: 25; display: flex; align-items: center; gap: 6px;
+  padding: 9px 12px; background: var(--surface2);
+  border-top: 1px solid var(--line); box-shadow: var(--shadow);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.pickbar button {
+  flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--tx);
+  padding: 7px 11px; border-radius: var(--r-sm); font-size: 12.5px; font-weight: 600;
+}
+.pickbar button:hover { border-color: var(--acc); }
+.pickbar button.danger { color: var(--danger); border-color: var(--danger); }
+.pickbar .n { flex: none; font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; margin-right: 2px; }
+
+/* 選んでいる最中の印 */
+.bc .tick {
+  position: absolute; right: 6px; top: 6px; width: 20px; height: 20px; border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,.9); background: rgba(0,0,0,.28);
+  color: #fff; font-size: 12px; line-height: 17px; text-align: center;
+}
+.bk.on .bc .tick { background: var(--acc); color: var(--on-acc); border-color: var(--acc); }
+.bk.on .bc { outline: 2.5px solid var(--acc); outline-offset: -1px; }
+.bk.on .bn { color: var(--acc); }
 .prog { height: 2px; background: var(--line); margin-top: 7px; border-radius: 2px; overflow: hidden; }
 .prog i { display: block; height: 100%; background: var(--acc); }
 

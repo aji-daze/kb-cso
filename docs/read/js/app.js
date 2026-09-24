@@ -27,6 +27,9 @@ const STATUS = { reading: '読んでいる', stack: '積んでいる', done: '�
 const S = {
   view: 'now',
   shelfTab: 'reading',
+  shelfSort: 'added',   // 棚の並べ替え
+  shelfAuthor: null,    // 作家で絞る（null なら全部）
+  pick: null,           // 選んでいる最中は Set。ふだんは null
   noteTag: null,
   chrome: { theme: 'sumi', accent: 'kohaku', font: 'system' },
   paper: Paper.defaults(),
@@ -97,6 +100,11 @@ function applyChrome() {
 // ================================================================ 本の取り込み
 function chapChars(chapters) { return chapters.map((c) => plain(c.html).length); }
 
+// 何冊まとめて入れたら「積んでいる」に置くか。
+// 20冊を同時に読み始めることはないので、束で入れたぶんは積む側へ。
+const BULK_AT = 5;
+let addStatus = 'reading';
+
 async function addBook(meta, chapters) {
   const counts = chapChars(chapters);
   const book = {
@@ -105,7 +113,7 @@ async function addBook(meta, chapters) {
     author: meta.author || '',
     kind: meta.kind,
     source: meta.source || '',
-    status: 'reading',
+    status: addStatus,
     added: Date.now(),
     finished: 0,
     vertical: !!meta.vertical,
@@ -190,12 +198,17 @@ async function mirrorToFolder(files) {
 async function importFiles(files) {
   let n = 0, err = 0, first = '';
   const ok = [];
-  for (const f of files) {
-    try { await importBlob(f.name, f); ok.push(f); n++; }
-    catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
-  }
+  const bulk = files.length >= BULK_AT;
+  addStatus = bulk ? 'stack' : 'reading';
+  try {
+    for (const f of files) {
+      try { await importBlob(f.name, f); ok.push(f); n++; }
+      catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
+    }
+  } finally { addStatus = 'reading'; }
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
-  if (n) toast(n + '冊を棚に入れました' + (copied ? '／' + copied + '件をフォルダにも保存' : '') +
+  if (n) toast(n + '冊を' + (bulk ? '「積んでいる」に' : '棚に') + '入れました' +
+    (copied ? '／' + copied + '件をフォルダにも保存' : '') +
     (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
   render();
@@ -286,20 +299,32 @@ function hash32(s) {
 
 // 背表紙。題名から色・幅・高さを決めるので、同じ本はいつも同じ姿になる。
 // 外側の button は高さを揃えてあり（段を等間隔にするため）、中の span だけが伸び縮みする。
+// 色は薄く。天地の罫線と背の陰は CSS 側で、ここで渡す3色から引く。
 function spineHTML(b) {
   const h = hash32(b.title || '?') % 360;
-  const s = 13 + (h % 4) * 4;
-  const w = 23 + Math.min(21, Math.round((b.chars || 12000) / 9000));
-  const ht = 122 + (hash32(b.id) % 5) * 7;
-  const bg = 'linear-gradient(100deg,hsl(' + h + ' ' + s + '% 33%),hsl(' + ((h + 26) % 360) + ' ' + s + '% 21%) 58%,hsl(' + h + ' ' + s + '% 28%))';
-  // 縦一列に流すので、入る字数で切る（背の高さ − 余白 ÷ 一字の送り）。
-  const cap = Math.max(4, Math.floor((ht - 22) / 11.2));
+  const sat = 15 + (hash32(b.id) % 4) * 4;                  // 15〜27%
+  const lit = 84 + (hash32(b.title + '#') % 4) * 2;         // 84〜90%
+  const w = 25 + Math.min(20, Math.round((b.chars || 12000) / 9000));
+  const ht = 126 + (hash32(b.id) % 4) * 8;   // 126〜150。段の高さ150を超えさせない
+  const v = '--base:hsl(' + h + ' ' + sat + '% ' + lit + '%);' +
+            '--rule:hsl(' + h + ' ' + (sat + 16) + '% ' + (lit - 32) + '%);' +
+            '--edge:hsl(' + h + ' ' + (sat + 8) + '% ' + (lit - 22) + '%);' +
+            '--ink:hsl(' + h + ' ' + (sat + 18) + '% 27%)';
+  // 縦一列に流すので、入る字数で切る。天地の罫線ぶん（44px）を引いた残りが題名の場所。
+  const cap = Math.max(3, Math.floor((ht - 38) / 11.2));
   const t = [...(b.title || '')];
   const label = t.length > cap ? t.slice(0, cap - 1).join('') + '…' : t.join('');
   return '<button class="spine" data-id="' + b.id + '" style="width:' + w + 'px" title="' + esc(b.title) + '">' +
-    '<span class="sp" style="height:' + ht + 'px;background:' + bg + '">' +
+    '<span class="sp" style="height:' + ht + 'px;' + v + '">' +
     '<span>' + esc(label) + '</span></span></button>';
 }
+
+// しおりを全部まとめて読む。1冊ずつ引くと冊数ぶん往復するので。
+async function allMarks() {
+  const rows = await DB.all('marks');
+  return new Map(rows.map((r) => [r.id, r]));
+}
+const started = (b, m) => (m && m.pct > 0) || (b.manual && b.manual.cur > 0);
 
 // しろくま。動く絵（WebP）を出すが、動きを嫌う設定の端末では静止画に落とす。
 function bearHTML(mod) {
@@ -336,12 +361,17 @@ async function renderNow() {
   const reading = S.books.filter((b) => b.status === 'reading');
   const lastId = await DB.setting('lastBook');
   const cur = reading.find((b) => b.id === lastId) || reading[0] || S.books[0];
-  const mark = await markOf(cur.id);
+  const mk = await allMarks();
+  const mark = mk.get(cur.id) || { ch: 0, off: 0, pct: 0, lastLine: '' };
   const pct = Math.round(progressOf(cur, mark) * 100);
 
-  // 本棚 — 日替わりの順に並べる。
-  const k = dayKey();
-  const order = S.books.slice().sort((a, b) => hash32(a.id + ':' + k) - hash32(b.id + ':' + k));
+  // 本棚 — 読みかけを先に、最後に開いた順で。二段に収まるぶんだけ出す（残りは CSS で切る）。
+  const touched = (b) => { const m = mk.get(b.id); return (m && m.updated) || b.added || 0; };
+  const order = reading.slice()
+    .sort((a, b) => (started(b, mk.get(b.id)) ? 1 : 0) - (started(a, mk.get(a.id)) ? 1 : 0)
+                 || touched(b) - touched(a))
+    .slice(0, 48);
+  const opening = reading.filter((b) => started(b, mk.get(b.id))).length;
 
   const now = new Date();
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -366,10 +396,12 @@ async function renderNow() {
       '</button>' +
 
       '<section class="shelfcase">' +
-        '<div class="cap"><span>本棚</span><em>' + S.books.length + '冊</em>' +
-          '<i class="rail"></i>' + bearHTML('') + '</div>' +
+        '<button class="cap" id="n-shelf"><span>読みかけ</span>' +
+          '<em>' + (opening ? opening + '冊' : 'まだなし') + '</em>' +
+          '<i class="rail"></i><em class="to">棚へ ▸</em>' + bearHTML('') + '</button>' +
         '<div class="spines">' +
-          order.map(spineHTML).join('') +
+          (order.length ? order.map(spineHTML).join('')
+            : '<span class="noshelf">「読んでいる」棚に本がありません</span>') +
         '</div>' +
       '</section>' +
 
@@ -386,20 +418,25 @@ async function renderNow() {
     if (owned) openBook(owned.id); else aozoraSheet(q.work);
   };
   $('#n-cont', el).onclick = () => (cur.manual ? manualSheet(cur) : openBook(cur.id));
+  $('#n-shelf', el).onclick = () => { S.view = 'shelf'; remember(); render(); };
   $$('.spine', el).forEach((s) => { s.onclick = () => bookSheet(s.dataset.id); });
 }
 
 // ================================================================ 画面: 棚
 // 表紙を並べる。書影のない本は、題名と著者を刷った表紙をその場で作る。
-function coverCell(b, m) {
+function coverCell(b, m, picked) {
   const p = Math.round(progressOf(b, m) * 100);
   const img = S.covers.has(b.id);
   const left = remainLabel(b, m);
-  return '<button class="bk' + (b.status === 'done' ? ' done' : '') + '" data-id="' + b.id + '">' +
+  const on = picked !== null && picked.has(b.id);
+  return '<button class="bk' + (b.status === 'done' ? ' done' : '') + (on ? ' on' : '') +
+      '" data-id="' + b.id + '"' + (picked !== null ? ' aria-pressed="' + on + '"' : '') + '>' +
     '<span class="bc' + (img ? ' has-img' : '') + '" style="' + coverStyle(b) + '">' +
       '<span class="bt">' + esc(b.title) + '</span>' +
       (b.author ? '<span class="ba">' + esc(b.author) + '</span>' : '') +
-      (b.status === 'done' ? '<span class="chk" aria-hidden="true">✓</span>' : '') +
+      (picked !== null
+        ? '<span class="tick" aria-hidden="true">' + (on ? '✓' : '') + '</span>'
+        : (b.status === 'done' ? '<span class="chk" aria-hidden="true">✓</span>' : '')) +
     '</span>' +
     '<span class="prog"' + (p ? '' : ' hidden') + '><i style="width:' + p + '%"></i></span>' +
     '<span class="bn">' + esc(b.title) + '</span>' +
@@ -407,27 +444,207 @@ function coverCell(b, m) {
   '</button>';
 }
 
+const SORTS = {
+  added:    '追加が新しい順',
+  title:    '題名の順',
+  author:   '作家でまとめる',
+  progress: '進みが多い順',
+  length:   '長い順',
+};
+
+const ja = (x, y) => String(x).localeCompare(String(y), 'ja');
+
+function sortBooks(list, how, mk) {
+  const arr = list.slice();
+  const au = (b) => b.author || '￿';          // 作家なしは末尾へ
+  const pg = (b) => progressOf(b, mk.get(b.id));
+  if (how === 'title') arr.sort((x, y) => ja(x.title, y.title));
+  else if (how === 'author') {
+    // 漢字の名前は五十音順に並べられない（読みを持っていないため）。
+    // 代わりに、冊数の多い作家から順にまとまりを作る。
+    const n = new Map();
+    for (const b of list) n.set(b.author || '', (n.get(b.author || '') || 0) + 1);
+    const cnt = (b) => n.get(b.author || '') || 0;
+    arr.sort((x, y) => cnt(y) - cnt(x) || ja(au(x), au(y)) || (y.added || 0) - (x.added || 0));
+  }
+  else if (how === 'progress') arr.sort((x, y) => pg(y) - pg(x) || (y.added || 0) - (x.added || 0));
+  else if (how === 'length') arr.sort((x, y) => (y.chars || 0) - (x.chars || 0));
+  else arr.sort((x, y) => (y.added || 0) - (x.added || 0));
+  return arr;
+}
+
+// 作家ごとの冊数。多い順、同数なら名前順。
+function authorCounts(list) {
+  const m = new Map();
+  for (const b of list) m.set(b.author || '', (m.get(b.author || '') || 0) + 1);
+  return [...m.entries()].sort((x, y) => y[1] - x[1] || ja(x[0], y[0]));
+}
+
+function groupByAuthor(list) {
+  const out = [];
+  for (const b of list) {
+    const k = b.author || '';
+    if (!out.length || out[out.length - 1][0] !== k) out.push([k, []]);
+    out[out.length - 1][1].push(b);
+  }
+  return out;
+}
+
 async function renderShelf() {
   const el = $('#v-shelf');
-  const list = S.books.filter((b) => b.status === S.shelfTab);
-  const marks = new Map();
-  for (const b of list) marks.set(b.id, await markOf(b.id));
+  const mk = await allMarks();
+  const all = S.books.filter((b) => b.status === S.shelfTab);
+  const authors = authorCounts(all);
+  const picked = S.pick;   // Set か null
+  let list = S.shelfAuthor != null ? all.filter((b) => (b.author || '') === S.shelfAuthor) : all;
+  list = sortBooks(list, S.shelfSort, mk);
+  const groups = (S.shelfSort === 'author' && S.shelfAuthor == null && list.length > 1)
+    ? groupByAuthor(list) : [[null, list]];
 
   el.innerHTML =
     '<div class="seg" id="s-seg">' +
       Object.entries(STATUS).map(([k, v]) =>
-        '<button data-k="' + k + '" aria-pressed="' + (S.shelfTab === k) + '">' + v + '</button>').join('') +
+        '<button data-k="' + k + '" aria-pressed="' + (S.shelfTab === k) + '">' + v +
+        '<em>' + S.books.filter((b) => b.status === k).length + '</em></button>').join('') +
     '</div>' +
+    (all.length
+      ? '<div class="bar">' +
+          '<button class="tag" id="s-author"' + (S.shelfAuthor != null ? ' aria-pressed="true"' : '') + '>' +
+            (S.shelfAuthor != null ? esc(S.shelfAuthor || '作家なし') : '作家 すべて') + ' ▾</button>' +
+          '<button class="tag" id="s-sort">' + SORTS[S.shelfSort] + ' ▾</button>' +
+          '<button class="tag" id="s-pick"' + (picked ? ' aria-pressed="true"' : '') + '>' +
+            (picked ? 'やめる' : '選ぶ') + '</button>' +
+          '<span class="cnt">' + list.length + '冊</span>' +
+        '</div>'
+      : '') +
     (list.length
-      ? '<div class="grid">' + list.map((b) => coverCell(b, marks.get(b.id))).join('') + '</div>'
-      : '<div class="empty">ここには何もありません</div>') +
-    '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>';
+      ? groups.map(([name, rows]) =>
+          (name !== null
+            ? '<div class="ghead">' + esc(name || '作家なし') + '<em>' + rows.length + '冊</em></div>' : '') +
+          '<div class="grid">' + rows.map((b) => coverCell(b, mk.get(b.id), picked || null)).join('') + '</div>'
+        ).join('')
+      : '<div class="empty">' + (S.shelfAuthor != null ? 'この作家の本はここにありません' : 'ここには何もありません') + '</div>') +
+    '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>' +
+    (picked ? pickBar(picked, list) : '');
+  el.classList.toggle('picking', !!picked);   // 帯のぶん下に余白を足す
 
   $$('#s-seg button', el).forEach((b) => {
-    b.onclick = () => { S.shelfTab = b.dataset.k; remember(); renderShelf(); };
+    b.onclick = () => {
+      S.shelfTab = b.dataset.k; S.shelfAuthor = null; S.pick = null; remember(); renderShelf();
+    };
   });
-  $$('.bk', el).forEach((r) => { r.onclick = () => bookSheet(r.dataset.id); });
+  if ($('#s-author', el)) $('#s-author', el).onclick = () => authorSheet(authors);
+  if ($('#s-sort', el)) $('#s-sort', el).onclick = sortSheet;
+  if ($('#s-pick', el)) $('#s-pick', el).onclick = () => {
+    S.pick = S.pick ? null : new Set(); renderShelf();
+  };
+  $$('.bk', el).forEach((r) => {
+    r.onclick = () => {
+      if (!S.pick) { bookSheet(r.dataset.id); return; }
+      if (S.pick.has(r.dataset.id)) S.pick.delete(r.dataset.id); else S.pick.add(r.dataset.id);
+      renderShelf();
+    };
+  });
   $('#s-add', el).onclick = addSheet;
+  if (picked) bindPickBar(el, list);
+}
+
+function pickBar(picked, list) {
+  const moves = Object.entries(STATUS).filter(([k]) => k !== S.shelfTab);
+  return '<div class="pickbar">' +
+    '<button data-a="all">' + (picked.size >= list.length && list.length ? '解除' : 'すべて') + '</button>' +
+    '<span class="n">' + picked.size + '冊</span>' +
+    moves.map(([k, v]) => '<button data-a="mv" data-st="' + k + '">' + v + 'へ</button>').join('') +
+    '<button data-a="del" class="danger">消す</button>' +
+  '</div>';
+}
+
+function bindPickBar(el, list) {
+  $$('.pickbar button', el).forEach((btn) => {
+    btn.onclick = async () => {
+      const ids = [...S.pick];
+      if (btn.dataset.a === 'all') {
+        if (S.pick.size >= list.length) S.pick.clear();
+        else for (const b of list) S.pick.add(b.id);
+        renderShelf(); return;
+      }
+      if (!ids.length) { toast('本を選んでください'); return; }
+      if (btn.dataset.a === 'mv') return bulkStatus(ids, btn.dataset.st);
+      if (btn.dataset.a === 'del') return bulkDelete(ids);
+    };
+  });
+}
+
+async function bulkStatus(ids, st) {
+  for (const id of ids) {
+    const b = S.books.find((x) => x.id === id);
+    if (!b) continue;
+    b.status = st;
+    if (st === 'done' && !b.finished) b.finished = Date.now();
+    if (st !== 'done') b.finished = 0;
+    await DB.put('books', b);
+  }
+  S.pick = new Set();
+  await loadBooks();
+  render();
+  toast(ids.length + '冊を「' + STATUS[st] + '」に移しました');
+}
+
+async function bulkDelete(ids) {
+  if (!(await confirmSheet(ids.length + '冊を消しますか',
+    '本文も、その本の抜き書きも消えます。元に戻せません。', '消す', true))) return;
+  for (const id of ids) {
+    for (const n of await Notes.ofBook(id)) await Notes.remove(n.id);
+    await DB.del('files', id); await DB.del('marks', id); await DB.del('books', id);
+    S.covers.delete(id);
+  }
+  S.pick = new Set();
+  await loadBooks();
+  render();
+  toast(ids.length + '冊を消しました');
+}
+
+function authorSheet(authors) {
+  sheet('<h3>作家で絞る</h3>' +
+    '<label class="field"><input type="text" id="a-q" placeholder="作家名" autocomplete="off"></label>' +
+    '<div id="a-list"></div>',
+    (el) => {
+      const q = $('#a-q', el), out = $('#a-list', el);
+      const draw = () => {
+        const v = q.value.trim();
+        const hit = v ? authors.filter(([a]) => a.includes(v)) : authors;
+        out.innerHTML =
+          '<button class="item" data-all="1"><span class="mark">' + (S.shelfAuthor == null ? '✓' : '·') + '</span>' +
+            '<span><b>すべて</b><span>' + authors.reduce((n, x) => n + x[1], 0) + '冊</span></span></button>' +
+          (hit.length
+            ? hit.slice(0, 200).map(([a, n]) =>
+                '<button class="item" data-a="' + esc(a) + '">' +
+                '<span class="mark">' + (S.shelfAuthor === a ? '✓' : '·') + '</span>' +
+                '<span><b>' + esc(a || '作家なし') + '</b><span>' + n + '冊</span></span></button>').join('')
+            : '<div class="empty">見つかりません</div>');
+        $$('.item', out).forEach((x) => {
+          x.onclick = () => {
+            S.shelfAuthor = x.dataset.all ? null : x.dataset.a;
+            closeSheet(); renderShelf();
+          };
+        });
+      };
+      q.oninput = draw;
+      draw();
+      q.focus();
+    });
+}
+
+function sortSheet() {
+  sheet('<h3>並べ替え</h3>' +
+    Object.entries(SORTS).map(([k, v]) =>
+      '<button class="item" data-s="' + k + '"><span class="mark">' + (S.shelfSort === k ? '✓' : '·') + '</span>' +
+      '<span><b>' + v + '</b></span></button>').join(''),
+    (el) => {
+      $$('[data-s]', el).forEach((x) => {
+        x.onclick = () => { S.shelfSort = x.dataset.s; remember(); closeSheet(); renderShelf(); };
+      });
+    });
 }
 
 // ================================================================ 画面: 抜き書き
@@ -1659,14 +1876,15 @@ async function minchoPanel(box) {
 // 端末ごとの見た目の話なので localStorage に置く。読めない環境でも困らない。
 const VIEWS = ['now', 'shelf', 'notes', 'log'];
 function remember() {
-  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab); } catch {}
+  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab + '/' + S.shelfSort); } catch {}
 }
 function recallView() {
   let v = '';
   try { v = localStorage.getItem('pocha.view') || ''; } catch {}
-  const [view, tab] = v.split('/');
+  const [view, tab, sort] = v.split('/');
   if (VIEWS.includes(view)) S.view = view;
   if (STATUS[tab]) S.shelfTab = tab;
+  if (SORTS[sort]) S.shelfSort = sort;
 }
 
 function render() {
