@@ -16,7 +16,6 @@
 <body>
 
 <header id="top">
-  <button class="ico" id="btn-back" hidden aria-label="戻る">‹</button>
   <button class="ico" id="btn-search" aria-label="探す">⌕</button>
   <h1 id="top-title">ぽちゃ文庫</h1>
   <button class="ico" id="btn-gear" aria-label="設定">⚙</button>
@@ -47,10 +46,14 @@
     <div class="rpage" id="rpage"><div id="rflow" data-dir="v"></div><div class="seam" id="seam"></div></div>
     <div class="gutterfx"></div>
     <div class="grain"></div>
-    <div class="zones">
-      <button id="z-a" aria-label="ページを送る"></button>
-      <button id="z-ui" aria-label="操作を出す"></button>
-      <button id="z-b" aria-label="ページを送る"></button>
+    <!-- タップ判定は #stage の click（onStageTap）でまとめてやる。
+         ここは本文（#rflow）の上にタップ／ドラッグを通すための当たり判定だけの帯。
+         button ではなく div にして、キーボード操作やスクリーンリーダーからは
+         素通りさせる（実際の操作は stage 側にあるため）。 -->
+    <div class="zones" aria-hidden="true">
+      <div id="z-a"></div>
+      <div id="z-ui"></div>
+      <div id="z-b"></div>
     </div>
 
     <div class="rui top" id="rtop" hidden>

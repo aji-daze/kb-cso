@@ -1,11 +1,12 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'pocha-v1.6.0';
+const VERSION = 'pocha-v1.7.0';
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',
   './js/app.js', './js/db.js', './js/zip.js', './js/md.js', './js/epub.js',
   './js/aozora.js', './js/quotes.js', './js/font.js', './js/drive.js', './js/onedrive.js', './js/folder.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/character.png', './art/bear.png', './art/bear.webp',
+  './icons/apple-touch-icon.png', './icons/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (e) => {
@@ -42,7 +43,13 @@ self.addEventListener('fetch', (e) => {
           caches.open(VERSION).then((c) => c.put(req, copy));
         }
         return res;
-      }).catch(() => caches.match('./index.html'));
+      }).catch(() => {
+        // オフラインでの取得失敗時、index.html を返すのはナビゲーション要求だけにする。
+        // 画像・JS・CSS などにまで返すと、キャッシュに無い物を取りに行ったときに
+        // HTML が代わりに返り、モジュールなら構文エラー、画像なら壊れた表示になる。
+        if (req.mode === 'navigate') return caches.match('./index.html');
+        return Response.error();
+      });
     })
   );
 });

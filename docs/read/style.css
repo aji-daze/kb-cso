@@ -6,6 +6,11 @@
   --bg: #0b0b0d; --surface: #141417; --surface2: #1c1c21; --line: #26262c;
   --tx: #f2f2f4; --sub: #8b8b95; --ph: #3a3a42;
   --acc: #d79a5f; --on-acc: #1a1510; --danger: #e5645c;
+  /* 文字色として使うアクセント。--acc は元はボタンの地色用で、地に対する
+     コントラストは保証されていない。--tx（本文色）へ47%だけ寄せると、
+     7テーマ×10アクセントの全組み合わせで --bg / --surface のどちらに
+     置いても 4.5:1 以上になる（/tmp/claude-0/impl/contrast.mjs で実測）。 */
+  --acc-ink: color-mix(in srgb, var(--acc) 47%, var(--tx));
   --scrim: rgba(0,0,0,.62);
   --shadow: 0 6px 20px rgba(0,0,0,.45); --shadow-lg: 0 18px 44px rgba(0,0,0,.55);
   --toast-bg: #2a2a31; --toast-tx: #fff;
@@ -102,7 +107,7 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   border: 0; border-left: 2px solid var(--acc); border-radius: 0; padding: 2px 0 2px 14px;
 }
 .quote:hover { border-left-color: var(--acc); background: color-mix(in srgb, var(--acc) 7%, transparent); }
-.quote .lbl { display: block; font-size: 10.5px; letter-spacing: .12em; color: var(--acc); margin-bottom: 7px; }
+.quote .lbl { display: block; font-size: 10.5px; letter-spacing: .12em; color: var(--acc-ink); margin-bottom: 7px; }
 .quote q {
   display: block; quotes: none; font-size: 15px; line-height: 1.95; color: var(--tx);
   white-space: pre-line; font-weight: 400;
@@ -125,7 +130,7 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   background: linear-gradient(90deg, rgba(0,0,0,.35), transparent);
 }
 .cont .ct { flex: 1; min-width: 0; }
-.cont .lbl { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--acc); }
+.cont .lbl { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--acc-ink); }
 .cont b {
   display: block; font-size: 15.5px; font-weight: 600; margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -140,13 +145,16 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
 .shelfcase { position: relative; margin-top: 84px; }
 /* 棚の天板。しろくまはここに座っている。押すと棚の画面へ。 */
 .shelfcase .cap {
-  position: relative; display: flex; align-items: center; gap: 9px; margin-bottom: 11px;
-  width: 100%; padding: 0; background: none; text-align: left;
+  position: relative; display: flex; align-items: center; gap: 9px;
+  /* 見た目の位置はそのままに、タップ領域だけ上下に広げる
+     （padding で広げたぶんを margin-top のマイナスで打ち消す）。 */
+  margin: -8px 0 3px;
+  width: 100%; padding: 8px 0; background: none; text-align: left;
   font-size: 12.5px; color: var(--sub); letter-spacing: .06em;
 }
-.shelfcase .cap em { font-style: normal; font-size: 11px; color: var(--ph); }
+.shelfcase .cap em { font-style: normal; font-size: 11px; color: var(--sub); }
 .shelfcase .cap .to { color: var(--sub); }
-.shelfcase .cap:hover .to { color: var(--acc); }
+.shelfcase .cap:hover .to { color: var(--acc-ink); }
 .shelfcase .cap .rail {
   flex: 1; height: 4px; border-radius: 2px;
   background: color-mix(in srgb, var(--tx) 20%, transparent);
@@ -213,7 +221,7 @@ picture { display: contents; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; margin-bottom: 10px; }
 .seg button { flex: 1; padding: 8px 0; font-size: 12.5px; color: var(--sub); }
 .seg button[aria-pressed="true"] { background: var(--surface2); color: var(--tx); font-weight: 600; }
-.seg button em { font-style: normal; font-size: 10.5px; color: var(--ph); margin-left: 5px; }
+.seg button em { font-style: normal; font-size: 10.5px; color: var(--sub); margin-left: 5px; }
 .seg button[aria-pressed="true"] em { color: var(--sub); }
 
 /* 棚の道具立て。作家で絞る・並べ替え・まとめて選ぶ */
@@ -261,7 +269,7 @@ picture { display: contents; }
 }
 .bk.on .bc .tick { background: var(--acc); color: var(--on-acc); border-color: var(--acc); }
 .bk.on .bc { outline: 2.5px solid var(--acc); outline-offset: -1px; }
-.bk.on .bn { color: var(--acc); }
+.bk.on .bn { color: var(--acc-ink); }
 .prog { height: 2px; background: var(--line); margin-top: 7px; border-radius: 2px; overflow: hidden; }
 .prog i { display: block; height: 100%; background: var(--acc); }
 
@@ -318,8 +326,15 @@ picture { display: contents; }
 .note q { display: block; quotes: none; font-size: 14px; line-height: 1.95; }
 .note .src { font-size: 11px; color: var(--sub); margin-top: 7px; display: block; }
 .note .me { font-size: 13px; color: var(--sub); margin-top: 9px; display: block; line-height: 1.75; white-space: pre-wrap; }
-.chip { display: inline-block; font-size: 10.5px; color: var(--sub); border: 1px solid var(--line); border-radius: 2px; padding: 2px 7px; margin: 6px 5px 0 0; }
+.chip {
+  display: inline-flex; align-items: center; min-height: 24px; box-sizing: border-box;
+  font-size: 10.5px; color: var(--sub); border: 1px solid var(--line); border-radius: 2px;
+  padding: 6px 10px; margin: 6px 5px 0 0;
+}
 .chip[aria-pressed="true"] { background: var(--acc); color: var(--on-acc); border-color: var(--acc); }
+/* カードの中の、押せない飾りタグ（抜き書きに付いたタグの表示など）。
+   見た目を淡くして、押せるチップ（絞り込みボタンなど）と区別する。 */
+.chip.static { border-style: dashed; color: var(--sub); opacity: .8; cursor: default; }
 
 /* ---------- 記録 ---------- */
 .stat { display: flex; gap: 10px; margin-bottom: 16px; }
@@ -344,7 +359,13 @@ picture { display: contents; }
   max-height: 86%; overflow-y: auto; padding: 8px 16px calc(20px + var(--safe-b));
 }
 .sheet .grab { width: 36px; height: 4px; background: var(--line); border-radius: 2px; margin: 4px auto 12px; }
-.sheet h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+/* シートを閉じる✕。タップ領域は44px角、見た目は小さいアイコンだけ。 */
+.sheet .x {
+  position: absolute; top: 4px; right: 4px; width: 44px; height: 44px;
+  display: grid; place-items: center; color: var(--sub); font-size: 16px; border-radius: 50%;
+}
+.sheet .x:hover { color: var(--tx); background: var(--surface2); }
+.sheet h3 { margin: 0 0 12px; padding-right: 40px; font-size: 15px; font-weight: 600; }
 .item { display: flex; gap: 12px; align-items: center; width: 100%; padding: 13px 4px; border-bottom: 1px solid var(--line); text-align: left; }
 .item:last-child { border-bottom: 0; }
 .item b { display: block; font-size: 14px; font-weight: 600; }
@@ -354,8 +375,11 @@ picture { display: contents; }
 .field > span { display: block; font-size: 11.5px; color: var(--sub); margin-bottom: 5px; }
 .field input[type="text"], .field input[type="number"], .field textarea, .field select {
   width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-sm);
-  padding: 10px 11px; font-size: 15px;
+  padding: 10px 11px; font-size: 16px;
 }
+/* iOS Safari は 16px 未満の入力欄にフォーカスすると自動でズームする。
+   .field の外に入力欄ができても同じことが起きないよう、ここで底上げしておく。 */
+input, select, textarea { font-size: 16px; }
 .field textarea { min-height: 92px; resize: vertical; line-height: 1.7; }
 .actions { display: flex; gap: 8px; margin-top: 16px; }
 .actions .btn { flex: 1; }
@@ -441,9 +465,10 @@ picture { display: contents; }
 }
 #reader:not([data-anim="turn"]) .seam { display: none; }
 
-.zones { position: absolute; inset: 0; display: flex; }
-.zones button { touch-action: pan-y; }
-.zones button { flex: 1; }
+/* ページ送りの当たり判定用の帯。pointer-events:none にして本文（#rflow）へ
+   タップ／ドラッグを通す。実際の判定は #stage の click（onStageTap）でやる。 */
+.zones { position: absolute; inset: 0; display: flex; pointer-events: none; }
+.zones > div { flex: 1; }
 .rfoot {
   flex: 0 0 auto; display: flex; justify-content: space-between; gap: 12px;
   padding: 0 var(--mg) calc(10px + var(--safe-b)); font-size: 11.5px; min-height: 17px;
@@ -455,7 +480,11 @@ picture { display: contents; }
 .rui.top { top: 0; padding: calc(9px + var(--safe-t)) 10px 9px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--pg2); }
 .rui.top b { flex: 1; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rui.bottom { bottom: 0; border-top: 1px solid var(--pg2); max-height: 78%; overflow-y: auto; padding: 10px 16px calc(16px + var(--safe-b)); }
-.rbtn { border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--ink); padding: 6px 11px; border-radius: 3px; font-size: 12px; flex: 0 0 auto; }
+.rbtn {
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--ink);
+  padding: 9px 13px; border-radius: 3px; font-size: 12px; flex: 0 0 auto;
+  min-height: 38px; display: inline-flex; align-items: center; justify-content: center;
+}
 .rbtn.on { background: var(--ink); color: var(--pg); border-color: var(--ink); font-weight: 600; }
 
 .ctl { display: flex; align-items: center; gap: 10px; padding: 7px 0; }

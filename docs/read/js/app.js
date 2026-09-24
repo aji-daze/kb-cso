@@ -48,21 +48,59 @@ function toast(msg) {
   toastT = setTimeout(() => { el.hidden = true; }, 2600);
 }
 
+// ---- シート・読書画面と Android の「戻る」 ---------------------------
+// シートを開く／読書画面を開くたびに history を1つ積む。積み方は「今の
+// history.state」を見て決める：同じ階層（シート→シートの差し替えなど）
+// なら pushState せず replaceState で上書きし、二重に積まない。
+// 閉じる側（✕・背景タップ・閉じるボタン）は history.back() を呼んで、
+// 積んだぶんをその場で消費する。popstate 側（Android の「戻る」）は
+// 逆に history.back() を呼ばない（もう戻り終えたあとに届くイベントなので、
+// ここで back() すると無限ループ・二重処理になる）。
+function pushSheetHistory() {
+  const want = R.open ? 'reader-sheet' : 'sheet';
+  const st = history.state;
+  if (st && st.layer === want) history.replaceState({ layer: want }, '');
+  else history.pushState({ layer: want }, '');
+}
+function pushReaderHistory() {
+  const st = history.state;
+  // シートの上から読む（本の詳細→読む）ときは、そのシートの分を読書画面に
+  // 差し替える。ゼロからの読書開始（ホームの「つづき」など）は新しく積む。
+  if (st && st.layer === 'sheet') history.replaceState({ layer: 'reader' }, '');
+  else history.pushState({ layer: 'reader' }, '');
+}
+
+// こちらから history.back() した回数。届いた popstate が自分の戻しか、
+// Android の「戻る」かを見分けるのに使う。
+let selfBack = 0;
+function goBack() { selfBack++; history.back(); }
+
 let sheetEl = null, scrimEl = null;
-function closeSheet() {
+// DOM を消すだけ。history には触らない（シートを別のシートに差し替えるときに使う）。
+function dismissSheetDOM() {
   if (sheetEl) sheetEl.remove();
   if (scrimEl) scrimEl.remove();
   sheetEl = scrimEl = null;
 }
+// ✕・背景タップ・「やめる」などユーザーの「閉じる」操作から呼ぶ。
+// 積んだ history をその場で1つ消費する。
+function closeSheet() {
+  if (!sheetEl) return;
+  dismissSheetDOM();
+  const st = history.state;
+  if (st && (st.layer === 'sheet' || st.layer === 'reader-sheet')) goBack();
+}
 function sheet(html, onMount) {
-  closeSheet();
+  dismissSheetDOM();
   scrimEl = document.createElement('div');
   scrimEl.className = 'scrim';
   scrimEl.onclick = closeSheet;
   sheetEl = document.createElement('div');
   sheetEl.className = 'sheet';
-  sheetEl.innerHTML = '<div class="grab"></div>' + html;
+  sheetEl.innerHTML = '<div class="grab"></div><button class="x" id="sheet-x" aria-label="閉じる">✕</button>' + html;
   document.body.append(scrimEl, sheetEl);
+  $('#sheet-x', sheetEl).onclick = closeSheet;
+  pushSheetHistory();
   if (onMount) onMount(sheetEl);
   return sheetEl;
 }
@@ -595,6 +633,8 @@ async function bulkDelete(ids) {
     '本文も、その本の抜き書きも消えます。元に戻せません。', '消す', true))) return;
   for (const id of ids) {
     for (const n of await Notes.ofBook(id)) await Notes.remove(n.id);
+    // sessions（読書時間の記録）はここでは消さない。本を消しても、読んだ事実・
+    // 費やした時間は「記録」タブに残す（renderLog は本の有無を見ずに集計している）。
     await DB.del('files', id); await DB.del('marks', id); await DB.del('books', id);
     S.covers.delete(id);
   }
@@ -668,7 +708,7 @@ async function renderNotes() {
           '<q>' + esc(r.quote) + '</q>' +
           '<span class="src">' + esc(r.bookTitle) + (r.chapter ? ' · ' + esc(r.chapter) : '') + ' · ' + when(r.at) + '</span>' +
           (r.note ? '<span class="me">' + esc(r.note) + '</span>' : '') +
-          ((r.tags || []).length ? '<span>' + r.tags.map((t) => '<span class="chip">#' + esc(t) + '</span>').join('') + '</span>' : '') +
+          ((r.tags || []).length ? '<span>' + r.tags.map((t) => '<span class="chip static">#' + esc(t) + '</span>').join('') + '</span>' : '') +
           '</button>').join('') +
         '<div class="actions"><button class="btn" id="n-export">Markdown で書き出す</button></div>'
       : '<div class="empty"><b>まだ抜き書きがありません</b>本文を長押しして選ぶと、そのまま残せます。</div>');
@@ -693,7 +733,7 @@ function exportNotes(rows) {
   const md = Notes.toMarkdown(rows, '抜き書き');
   sheet('<h3>書き出し</h3><p style="font-size:12.5px;color:var(--sub);margin:0 0 10px">' +
     'この文章をコピーして、ThinkOS のノートに貼ってください。同じ形式なので読み戻せます。</p>' +
-    '<label class="field"><textarea id="ex" readonly style="min-height:200px;font-size:12.5px"></textarea></label>' +
+    '<label class="field"><textarea id="ex" readonly style="min-height:200px;font-size:16px"></textarea></label>' +
     '<div class="actions"><button class="btn" id="ex-close">閉じる</button><button class="btn primary" id="ex-copy">コピー</button></div>',
     (el) => {
       $('#ex', el).value = md;
@@ -743,6 +783,8 @@ async function renderLog() {
     return m >= 60 ? Math.floor(m / 60) + '時間' + (m % 60 ? (m % 60) + '分' : '') : m + '分';
   };
 
+  const noData = days.every((d) => !d.ms);
+
   el.innerHTML =
     '<div class="stat">' +
       '<div><b>' + fmt(today.ms) + '</b><span>今日</span></div>' +
@@ -750,9 +792,11 @@ async function renderLog() {
       '<div><b>' + done + '</b><span>読んだ本</span></div>' +
     '</div>' +
     '<div class="h">この4週間</div>' +
-    '<div class="bars">' + days.map((d) =>
-      '<div class="' + (d.ms ? '' : 'zero') + '" style="height:' + Math.max(2, Math.round(d.ms / max * 84)) + 'px" title="' + fmt(d.ms) + '"></div>').join('') + '</div>' +
-    '<div class="barlbl"><span>4週間前</span><span>今日</span></div>' +
+    (noData
+      ? '<div class="empty">まだ記録がありません</div>'
+      : '<div class="bars">' + days.map((d) =>
+          '<div class="' + (d.ms ? '' : 'zero') + '" style="height:' + Math.max(2, Math.round(d.ms / max * 84)) + 'px" title="' + fmt(d.ms) + '"></div>').join('') + '</div>' +
+        '<div class="barlbl"><span>4週間前</span><span>今日</span></div>') +
     '<div class="h">読む速さ</div>' +
     '<div style="color:var(--sub);font-size:13px;line-height:1.85">' +
       (Stats.measured()
@@ -860,7 +904,9 @@ async function bookSheet(id) {
     '<button class="item" id="b-del"><span class="mark">✕</span><span><b style="color:var(--danger)">棚から消す</b>' +
       '<span>本文も抜き書きも消えます</span></span></button>',
     (el) => {
-      if ($('#b-open', el)) $('#b-open', el).onclick = () => { closeSheet(); openBook(id); };
+      // シート→読書画面への遷移。history はここでは戻さず、シートぶんの1階層を
+      // そのまま読書画面に差し替える（pushReaderHistory 側で見ている）。
+      if ($('#b-open', el)) $('#b-open', el).onclick = () => { dismissSheetDOM(); openBook(id); };
       if ($('#b-manual', el)) $('#b-manual', el).onclick = () => manualSheet(b);
       $$('[data-st]', el).forEach((x) => {
         x.onclick = async () => {
@@ -1343,6 +1389,7 @@ async function openBook(id) {
   const e = readerEls();
   e.root.hidden = false;
   R.open = true;
+  pushReaderHistory();
   e.title.textContent = b.title;
   R.pager = new Pager(e.page, e.flow);
   R.pager.dir = S.paper.dir;
@@ -1422,7 +1469,8 @@ async function turn(d) {
   paintFoot();
 }
 
-function closeReader() {
+// DOM・状態を片づけるだけ。history には触らない（popstate から呼ぶ用）。
+function closeReaderUI() {
   const e = readerEls();
   const s = Stats.end();
   if (s && R.book) Stats.publishToDesk(R.book.title, s.ms);
@@ -1431,6 +1479,14 @@ function closeReader() {
   R.open = false; R.book = null; R.pager = null;
   applyChrome();
   loadBooks().then(render);
+}
+// 「棚へ」ボタン・Esc など、ユーザーが読書画面を閉じる操作から呼ぶ。
+// 積んだ history をその場で1つ消費する。
+function closeReader() {
+  if (!R.open) return;
+  const st0 = history.state;
+  closeReaderUI();
+  if (st0 && (st0.layer === 'reader' || st0.layer === 'reader-sheet')) goBack();
 }
 
 // 読み終わり
@@ -1910,7 +1966,8 @@ function searchSheet() {
           '<button class="item" data-id="' + b.id + '"><span class="mark">·</span><span><b>' + esc(b.title) + '</b>' +
           '<span>' + esc(b.author || '') + ' · ' + STATUS[b.status] + '</span></span></button>').join('')
           : '<div class="empty">見つかりません</div>';
-        $$('.item', out).forEach((x) => { x.onclick = () => { closeSheet(); bookSheet(x.dataset.id); }; });
+        // シート→シートの差し替え。history を戻さず、そのまま次のシートに繋げる。
+        $$('.item', out).forEach((x) => { x.onclick = () => { dismissSheetDOM(); bookSheet(x.dataset.id); }; });
       };
       q.focus();
     });
@@ -1948,24 +2005,35 @@ async function boot() {
   };
 
   // 読書画面
+  // .zones のボタンは pointer-events:none にして本文（#rflow）にタップ／
+  // ドラッグを通す（長押し選択のため）。ページ送りの判定は #stage の
+  // click 側で、x 座標から a/ui/b の帯を割り出してやる。
   const uiOpen = () => !$('#rtop').hidden || !$('#toc').hidden;
-  const z = (which) => async () => {
-    if (R.dragged) return;   // 指でずらした直後のタップは送らない
+  const stage = $('#stage');
+  const onStageTap = async (ev) => {
+    if (!R.open || !R.pager) return;
+    if (ev.target.closest('#rtop,#rbot,#toc,#selbar')) return;   // 操作 UI の上のタップはそちらに任せる
+    if (R.dragged) return;                                       // 指でずらした直後のタップは送らない
+    // 選択を解くためのタップでは送らない。押した瞬間に選択は消えるので、
+    // click の時点ではなく pointerdown の時点で選んでいたかを見る。
+    if (selAtDown || getSelection().toString()) { selAtDown = false; return; }
+    const r = stage.getBoundingClientRect();
+    const x = ev.clientX - r.left;
+    const which = x < r.width / 3 ? 'a' : x > (r.width * 2 / 3) ? 'b' : 'ui';
+    if (which === 'ui') {
+      if (!$('#toc').hidden) { $('#toc').hidden = true; hideUI(); return; }
+      toggleUI();
+      return;
+    }
     // 操作を出している間は、どこを触っても片づけるだけ。送らない。
     if (uiOpen()) { $('#toc').hidden = true; hideUI(); return; }
     // 縦組みは右から左へ進むので、左のタップが「次」になる
     const fwd = S.paper.dir === 'v' ? (which === 'a') : (which === 'b');
     await turn(fwd ? 1 : -1);
   };
-  $('#z-a').onclick = z('a');
-  $('#z-b').onclick = z('b');
-  $('#z-ui').onclick = () => {
-    if (R.dragged) return;
-    if (!$('#toc').hidden) { $('#toc').hidden = true; hideUI(); return; }
-    toggleUI();
-  };
-
-  const stage = $('#stage');
+  let selAtDown = false;
+  stage.addEventListener('pointerdown', () => { selAtDown = !!getSelection().toString(); }, true);
+  stage.addEventListener('click', onStageTap);
   stage.addEventListener('pointerdown', dragStart);
   stage.addEventListener('pointermove', dragMove, { passive: false });
   stage.addEventListener('pointerup', dragEnd);
@@ -1997,6 +2065,27 @@ async function boot() {
     else { Stats.resume(); R.turnAt = Date.now(); }
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
+
+  // Android の「戻る」など、こちらから history.back() を呼ばずに届く popstate。
+  // 「今の history.state に対して、開いたままなのはおかしいもの」だけを閉じる。
+  // history 操作はしない（ブラウザがもう動かしたあとに届くイベントのため）。
+  addEventListener('popstate', (ev) => {
+    const layer = ev.state && ev.state.layer;
+    if (selfBack > 0) {
+      // 自分で戻したぶん。画面はもう閉じてある。ただし back() は非同期なので、
+      // 閉じた直後に次のシート（確認→進捗など）が開いていると、その分の履歴が
+      // 今の戻しで消えている。開いている物に合わせて積み直す。
+      selfBack--;
+      if (sheetEl && layer !== 'sheet' && layer !== 'reader-sheet') {
+        history.pushState({ layer: R.open ? 'reader-sheet' : 'sheet' }, '');
+      } else if (!sheetEl && R.open && layer !== 'reader') {
+        history.pushState({ layer: 'reader' }, '');
+      }
+      return;
+    }
+    if (sheetEl && layer !== 'sheet' && layer !== 'reader-sheet') dismissSheetDOM();
+    if (R.open && layer !== 'reader' && layer !== 'reader-sheet') closeReaderUI();
+  });
 
   // OneDrive の認証から戻ってきていたら受け取って、開いていたシートを開き直す
   try {
