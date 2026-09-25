@@ -133,6 +133,12 @@ function applyChrome() {
   r.dataset.font = S.chrome.font;
   const bg = getComputedStyle(document.body).backgroundColor;
   Paper.tint(bg);
+  // 次の起動で、描画の前に同じ配色を当てるための控え（index.html の先頭で読む）
+  r.style.backgroundColor = bg;
+  try {
+    localStorage.setItem('pocha.chrome', JSON.stringify(
+      { theme: S.chrome.theme, accent: S.chrome.accent, font: S.chrome.font, bg }));
+  } catch {}
 }
 
 // ================================================================ 本の取り込み

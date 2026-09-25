@@ -4,6 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
 <meta name="theme-color" content="#0b0b0d">
+<script>
+// 起動の一瞬、既定の「墨」（黒）が見えるのを防ぐ。選んだ配色は IndexedDB から
+// 非同期で読むので間に合わない。前回の配色を localStorage に控えておき、
+// 描画の前にここで当てる。読めなければ何もしない（既定のまま）。
+try {
+  var c = JSON.parse(localStorage.getItem('pocha.chrome') || 'null');
+  if (c) {
+    var d = document.documentElement;
+    if (c.theme) d.dataset.theme = c.theme;
+    if (c.accent) d.dataset.accent = c.accent;
+    if (c.font) d.dataset.font = c.font;
+    if (c.bg) {
+      d.style.backgroundColor = c.bg;
+      document.querySelector('meta[name="theme-color"]').content = c.bg;
+    }
+  }
+} catch (e) {}
+</script>
 <meta name="description" content="読むための画面と読んだ記録を1つにした、個人用の読書 PWA">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
