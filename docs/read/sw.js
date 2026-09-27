@@ -1,6 +1,6 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'pocha-v1.10.0';
+const VERSION = 'pocha-v1.11.0';
 const SHARE_CACHE = 'pocha-share';   // Android の共有シートから受け取ったファイルの一時置き場
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',

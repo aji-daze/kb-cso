@@ -1140,38 +1140,61 @@ function coverSheet(b) {
 
 // 選んだ本の表紙をまとめて探す。自動で付けるのは、題名と著者が合うものだけ
 // （訳本は訳者も合うもの）。底本と同じ版があればそれを選ぶ。
-async function bulkCovers(ids) {
+// 付け替えてよい本か：自分で決めた表紙・元から表紙のある EPUB には触らない
+const coverMine = (b) => b.coverBy === 'user' || (b.kind === 'epub' && (b.cover || b.coverOrig) && b.coverBy !== 'auto');
+const hasCover = (b) => !!(b.cover || b.coverUrl);
+// upgrade: 別の版の表紙が付いている本も探し、底本と同じ版が見つかれば付け替える
+const upgradable = (b) => hasCover(b) && !coverMine(b) && !(b.coverAuto && b.coverAuto.same);
+
+async function bulkCovers(ids, { upgrade = false } = {}) {
   const all = ids.map((id) => S.books.find((b) => b.id === id)).filter(Boolean);
-  const todo = all.filter((b) => !b.cover && !b.coverUrl);
-  if (!todo.length) { toast('選んだ本にはもう表紙があります'); return; }
+  const bare = all.filter((b) => !hasCover(b) && !coverMine(b));
+  const up = upgrade ? all.filter(upgradable) : [];
+  const todo = bare.concat(up);
+  if (!todo.length) { toast(upgrade ? '探す本がありません（全部に同じ版の表紙があるか、自分で決めた表紙です）' : '選んだ本にはもう表紙があります'); return; }
   if (!(await confirmSheet(todo.length + '冊の表紙を探しますか',
+    (upgrade ? '表紙の無い本 ' + bare.length + '冊に付け、別の版の表紙が付いている本 ' + up.length + '冊は、底本と同じ版が見つかれば付け替えます。自分で選んだ表紙には触りません。' : '') +
     '題名と著者名を Google Books と国立国会図書館に送って探します（見つかった本の ISBN は openBD にも）。本文やメモは送りません。' +
     '底本と同じ版を先に選び、訳本は訳者が合うものだけ付けます。' +
-    (all.length > todo.length ? '（表紙がある ' + (all.length - todo.length) + '冊は飛ばします）' : ''), '探す'))) return;
+    (!upgrade && all.length > todo.length ? '（表紙がある ' + (all.length - todo.length) + '冊は飛ばします）' : '') +
+    (todo.length > 60 ? '1冊に約2秒かかるので、' + Math.ceil(todo.length * 2 / 60) + '分ほど画面を開いたままにしてください。' : ''), '探す'))) return;
 
   sheet('<h3>表紙を探しています</h3>' +
     '<div id="cb-msg" style="font-size:13px;color:var(--sub);line-height:1.8;min-height:52px"></div>' +
     '<div class="prog" style="margin:10px 0"><i id="cb-bar" style="width:0%"></i></div>' +
     '<div id="cb-end"></div>');
   const msg = $('#cb-msg'), bar = $('#cb-bar'), end = $('#cb-end');
-  let found = 0, same = 0, miss = 0, status = {}, halted = '';
+  let found = 0, same = 0, swapped = 0, miss = 0, status = {}, halted = '';
   for (let i = 0; i < todo.length; i++) {
     if (!msg.isConnected) return;                          // シートを閉じたらやめる
     const b = todo[i];
     msg.textContent = (i + 1) + ' / ' + todo.length + '　' + b.title;
+    const had = hasCover(b);
     await ensureTeihon(b);
+    if (had && !b.teihon) { miss++; continue; }            // 比べる底本が無いと付け替えられない
     const res = await Cover.search(b);
     status = res.status;
+    if (Object.values(res.status).some((v) => /429/.test(v))) {
+      coverCoolDown();
+      halted = 'Google Books の1日の上限に当たりました。残りは明日、もう一度押すか自動探しに任せてください。'; break;
+    }
     const pick = await Cover.pickBest(res);
     try {
-      if (pick) {
+      // 付け替えは同じ版が見つかったときだけ。表紙の無い本は合うものなら付ける
+      if (pick && (!had || pick.same)) {
         const applied = await setCover(b, pick.url, 'auto');
         if (applied) {
           b.coverAuto = { at: Date.now(), same: !!pick.same, tries: 0 };
           await putBookSafe(b);
-          found++; if (pick.same) same++;
+          if (had) swapped++; else found++;
+          if (pick.same) same++;
         }
-      } else miss++;
+      } else {
+        const st = b.coverAuto || {};
+        b.coverAuto = { at: Date.now(), same: !!st.same, tries: (st.tries || 0) + 1 };
+        await putBookSafe(b);
+        miss++;
+      }
     } catch (e) {
       // 容量不足ならそこで止める。それ以外の1冊の失敗は次へ進む（OS2-05）
       if (isQuotaExceeded(e)) { halted = '保存できませんでした（端末の空きが足りない可能性があります）。'; break; }
@@ -1184,7 +1207,8 @@ async function bulkCovers(ids) {
     await new Promise((r) => setTimeout(r, 900));          // 取得元に負担をかけない間隔
   }
   if (!msg.isConnected) return;
-  msg.innerHTML = '付けた：<b>' + found + '冊</b>（うち底本と同じ版 ' + same + '冊）<br>見つからない：' + miss + '冊' +
+  msg.innerHTML = '付けた：<b>' + found + '冊</b>' + (upgrade ? '／同じ版に付け替えた：<b>' + swapped + '冊</b>' : '') +
+    '（うち底本と同じ版 ' + same + '冊）<br>見つからない・変えなかった：' + miss + '冊' +
     (halted ? '<br><b style="color:var(--danger)">' + esc(halted) + '</b>' : '');
   end.innerHTML = '<p class="cv-stat">' + Object.entries(status).map(([k, v]) => esc(k) + '：' + esc(v)).join('<br>') + '</p>' +
     '<div class="actions"><button class="btn primary" id="cb-ok">閉じる</button></div>';
@@ -1305,6 +1329,8 @@ async function coverPanel(box) {
     else if (coverDue(b, now)) wait++;
   }
   const on = coverAutoOn();
+  // 「全部まとめて」の対象：表紙の無い本と、付け替えてよい別の版の本（段は問わない）
+  const targets = S.books.filter((b) => !coverMine(b) && (!hasCover(b) || upgradable(b)));
   box.innerHTML =
     '<button class="item" id="cp-auto"><span class="mark">' + (on ? '●' : '○') + '</span>' +
       '<span><b>表紙を自動で探す</b>' +
@@ -1314,12 +1340,22 @@ async function coverPanel(box) {
       '表紙あり ' + has + '冊（うち底本と同じ版 ' + same + '冊）／これから探す ' + wait + '冊' +
       (user ? '／自分で決めた ' + user + '冊（自動では触りません）' : '') +
       (coverCooling() ? '<br>取得元の上限に当たったので、しばらく休んでいます' : '') + '</div>' +
-    (on && wait ? '<div class="actions"><button class="btn sm" id="cp-now">今すぐ探す</button></div>' : '');
+    '<div class="actions">' +
+      (targets.length ? '<button class="btn sm primary" id="cp-all">全部まとめて探す（' + targets.length + '冊）</button>' : '') +
+      (on && wait ? '<button class="btn sm" id="cp-now">今すぐ少し探す</button>' : '') +
+    '</div>' +
+    '<div style="color:var(--sub);font-size:11.5px;line-height:1.7;margin-top:6px">' +
+      '「全部まとめて」は棚のすべての段の本を1冊ずつ探します（1冊に約2秒）。表紙の無い本に付け、' +
+      '別の版の表紙は底本と同じ版に付け替えます。自分で選んだ表紙には触りません。</div>';
   $('#cp-auto', box).onclick = async () => {
     S.coverAuto = !on;
     await DB.setting('coverAuto', S.coverAuto);
     coverPanel(box);
     if (S.coverAuto) autoCovers(true);
+  };
+  if ($('#cp-all', box)) $('#cp-all', box).onclick = () => {
+    try { localStorage.removeItem('pocha.coverWait'); } catch {}
+    bulkCovers(targets.map((b) => b.id), { upgrade: true });
   };
   if ($('#cp-now', box)) $('#cp-now', box).onclick = () => {
     try { localStorage.removeItem('pocha.coverWait'); } catch {}
