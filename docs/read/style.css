@@ -121,13 +121,9 @@ main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: tou
   background: var(--surface); color: var(--tx); box-shadow: var(--shadow);
 }
 .cont:hover { border-color: var(--acc); }
+/* 小さな表紙（紙・枠・帯だけ）。.bc の % の余白はカードの幅を基準にしてしまうので 0 に */
 .cont .cv {
-  flex: none; width: 46px; height: 69px; border-radius: 2px; position: relative;
-  background-size: cover; background-position: center;
-}
-.cont .cv::after {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
-  background: linear-gradient(90deg, rgba(0,0,0,.35), transparent);
+  flex: none; width: 46px; height: 69px; padding: 0; position: relative;
 }
 .cont .ct { flex: 1; min-width: 0; }
 .cont .lbl { display: block; font-size: 10.5px; letter-spacing: .1em; color: var(--acc-ink); }
@@ -289,27 +285,55 @@ picture { display: contents; }
   display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
   width: 100%; padding: 0; background: none; text-align: left;
 }
+/* 表紙：昔の文庫本の装い。どの本も同じ作りで、紙・帯の色だけ6通り（.ed-0〜5、題名で決まる）。
+   紙の地に細い二重の枠、上に色の帯、真ん中に題名を書いた題簽（短冊）、下に著者。
+   端はうっすら焼け、右（和本の綴じ側）に背の陰。 */
 .bc {
-  display: block; position: relative; width: 100%; aspect-ratio: 2 / 3;
-  border-radius: 2px; overflow: hidden; box-shadow: var(--shadow);
-  background-size: cover; background-position: center; color: #ece8e0;
+  --pp: #efe6d0; --pb: #3f6b4f; --pi: #2b2620;
+  /* 題簽と著者を縦に流す。題名が短ければ、そのぶん著者名に場所が回る */
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  padding: 16% 14% 11%;
+  position: relative; width: 100%; aspect-ratio: 2 / 3;
+  border-radius: 1px 3px 3px 1px; overflow: hidden; box-shadow: var(--shadow); color: var(--pi);
+  background:
+    radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(110, 78, 38, .17) 100%),
+    linear-gradient(270deg, rgba(40, 28, 12, .16), transparent 8%),
+    var(--pp);
 }
-.bc::after {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
-  background: linear-gradient(90deg, rgba(0,0,0,.4), transparent);
+.ed-1 { --pp: #f2eadb; --pb: #9b3a31; }
+.ed-2 { --pp: #e8dcc2; --pb: #2f4c73; }
+.ed-3 { --pp: #ece6d6; --pb: #a8842f; }
+.ed-4 { --pp: #e3dccb; --pb: #6b4a34; }
+.ed-5 { --pp: #efe2c2; --pb: #5b4474; }
+/* 二重の枠 */
+.bc::before {
+  content: ""; position: absolute; inset: 9% 9% 6%;
+  border: 1px solid color-mix(in srgb, var(--pi) 42%, transparent);
+  box-shadow: inset 0 0 0 2px var(--pp), inset 0 0 0 3px color-mix(in srgb, var(--pi) 22%, transparent);
 }
+/* 上の帯 */
+.bc::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 6%; background: var(--pb); }
+/* 題簽：縦書きの題名。長ければ2列まで */
 .bc .bt {
-  position: absolute; left: 11px; right: 10px; top: 13px;
-  font-size: 11.5px; line-height: 1.5; font-weight: 600; letter-spacing: .01em;
-  text-shadow: 0 1px 3px rgba(0,0,0,.5);
-  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+  flex: 0 0 auto; position: relative; z-index: 1;
+  writing-mode: vertical-rl; max-height: 56%; max-width: 100%; overflow: hidden;
+  padding: 7px 4px; line-height: 1.25; letter-spacing: .1em;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", YuMincho, "Noto Serif JP", serif;
+  font-size: 13px; font-weight: 600;
+  background: color-mix(in srgb, #fffdf6 60%, var(--pp));
+  border: 1px solid color-mix(in srgb, var(--pi) 55%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #fffdf6 60%, var(--pp)), inset 0 0 0 3px color-mix(in srgb, var(--pb) 70%, transparent);
 }
 .bc .ba {
-  position: absolute; left: 11px; right: 10px; bottom: 11px;
-  font-size: 9.5px; opacity: .8; text-shadow: 0 1px 3px rgba(0,0,0,.5);
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  flex: 0 1 auto; min-height: 0; margin-top: 7%; position: relative; z-index: 1;
+  writing-mode: vertical-rl; overflow: hidden; white-space: nowrap;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", YuMincho, "Noto Serif JP", serif;
+  font-size: 9.5px; letter-spacing: .08em; color: color-mix(in srgb, var(--pi) 82%, transparent);
 }
-.bc.has-img .bt, .bc.has-img .ba { display: none; }
+/* 横文字の題名は横に組む */
+.bc.yoko .bt, .bc.yoko .ba { writing-mode: horizontal-tb; align-self: stretch; text-align: center; }
+.bc.yoko .bt { max-height: 50%; padding: 6px 5px; letter-spacing: .02em; font-size: 12px; margin-top: 4%; }
+.bc.yoko .ba { text-overflow: ellipsis; margin-top: auto; }
 .bc .chk {
   position: absolute; right: 6px; top: 6px; width: 18px; height: 18px; border-radius: 50%;
   background: var(--acc); color: var(--on-acc); font-size: 11px; line-height: 18px; text-align: center;
@@ -536,23 +560,3 @@ input, select, textarea { font-size: 16px; }
   .rpage { inset: var(--mg) max(var(--mg), calc((100% - 760px) / 2)); }
   .rfoot { padding-inline: max(var(--mg), calc((100% - 760px) / 2)); }
 }
-
-/* ---------- 表紙を探す ---------- */
-.cv-note { font-size: 12.5px; color: var(--sub); line-height: 1.8; margin: 0 0 12px; }
-.cv-note b { color: var(--tx); }
-.cv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 14px 10px; margin-bottom: 12px; }
-.cv-cell {
-  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
-  position: relative; padding: 0; background: none; text-align: left; min-height: 44px;
-}
-.cv-cell img {
-  width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 2px;
-  background: var(--surface2); box-shadow: var(--shadow);
-}
-.cv-cell:hover img, .cv-cell:focus-visible img { outline: 2px solid var(--acc); outline-offset: -1px; }
-.cv-cell span { font-size: 11px; color: var(--sub); margin-top: 5px; line-height: 1.4; }
-.cv-cell em {
-  position: absolute; left: 4px; top: 4px; font-style: normal; font-size: 10px; font-weight: 600;
-  background: var(--acc); color: var(--on-acc); padding: 2px 5px; border-radius: var(--r-sm);
-}
-.cv-stat { font-size: 11px; color: var(--sub); line-height: 1.7; margin: 4px 0 12px; }

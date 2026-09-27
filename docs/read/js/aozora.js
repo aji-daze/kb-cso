@@ -54,25 +54,8 @@ export async function indexInfo() {
 }
 export async function dropIndex() { _cache = null; return DB.del('aozora', 'index'); }
 
-// 行の形： [作品ID, 作品名, 読み, 著者, テキストURL, HTMLのURL, 底本名, 底本出版社名, 底本初版発行年]
-// 後ろの3つ（底本）は目録を作り直すまで無い。無くても動く。
-const toWork = (r) => ({ id: r[0], title: r[1], kana: r[2], author: r[3], txt: r[4], html: r[5],
-  teihon: r[6] || r[7] ? { name: r[6] || '', publisher: r[7] || '', year: r[8] || '' } : null });
-
-// 作品IDで1件引く（'2943' でも '002943' でもよい）。取り込み済みの本の底本を後から知るのに使う。
-// 端末の目録が底本の列を持たない古い形なら、自分のサイトから一度だけ入れ直す（外には何も送らない）。
-let refreshed = false;
-export async function byId(id) {
-  let rows = await index();
-  if (rows && rows.length && rows[0].length < 9 && !refreshed) {
-    refreshed = true;
-    try { await buildIndex(); rows = await index(); } catch { /* 入れ直せなくても、底本なしで探す */ }
-  }
-  if (!rows || !id) return null;
-  const n = parseInt(id, 10);
-  const r = rows.find((x) => parseInt(x[0], 10) === n);
-  return r ? toWork(r) : null;
-}
+// 行の形： [作品ID, 作品名, 読み, 著者, テキストURL, HTMLのURL, …]（後ろの列は使わない）
+const toWork = (r) => ({ id: r[0], title: r[1], kana: r[2], author: r[3], txt: r[4], html: r[5] });
 
 function match(r, words) {
   const hay = r[1] + '\u0000' + r[2] + '\u0000' + r[3];

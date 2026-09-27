@@ -216,34 +216,12 @@ export function splitAozora(raw) {
     if (second > first) body = body.slice(0, first).concat(body.slice(second + 1));
   }
 
-  // 奥付（底本：以降）を落とす。落とす前に、どの版から起こしたかだけ控える（書影探しに使う）
+  // 奥付（底本：以降）を落とす
   const end = body.findIndex((l) => /^\s*底本[：:]/.test(l));
-  const teihon = end >= 0 ? parseTeihon(body.slice(end, end + 6)) : null;
   if (end >= 0) body = body.slice(0, end);
 
   // 先頭の空行と末尾の空白だけ落とす。trim() だと最初の行の字下げ（全角空白）まで消える
-  return { title, author, body: body.join('\n').replace(/^(?:[ \t\u3000]*\n)+/, '').replace(/\s+$/, ''), teihon };
-}
-
-// 「底本：「罪と罰（上）」岩波文庫、岩波書店」と、その下の発行年を読む。
-export function parseTeihon(lines) {
-  const first = (lines[0] || '').replace(/^\s*底本[：:]\s*/, '');
-  const name = (first.match(/「([^」]+)」/) || [])[1] || '';
-  const { series, publisher } = splitPublisher(first.replace(/「[^」]*」/, ''));
-  let year = '';
-  for (const l of lines) {
-    const m = l.match(/(\d{4})（/) || l.match(/(\d{4})年/);
-    if (m) { year = m[1]; break; }
-  }
-  return name || publisher ? { name, series, publisher, year } : null;
-}
-
-// 「岩波文庫、岩波書店」→ 叢書名と出版社に分ける。目録の「底本出版社名」も同じ形で来る。
-export function splitPublisher(s) {
-  const parts = String(s || '').split(/[、,，]/).map((x) => x.trim()).filter(Boolean);
-  const series = parts.find((x) => /(文庫|新書|叢書|選書|全集|ライブラリー?)$/.test(x)) || '';
-  const publisher = parts.find((x) => x !== series) || '';
-  return { series, publisher };
+  return { title, author, body: body.join('\n').replace(/^(?:[ \t\u3000]*\n)+/, '').replace(/\s+$/, '') };
 }
 
 // テキストの文字コードを判別して読む。
