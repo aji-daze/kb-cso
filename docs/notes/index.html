@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ノート">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="description" content="OneDrive の Obsidian 保管庫を、どの端末からでも直接読み書きするノート">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>ノート</title>
+</head>
+<body>
+
+<header class="bar">
+  <button class="icon" id="btnMenu" title="一覧" aria-label="一覧">☰</button>
+  <div class="bar-title" id="title">ノート</div>
+  <span class="status" id="status" hidden></span>
+  <button class="icon" id="btnMode" title="編集 (Ctrl+E)" aria-label="編集" hidden>✎</button>
+  <button class="icon" id="btnNew" title="新しいノート" aria-label="新しいノート">＋</button>
+  <button class="icon" id="btnSettings" title="設定" aria-label="設定">⚙</button>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<div class="layout">
+  <aside class="side" id="side">
+    <div class="search">
+      <input id="q" type="search" placeholder="検索（Enter で本文も）" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div class="results" id="results" hidden></div>
+    <nav class="tree" id="tree"></nav>
+    <div class="side-foot">
+      <span class="muted" id="treeInfo"></span>
+      <button class="btn small" id="btnRefresh">再読込</button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main" id="main">
+    <section class="home" id="home"></section>
+    <article class="md" id="view" hidden></article>
+    <textarea class="editor" id="editor" hidden spellcheck="false" autocapitalize="off" placeholder="ここに書く"></textarea>
+  </main>
+</div>
+
+<!-- 設定 -->
+<dialog id="dlgSettings">
+  <form method="dialog" class="dlg">
+    <h2>設定</h2>
+
+    <section>
+      <h3>1. Microsoft アカウント</h3>
+      <details id="setupHelp">
+        <summary>初回だけ：アプリの登録手順</summary>
+        <ol class="steps">
+          <li><a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener">Microsoft Entra 管理センター → アプリの登録</a> → 新規登録</li>
+          <li>サポートされるアカウントの種類は<b>「任意の組織ディレクトリ内のアカウントと個人用 Microsoft アカウント」</b></li>
+          <li>リダイレクト URI は<b>「シングルページ アプリケーション (SPA)」</b>を選び、<br><code id="redirectUri"></code><br>を入れる（末尾の / まで一致させる）</li>
+          <li>概要ページの<b>アプリケーション (クライアント) ID</b> を下に貼る</li>
+        </ol>
+        <p class="muted">栞で登録済みのアプリがあれば、それのリダイレクト URI に上の URL を追加するだけでよい。</p>
+      </details>
+      <label>クライアント ID<input id="setClient" type="text" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+      <label>アカウントの種類
+        <select id="setTenant">
+          <option value="common">個人・職場どちらも（common）</option>
+          <option value="consumers">個人用のみ（consumers）</option>
+          <option value="organizations">職場・学校のみ（organizations）</option>
+        </select>
+      </label>
+      <div class="row">
+        <span id="signState" class="muted"></span>
+        <button type="button" class="btn primary" id="btnSignIn">サインイン</button>
+        <button type="button" class="btn" id="btnSignOut">サインアウト</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>2. 保管庫のフォルダ</h3>
+      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault"></label>
+      <div class="row"><button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button></div>
+      <div class="picker" id="picker" hidden></div>
+    </section>
+
+    <section>
+      <h3>3. 電波がないとき用</h3>
+      <p class="muted">全ノートの本文をこの端末に控えておくと、電波がなくても読めて、本文検索も速くなる。変わったものだけ取り直す。</p>
+      <div class="row">
+        <button type="button" class="btn" id="btnPrefetch">全ノートを端末に保存</button>
+        <span class="muted" id="prefetchInfo"></span>
+      </div>
+      <div class="row"><button type="button" class="btn danger" id="btnClearCache">端末の控えを消す</button></div>
+    </section>
+
+    <section>
+      <h3>表示</h3>
+      <label>配色
+        <select id="setTheme">
+          <option value="auto">端末に合わせる</option>
+          <option value="light">明るい</option>
+          <option value="dark">暗い</option>
+        </select>
+      </label>
+    </section>
+
+    <div class="dlg-foot">
+      <button type="button" class="btn primary" id="btnSaveSettings">保存して閉じる</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 競合 -->
+<dialog id="dlgConflict">
+  <form method="dialog" class="dlg">
+    <h2>別の端末で書き換えられています</h2>
+    <p>このノートは、読み込んだあとに OneDrive 側で変更されました（PC の Obsidian など）。どちらを残しますか。</p>
+    <p class="muted" id="conflictInfo"></p>
+    <div class="col">
+      <button type="button" class="btn primary" id="cfBoth">両方残す（自分の版を別名で保存）</button>
+      <button type="button" class="btn" id="cfRemote">OneDrive の版にする（自分の変更は捨てる）</button>
+      <button type="button" class="btn danger" id="cfMine">自分の版で上書きする</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 新しいノート -->
+<dialog id="dlgNew">
+  <form method="dialog" class="dlg" id="formNew">
+    <h2>新しいノート</h2>
+    <label>名前<input id="newName" type="text" autocomplete="off" required></label>
+    <label>フォルダ<select id="newDir"></select></label>
+    <p class="err" id="newErr" hidden></p>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="btnNewCancel">やめる</button>
+      <button type="submit" class="btn primary" id="btnNewOk">作る</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
