@@ -7,21 +7,31 @@ export async function get(store, path) {
   const r = await DB.get(store, await L.id(path));
   return r ? L.decrypt(r) : undefined;
 }
+// 本文の控え（files）は検索のたびに全部ほどくと重いので、一度ほどいたらメモリに持っておく
+let memo = null;
+
 export async function put(store, obj) {
+  if (store === 'files' && memo) memo.set(obj.path, obj);
   return DB.put(store, { path: await L.id(obj.path), ...(await L.encrypt(obj)) });
 }
 export async function del(store, path) {
+  if (store === 'files' && memo) memo.delete(path);
   return DB.del(store, await L.id(path));
 }
 export async function all(store) {
+  if (store === 'files' && memo) return [...memo.values()];
   const rows = await DB.all(store);
   const out = [];
   for (const r of rows) {
     try { out.push(await L.decrypt(r)); } catch { /* 壊れた行は読まない */ }
   }
+  if (store === 'files') memo = new Map(out.map((f) => [f.path, f]));
   return out;
 }
-export const clear = DB.clear;
+export async function clear(store) {
+  if (store === 'files') memo = null;
+  return DB.clear(store);
+}
 
 export async function setting(k, v) {
   if (v === undefined) {

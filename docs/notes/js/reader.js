@@ -32,6 +32,7 @@ export function setPrefs(p) {
   applyPrefs(p);
 }
 
+let watching = false;
 export function applyPrefs(p = prefs()) {
   const s = document.documentElement.style;
   s.setProperty('--fs', p.fs + 'px');
@@ -40,6 +41,14 @@ export function applyPrefs(p = prefs()) {
   s.setProperty('--measure', MEASURE[p.measure] || MEASURE.normal);
   if (p.theme === 'auto') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = p.theme;
+  // 「自動」のとき、端末側で明暗が切り替わったら上端の色も追いかける
+  if (!watching) {
+    watching = true;
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyPrefs());
+  }
+  // Android の上端（ステータスバー）の色を配色に合わせる
+  const bar = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) { m.removeAttribute('media'); m.content = bar || m.content; }
   // 明朝は Android に入っていないことがあるので、選んだときだけ Web フォントを読む
   if (p.font === 'serif' && !document.getElementById('serifFont')) {
     const l = document.createElement('link');

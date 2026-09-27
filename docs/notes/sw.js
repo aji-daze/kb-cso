@@ -1,6 +1,6 @@
 // 画面一式をキャッシュして、電波がなくても開けるようにする。
 // ノートの本文は IndexedDB 側にあるのでここでは触らない。OneDrive への通信（別オリジン）にも触らない。
-const VERSION = 'notes-v3';
+const VERSION = 'notes-v4';
 const SHELL = [
   './',
   './index.html',
@@ -46,20 +46,21 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
 
-  // 画面の読み込みは、サインインから戻ったとき ?code=… が付く。付いたまま控えないよう、
-  // 画面そのものは常に index.html として扱う。
+  // 画面の読み込みは、サインインから戻ったとき ?code=…、共有から来たとき ?text=… が付く。
+  // 付いたまま控えないよう、画面そのものは常に index.html として扱う。
   const key = req.mode === 'navigate' ? new Request('./index.html') : req;
 
-  // 自分のファイルはキャッシュ優先。裏で新しいものを取ってきて次回に備える。
-  e.respondWith(
-    caches.match(key).then((hit) => {
-      const net = fetch(req)
-        .then((res) => {
-          if (res && res.ok) caches.open(VERSION).then((c) => c.put(key, res.clone()));
-          return res;
-        })
-        .catch(() => hit);
-      return hit || net;
-    })
-  );
+  // 電波があれば新しいものを優先する（古い画面と新しい画面の部品が混ざらないように）。
+  // 3 秒で返ってこなければ控えを出す。電波がなければ控えだけで動く。
+  e.respondWith((async () => {
+    const cache = await caches.open(VERSION);
+    const hit = await cache.match(key);
+    const net = fetch(req, { cache: 'no-cache' }).then((res) => {
+      if (res && res.ok) cache.put(key, res.clone());
+      return res;
+    });
+    if (!hit) return net;
+    const late = new Promise((r) => setTimeout(() => r(hit), 3000));
+    return Promise.race([net.catch(() => hit), late]);
+  })());
 });

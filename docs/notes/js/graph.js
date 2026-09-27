@@ -109,6 +109,7 @@ async function fetchUrl(url) {
 // 間に書き換えがあっても「古い版の番号で新しい中身」にはならない（逆はありうるが、それは保存時に 412 で分かる）。
 export async function readText(id) {
   const m = await meta(id);
+  if (!m.url && m.size === 0) return { text: '', eTag: m.eTag, item: m }; // 空のファイル
   const r = await fetchUrl(m.url);
   return { text: await r.text(), eTag: m.eTag, item: m };
 }

@@ -57,6 +57,7 @@
     <nav class="tree" id="tree"></nav>
     <div class="side-foot">
       <span class="muted" id="treeInfo"></span>
+      <button class="btn small" id="btnSideNew">＋ 新規</button>
       <button class="btn small" id="btnRefresh">再読込</button>
     </div>
   </aside>
@@ -64,6 +65,7 @@
 
   <main class="main" id="main">
     <section class="home" id="home"></section>
+    <div class="crumb" id="crumb" hidden></div>
     <article class="md" id="view" hidden></article>
     <div class="editwrap" id="editwrap" hidden>
       <div class="tools" id="tools" role="toolbar" aria-label="書式">
@@ -203,6 +205,22 @@
       <button type="button" class="btn primary" id="cfBoth">両方残す（自分の版を別名で保存）</button>
       <button type="button" class="btn" id="cfRemote">OneDrive の版にする（自分の変更は捨てる）</button>
       <button type="button" class="btn danger" id="cfMine">自分の版で上書きする</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- パスワードを変える -->
+<dialog id="dlgPw">
+  <form class="dlg" id="formPw">
+    <h2>パスワードを変える</h2>
+    <input type="text" name="username" autocomplete="username" value="notes" hidden>
+    <label>今のパスワード<input type="password" id="pwOld" autocomplete="current-password" required></label>
+    <label>新しいパスワード（6 文字以上）<input type="password" id="pwNew" autocomplete="new-password" required></label>
+    <label>新しいパスワードをもう一度<input type="password" id="pwNew2" autocomplete="new-password" required></label>
+    <p class="err" id="pwErr" hidden></p>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="btnPwCancel">やめる</button>
+      <button type="submit" class="btn primary" id="btnPwOk">変える</button>
     </div>
   </form>
 </dialog>

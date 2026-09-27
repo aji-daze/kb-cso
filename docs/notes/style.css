@@ -335,13 +335,14 @@ dialog {
   background: var(--surface); color: var(--tx);
   width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 40px);
 }
+dialog { overflow-y: auto; overscroll-behavior: contain; }
 dialog::backdrop { background: rgba(0,0,0,.35); }
 .dlg { padding: 18px 20px; }
 .dlg h2 { margin: 0 0 12px; font-size: 18px; }
 .dlg h3 { margin: 0 0 8px; font-size: 15px; }
 .dlg section { padding: 12px 0; border-top: 1px solid var(--line); }
 .dlg label { display: block; margin: 8px 0; font-size: 14px; color: var(--sub); }
-.dlg input[type="text"], .dlg select {
+.dlg input[type="text"], .dlg input[type="password"], .dlg select {
   display: block; width: 100%; margin-top: 4px; padding: 7px 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--tx); font-size: 16px;
 }
@@ -382,3 +383,20 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .dlg .check { justify-content: flex-start; }
 .check input { width: 18px; height: 18px; accent-color: var(--acc); }
 .linkbtn { border: 0; background: none; color: var(--sub); font-size: 13px; text-decoration: underline; cursor: pointer; }
+
+/* ---------- ノートの置き場所・更新 ---------- */
+.crumb {
+  max-width: var(--measure); margin: 0 auto 10px; font-size: 12.5px; color: var(--sub);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.crumb .dot { margin: 0 6px; opacity: .6; }
+.editing .crumb { display: none; }
+
+/* 狭いスマホでは上の帯の＋を一覧の下に移す（題名が読めるように） */
+@media (max-width: 420px) {
+  #btnNew { display: none; }
+  .bar .icon { width: 38px; }
+  .mode { padding: 0 11px; margin: 0 2px; }
+}
+.side-foot .btn + .btn { margin-left: 6px; }
+.side-foot span { flex: 1; }

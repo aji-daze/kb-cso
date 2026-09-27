@@ -59,6 +59,7 @@ $('banner').addEventListener('click', (e) => {
 });
 
 function toast(msg) {
+  for (const old of document.querySelectorAll('.toast')) old.remove();
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = msg;
@@ -79,10 +80,40 @@ function fail(e) {
 }
 
 
+// ---------------------------------------------------------------- 端末の「戻る」
+// スマホで一覧や目次を開いたとき、履歴を1つ積んでおく。Android の「戻る」でそれを閉じる
+// （積まないと、戻るで前のノートへ行ってしまう）。
+let overlays = 0;
+const narrow = () => matchMedia('(max-width: 899px)').matches;
+function pushOverlay() {
+  history.pushState({ overlay: true }, '');
+  overlays++;
+}
+// 画面の操作で閉じたとき：積んだ分を取り消す
+function popOverlay() {
+  if (!overlays) return;
+  overlays--;
+  history.back();
+}
+window.addEventListener('popstate', () => {
+  if (!overlays) return;
+  overlays--;
+  if (document.body.classList.contains('side-open') && narrow()) { document.body.classList.remove('side-open'); return; }
+  if (!$('outline').hidden && !wide()) { $('outline').hidden = true; }
+});
+
 const side = {
-  open() { document.body.classList.add('side-open'); },
-  close() { document.body.classList.remove('side-open'); },
-  toggle() { document.body.classList.toggle('side-open'); },
+  open() {
+    if (document.body.classList.contains('side-open')) return;
+    document.body.classList.add('side-open');
+    if (narrow()) pushOverlay();
+  },
+  close() {
+    if (!document.body.classList.contains('side-open')) return;
+    document.body.classList.remove('side-open');
+    if (narrow()) popOverlay();
+  },
+  toggle() { if (document.body.classList.contains('side-open')) side.close(); else side.open(); },
 };
 
 // ---------------------------------------------------------------- 一覧（サイドバー）
@@ -92,7 +123,13 @@ async function saveTree() {
 }
 
 function renderTree() {
-  const open = openFolders;
+  const open = new Set(openFolders);
+  if (cur) {
+    // いま開いているノートの親フォルダは開いて見せる
+    let d = V.dirName(cur.path);
+    while (d) { open.add(d); d = V.dirName(d); }
+  }
+  const y = $('tree').scrollTop;
   const t = V.tree();
   const node = (n, depth) => {
     let h = '';
@@ -106,7 +143,13 @@ function renderTree() {
     }
     return h;
   };
-  $('tree').innerHTML = node(t, 0) || '<p class="muted pad">ノートがありません</p>';
+  $('tree').innerHTML = node(t, 0) || '<p class="muted pad">' + (vault ? 'ノートがありません' : '保管庫がまだ選ばれていません') + '</p>';
+  $('tree').scrollTop = y;
+  const on = $('tree').querySelector('.file.on');
+  if (on) {
+    const r = on.getBoundingClientRect(), box = $('tree').getBoundingClientRect();
+    if (r.top < box.top || r.bottom > box.bottom) on.scrollIntoView({ block: 'center' });
+  }
   $('treeInfo').textContent = V.notes().length ? V.notes().length + ' ノート' : '';
 }
 
@@ -117,7 +160,12 @@ $('tree').addEventListener('toggle', (e) => {
   DB.setting('open', [...openFolders]).catch(() => {});
 }, true);
 
-async function refreshTree() {
+let treeJob = null;
+function refreshTree() {
+  if (!treeJob) treeJob = loadTree().finally(() => { treeJob = null; });
+  return treeJob;
+}
+async function loadTree() {
   if (!vault || !(await Auth.signedIn())) return;
   $('treeInfo').textContent = '読み込み中…';
   try {
@@ -170,11 +218,15 @@ async function fullSearch(q) {
   const files = await DB.all('files');
   for (const f of files) {
     if (!V.get(f.path)) continue;
-    const t = f.text.normalize('NFKC').toLowerCase();
-    const i = t.indexOf(k);
-    if (i < 0) continue;
+    // 抜粋の位置は元の文字で取る（正規化すると長さが変わる文字があり、ずれる）
+    let i = f.text.toLowerCase().indexOf(q.toLowerCase());
+    let len = q.length;
+    if (i < 0) {
+      if (!f.text.normalize('NFKC').toLowerCase().includes(k)) continue;
+      i = 0; len = 0; // 正規化で初めて当たった。場所は示さず冒頭を出す
+    }
     const s = Math.max(0, i - 30);
-    const snip = esc(f.text.slice(s, i)) + '<mark>' + esc(f.text.slice(i, i + q.length)) + '</mark>' + esc(f.text.slice(i + q.length, i + q.length + 50));
+    const snip = esc(f.text.slice(s, i)) + (len ? '<mark>' + esc(f.text.slice(i, i + len)) + '</mark>' : '') + esc(f.text.slice(i + len, i + len + 60));
     hits.set(f.path, { path: f.path, snip });
   }
   const local = files.length;
@@ -206,6 +258,14 @@ $('q').addEventListener('keydown', (e) => {
 
 function route() {
   if (!L.unlocked()) return;
+  if (location.hash === '#new' || location.hash === '#search') {
+    const what = location.hash;
+    history.replaceState(null, '', location.pathname);
+    showHome();
+    if (what === '#new') createNote();
+    else { side.open(); $('q').focus(); }
+    return;
+  }
   const h = new URLSearchParams(location.hash.slice(1));
   const path = h.get('n');
   if (path) openNote(path, h.get('h') || '');
@@ -217,13 +277,22 @@ function go(path, heading = '') {
   h.set('n', path);
   if (heading) h.set('h', heading);
   const next = '#' + h.toString();
+  if (overlays) {
+    // 一覧・目次を開いたまま移る。積んだ履歴の上書きで移れば「戻る」で前のノートに戻れる
+    overlays = 0;
+    document.body.classList.remove('side-open');
+    if (!wide()) $('outline').hidden = true;
+    history.replaceState(null, '', next);
+    route();
+    return;
+  }
   if (location.hash === next) {
     const el = R.findHeading($('view'), heading);
     if (el) el.scrollIntoView();
   } else {
     location.hash = next;
   }
-  if (matchMedia('(max-width: 899px)').matches) side.close();
+  if (narrow()) side.close();
 }
 
 window.addEventListener('hashchange', route);
@@ -232,6 +301,8 @@ async function showHome() {
   await leave();
   cur = null;
   $('title').textContent = 'ノート';
+  document.title = 'ノート';
+  $('crumb').hidden = true;
   $('btnMode').hidden = true;
   $('btnOutline').hidden = true;
   $('outline').hidden = true;
@@ -253,12 +324,30 @@ async function showHome() {
       '<a class="row-link" href="#" data-note="' + esc(d.path) + '">' + esc(V.title(d.path)) +
       (d.conflict ? ' <span class="pill warn">競合・開いて選ぶ</span>' : ' <span class="pill">未送信</span>') + '</a>').join('') + '</div>';
   }
+  const updated = V.notes().filter((it) => it.mtime).sort((a, b) => (a.mtime < b.mtime ? 1 : -1)).slice(0, 8);
+  if (updated.length) {
+    h += '<div class="card"><h2>最近更新されたノート <small class="muted">PC で書いたものも</small></h2>' + updated.map((it) =>
+      '<a class="row-link" href="#" data-note="' + esc(it.path) + '">' + esc(V.title(it.path)) +
+      '<small>' + esc(when(it.mtime)) + (V.dirName(it.path) ? ' · ' + esc(V.dirName(it.path)) : '') + '</small></a>').join('') + '</div>';
+  }
   if (recent.length) {
     h += '<div class="card"><h2>最近開いたノート</h2>' + recent.map((p) =>
       '<a class="row-link" href="#" data-note="' + esc(p) + '">' + esc(V.title(p)) + '<small>' + esc(V.dirName(p)) + '</small></a>').join('') + '</div>';
   }
   if (!h) h = '<div class="card"><p class="muted">左の一覧からノートを開く。</p></div>';
   $('home').innerHTML = h;
+}
+
+// 「たった今」「3 時間前」「9/27」
+function when(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return '';
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return 'たった今';
+  if (m < 60) return m + ' 分前';
+  if (m < 24 * 60) return Math.round(m / 60) + ' 時間前';
+  const d = new Date(t);
+  return (d.getFullYear() === new Date().getFullYear() ? '' : d.getFullYear() + '/') + (d.getMonth() + 1) + '/' + d.getDate();
 }
 
 function remember(path) {
@@ -292,6 +381,7 @@ async function openNote(path, heading) {
   if (matchMedia('(max-width: 899px)').matches) side.close();
   $('home').hidden = true;
   $('title').textContent = V.title(path);
+  document.title = V.title(path) + ' - ノート';
   $('btnMode').hidden = false;
   renderTree();
   status('');
@@ -342,6 +432,7 @@ async function openNote(path, heading) {
 }
 
 function showMissing(note) {
+  $('crumb').hidden = true;
   $('view').hidden = false;
   $('editwrap').hidden = true;
   $('btnMode').hidden = true;
@@ -362,6 +453,7 @@ function show(note, heading, keepScroll) {
     $('btnMode').title = '閲覧に戻る (Ctrl+E)';
     $('btnOutline').hidden = true;
     $('outline').hidden = true;
+    $('crumb').hidden = true;
     document.body.classList.add('editing');
     return;
   }
@@ -373,6 +465,7 @@ function show(note, heading, keepScroll) {
   R.decorate(view, note.path);
   loadMedia(view);
   loadEmbeds(view, note.path);
+  showCrumb(note);
   view.hidden = false;
   $('editwrap').hidden = true;
   $('btnMode').textContent = '編集';
@@ -385,6 +478,22 @@ function show(note, heading, keepScroll) {
     const el = R.findHeading(view, heading);
     if (el) el.scrollIntoView(); else main.scrollTop = 0;
   }
+}
+
+// ノートの上に、置き場所と最終更新を小さく出す
+function showCrumb(note) {
+  const it = V.get(note.path);
+  const dir = V.dirName(note.path);
+  const parts = [];
+  if (dir) parts.push(esc(dir.split('/').join(' › ')));
+  if (it && it.mtime) parts.push('更新 ' + esc(when(it.mtime)));
+  // 記号（# や - や ** など）は数えない。画面に出ている本文の文字数
+  const view = $('view').cloneNode(true);
+  for (const x of view.querySelectorAll('.props, .embed')) x.remove();
+  const words = view.textContent.replace(/\s+/g, '').length;
+  if (words) parts.push(words.toLocaleString() + ' 字');
+  $('crumb').innerHTML = parts.join('<span class="dot">·</span>');
+  $('crumb').hidden = !parts.length;
 }
 
 function loadMedia(root) {
@@ -454,6 +563,7 @@ function markDirty(note) {
 }
 
 function saveDraft(note) {
+  if (!note.dirty) return Promise.resolve();
   return DB.put('drafts', { path: note.path, text: note.text, baseETag: note.baseETag, at: Date.now() });
 }
 
@@ -776,7 +886,9 @@ function renderOutline() {
 
 function toggleOutline(open) {
   const el = $('outline');
+  const was = !el.hidden;
   el.hidden = open === undefined ? !el.hidden : !open;
+  if (!wide() && was !== !el.hidden) { if (el.hidden) popOverlay(); else pushOverlay(); }
   if (wide()) try { localStorage.setItem('notes.outline', el.hidden ? '0' : '1'); } catch { /* 無視 */ }
   renderOutline();
 }
@@ -828,18 +940,24 @@ function createNote(path) {
   const dirs = [''].concat(V.items.filter((it) => it.isFolder).map((it) => it.path).sort((a, b) => a.localeCompare(b, 'ja')));
   const here = cur ? V.dirName(cur.path) : '';
   $('newDir').innerHTML = dirs.map((d) => '<option value="' + esc(d) + '"' + (d === here ? ' selected' : '') + '>' + (d ? esc(d) : '（一番上）') + '</option>').join('');
-  $('newName').value = '';
+  $('newName').value = sharedTitle || '';
+  sharedTitle = '';
   $('newErr').hidden = true;
   $('dlgNew').showModal();
   $('newName').focus();
 }
 
+let shared = '';
+let sharedTitle = '';   // ほかのアプリから「共有」で受け取った文字。次に作るノートの中身にする
+
 async function doCreate(path) {
   if (!vault) return openSettings();
+  const body = shared;
   try {
-    const it = await G.createText(vault + '/' + path, '');
+    const it = await G.createText(vault + '/' + path, body);
+    shared = '';
     V.upsert({ ...it, path });
-    await DB.put('files', { path, text: '', eTag: it.eTag, at: Date.now() });
+    await DB.put('files', { path, text: body, eTag: it.eTag, at: Date.now() });
     await saveTree();
     renderTree();
     if (cur && cur.path === path) cur = null; // 「まだありません」から作ったときは開き直す
@@ -854,7 +972,8 @@ async function doCreate(path) {
 }
 
 $('btnNew').addEventListener('click', () => createNote());
-$('btnNewCancel').addEventListener('click', () => $('dlgNew').close());
+$('btnSideNew').addEventListener('click', () => { if (narrow()) side.close(); createNote(); });
+$('btnNewCancel').addEventListener('click', () => { shared = ''; $('dlgNew').close(); });
 $('formNew').addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = $('newName').value.trim().replace(/\.md$/i, '');
@@ -902,16 +1021,30 @@ $('btnLockNow').addEventListener('click', async () => {
   if (cur && cur.dirty) await saveDraft(cur);
   L.lockNow();
 });
-$('btnChangePw').addEventListener('click', async () => {
-  const oldPw = prompt('今のパスワード');
-  if (oldPw === null) return;
-  const nw = prompt('新しいパスワード（6 文字以上）');
-  if (nw === null) return;
-  if (nw.length < 6) return toast('6 文字以上にしてください');
-  if (prompt('新しいパスワードをもう一度') !== nw) return toast('2 回の入力が違います');
-  toast('入れ直しています…');
-  if (await L.change(oldPw, nw)) toast('パスワードを変えました');
-  else toast('今のパスワードが違います');
+$('btnChangePw').addEventListener('click', () => {
+  for (const id of ['pwOld', 'pwNew', 'pwNew2']) $(id).value = '';
+  $('pwErr').hidden = true;
+  $('dlgPw').showModal();
+});
+$('btnPwCancel').addEventListener('click', () => $('dlgPw').close());
+$('formPw').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = (m) => { $('pwErr').textContent = m; $('pwErr').hidden = false; };
+  const nw = $('pwNew').value;
+  if (nw.length < 6) return err('6 文字以上にしてください');
+  if (nw !== $('pwNew2').value) return err('新しいパスワードの 2 回の入力が違います');
+  const btn = $('btnPwOk');
+  btn.disabled = true;
+  btn.textContent = '入れ直し中…';
+  try {
+    if (await L.change($('pwOld').value, nw)) { $('dlgPw').close(); toast('パスワードを変えました'); }
+    else err('今のパスワードが違います');
+  } catch (x) {
+    err('変えられませんでした：' + x.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '変える';
+  }
 });
 
 async function refreshSignState() {
@@ -938,6 +1071,11 @@ async function storeSettings() {
 }
 
 $('btnSettings').addEventListener('click', openSettings);
+// 入力欄で Enter を押すと、既定では保存せずにダイアログが閉じる。保存してから閉じる
+$('dlgSettings').querySelector('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('btnSaveSettings').click();
+});
 $('btnSaveSettings').addEventListener('click', async () => {
   await storeSettings();
   $('dlgSettings').close();
@@ -1032,6 +1170,7 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   // 戻ってきた。PC 側で書き換えられているかもしれないので確かめる
+  if (!L.unlocked()) return;
   if (Date.now() - lastTreeAt > 5 * 60 * 1000) refreshTree();
   if (cur && !cur.dirty && cur.loaded && V.get(cur.path)) {
     const note = cur;
@@ -1069,13 +1208,15 @@ async function unlockScreen() {
     $('lockForm').onsubmit = async (e) => {
       e.preventDefault();
       const pw = $('lockPw').value;
+      const label = $('lockOk').textContent;
       $('lockOk').disabled = true;
+      $('lockOk').textContent = '確かめています…';
       try {
         if (first) {
           if (pw.length < 6) return err('6 文字以上にしてください');
           if (pw !== $('lockPw2').value) return err('2 回の入力が違います');
           await L.setup(pw);
-          if ($('lockRemember').checked) await L.unlock(pw, true);
+          if ($('lockRemember').checked) await L.rememberNow();
         } else if (!(await L.unlock(pw, $('lockRemember').checked))) {
           $('lockPw').select();
           return err('パスワードが違います');
@@ -1084,6 +1225,7 @@ async function unlockScreen() {
         done();
       } finally {
         $('lockOk').disabled = false;
+        $('lockOk').textContent = label;
       }
     };
   });
@@ -1121,7 +1263,8 @@ async function start() {
   recent = (await DB.setting('recent')) || [];
 
   const back = await Auth.finishSignIn();
-  if (back && !back.ok) toast('サインインできませんでした：' + back.message);
+  if (back && !back.ok && !back.silent) toast('サインインできませんでした：' + back.message);
+  receiveShare();
 
   vault = (await DB.setting('vault')) || '';
   const tree = await DB.setting('tree');
@@ -1138,9 +1281,32 @@ async function start() {
   }
   // 一覧を取り直す前に更新用トークンが生きているか確かめる。切れていれば案内だけ出す
   try {
-    if (!(await Auth.getToken())) return needSignIn();
+    if (!(await Auth.getToken())) {
+      // 更新用トークンが切れた（1 日で切れる）。Microsoft 側にログインが残っていれば、
+      // 画面を出さずに通り直せるので、1 回だけ試す。だめなら案内を出す
+      if (Auth.canTrySilent() && navigator.onLine) return Auth.signIn(true).catch(needSignIn);
+      return needSignIn();
+    }
   } catch { return; } // 電波がない。控えで動く
   refreshTree();
+}
+
+// Android の「共有」でほかのアプリから来たとき（?title=…&text=…&url=…）
+function receiveShare() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('text') && !q.has('url') && !q.has('title')) return;
+  const title = (q.get('title') || '').trim();
+  const text = (q.get('text') || '').trim();
+  const url = (q.get('url') || '').trim();
+  history.replaceState(null, '', location.pathname + location.hash);
+  const lines = [];
+  if (text) lines.push(text);
+  if (url && !text.includes(url)) lines.push(title ? '[' + title.replace(/[[\]]/g, '') + '](' + url + ')' : url);
+  shared = lines.join('\n\n') + '\n';
+  const d = new Date();
+  sharedTitle = (title || text.split('\n')[0] || 'メモ').replace(/[\\/:*?"<>|#^[\]]/g, ' ').trim().slice(0, 40) ||
+    ('メモ ' + (d.getMonth() + 1) + '-' + d.getDate());
+  setTimeout(() => createNote(), 0);
 }
 
 start();

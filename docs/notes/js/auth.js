@@ -12,6 +12,7 @@ const SCOPE = 'Files.ReadWrite offline_access User.Read';
 const VERIFIER_KEY = 'notes.auth.verifier';
 const STATE_KEY = 'notes.auth.state';
 const RETURN_KEY = 'notes.auth.return';
+const SILENT_KEY = 'notes.auth.silent';
 
 export const redirectUri = () => location.origin + location.pathname;
 
@@ -41,7 +42,8 @@ export async function clientId() {
 const tenant = async () => (await DB.setting('tenant')) || 'common';
 
 // 認証画面へ飛ばす。戻ってきたときは finishSignIn() が受け取る。
-export async function signIn() {
+// silent = true：画面を出さずに通す（Microsoft 側にログインが残っていれば、そのまま戻ってくる）
+export async function signIn(silent = false) {
   const id = await clientId();
   if (!id) throw new Error('クライアント ID が設定されていません');
   const verifier = randomString(64);
@@ -50,6 +52,7 @@ export async function signIn() {
     sessionStorage.setItem(VERIFIER_KEY, verifier);
     sessionStorage.setItem(STATE_KEY, state);
     sessionStorage.setItem(RETURN_KEY, location.hash);
+    if (silent) sessionStorage.setItem(SILENT_KEY, '1');
   } catch {
     throw new Error('この画面では認証を保持できません（プライベートモード？）');
   }
@@ -61,6 +64,7 @@ export async function signIn() {
   u.searchParams.set('code_challenge', await challenge(verifier));
   u.searchParams.set('code_challenge_method', 'S256');
   u.searchParams.set('state', state);
+  if (silent) u.searchParams.set('prompt', 'none');
   // Microsoft へ行って戻ってくる間だけ鍵を預けておく（戻るたびにパスワードを聞かないため。10 分で無効）
   await L.handoff();
   location.assign(u.toString());
@@ -93,16 +97,18 @@ export async function finishSignIn() {
   const err = q.get('error');
   if (!code && !err) return null;
 
-  let verifier = null, want = null, ret = '';
+  let verifier = null, want = null, ret = '', silent = false;
   try {
     verifier = sessionStorage.getItem(VERIFIER_KEY);
     want = sessionStorage.getItem(STATE_KEY);
     ret = sessionStorage.getItem(RETURN_KEY) || '';
-    for (const k of [VERIFIER_KEY, STATE_KEY, RETURN_KEY]) sessionStorage.removeItem(k);
+    silent = sessionStorage.getItem(SILENT_KEY) === '1';
+    for (const k of [VERIFIER_KEY, STATE_KEY, RETURN_KEY, SILENT_KEY]) sessionStorage.removeItem(k);
   } catch { /* 取れなければ下で弾く */ }
   history.replaceState(null, '', location.pathname + ret);
 
-  if (err) return { ok: false, message: q.get('error_description') || err };
+  // 黙って通そうとして「画面での操作が要る」と返ってきたときは、失敗の知らせを出さない
+  if (err) return { ok: false, silent, message: q.get('error_description') || err };
   if (!verifier) return { ok: false, message: '認証の途中経過が失われました。もう一度サインインしてください' };
   if (!want || want !== q.get('state')) return { ok: false, message: '認証の照合に失敗しました。もう一度サインインしてください' };
   try {
@@ -111,6 +117,15 @@ export async function finishSignIn() {
   } catch (e) {
     return { ok: false, message: e.message };
   }
+}
+
+// このタブで一度だけ黙ってサインインし直してよいか（繰り返すと行ったり来たりになる）
+export function canTrySilent() {
+  try {
+    if (sessionStorage.getItem('notes.auth.triedSilent')) return false;
+    sessionStorage.setItem('notes.auth.triedSilent', '1');
+    return true;
+  } catch { return false; }
 }
 
 // 使えるアクセストークンを返す。切れていれば更新用トークンで取り直す。
