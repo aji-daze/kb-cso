@@ -1,4 +1,5 @@
 {
+  "id": "./",
   "name": "MEMO",
   "short_name": "MEMO",
   "description": "開いた瞬間に書ける、最小のメモ",
@@ -9,9 +10,22 @@
   "theme_color": "#0e0e0e",
   "lang": "ja",
   "dir": "ltr",
+  "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "新しいメモ", "short_name": "新規", "url": "./?new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "メモの一覧", "short_name": "一覧", "url": "./?list", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ],
+  "share_target": {
+    "action": "./",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
+  "file_handlers": [
+    { "action": "./", "accept": { "text/plain": [".txt"], "text/markdown": [".md", ".markdown"] } }
   ]
 }

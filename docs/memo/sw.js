@@ -1,6 +1,6 @@
 // 画面一式をキャッシュし、2回目以降はネットワークを待たずに開く。
 // 保存データは localStorage 側にあるのでここでは触らない。
-const VERSION = 'memo-v4';
+const VERSION = 'memo-v5';
 const SHELL = [
   './',
   './index.html',
@@ -22,7 +22,8 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      // 同じドメインの他のアプリのキャッシュは消さない（caches は共有）
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('memo-') && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -32,12 +33,13 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
 
   // キャッシュ優先。裏で新しいものを取ってきて次回に備える。
-  // ?x=1 などが付いても同じ画面を返す。
+  // 画面そのもの（共有・ショートカットで ?text= などが付く）は './' の1件にまとめて持つ。
+  const key = req.mode === 'navigate' ? './' : req;
   e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => {
+    caches.match(key, { ignoreSearch: true }).then((hit) => {
       const net = fetch(req)
         .then((res) => {
-          if (res && res.ok) caches.open(VERSION).then((c) => c.put(req, res.clone()));
+          if (res && res.ok) caches.open(VERSION).then((c) => c.put(key, res.clone()));
           return res;
         })
         .catch(() => hit);
