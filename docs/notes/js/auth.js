@@ -4,7 +4,8 @@
 // 栞と違うのは、書き込むので Files.ReadWrite を取ること。
 // 更新用トークンは SPA 向けには 24 時間しか持たないので、1日に1回くらいはサインインし直しになる。
 // Microsoft 側にログインが残っていれば、ボタンを押すだけで戻ってくる。
-import * as DB from './db.js';
+import * as DB from './store.js';
+import * as L from './lock.js';
 import { CLIENT_ID } from '../config.js';
 
 const SCOPE = 'Files.ReadWrite offline_access User.Read';
@@ -60,6 +61,8 @@ export async function signIn() {
   u.searchParams.set('code_challenge', await challenge(verifier));
   u.searchParams.set('code_challenge_method', 'S256');
   u.searchParams.set('state', state);
+  // Microsoft へ行って戻ってくる間だけ鍵を預けておく（戻るたびにパスワードを聞かないため。10 分で無効）
+  await L.handoff();
   location.assign(u.toString());
   return new Promise(() => {}); // 戻ってくるまで先へ進まない
 }

@@ -16,7 +16,24 @@
 <link rel="stylesheet" href="style.css">
 <title>ノート</title>
 </head>
-<body>
+<body class="locked">
+
+<!-- 鍵。開くまでは中身を何も出さない -->
+<div class="lock" id="lock" hidden>
+  <form class="lock-box" id="lockForm" autocomplete="on">
+    <img src="icons/icon-192.png" alt="" width="64" height="64">
+    <h1>ノート</h1>
+    <p class="muted" id="lockMsg"></p>
+    <!-- パスワード管理（Google パスワード マネージャーなど）が覚えられるように、名前の欄を隠して置く -->
+    <input type="text" name="username" autocomplete="username" value="notes" hidden>
+    <input type="password" id="lockPw" name="password" placeholder="パスワード" required>
+    <input type="password" id="lockPw2" placeholder="もう一度" autocomplete="new-password" hidden>
+    <label class="check"><input type="checkbox" id="lockRemember"> この端末では次から入力しない</label>
+    <p class="err" id="lockErr" hidden></p>
+    <button class="btn primary" id="lockOk">開く</button>
+    <button type="button" class="linkbtn" id="lockForgot">パスワードを忘れた</button>
+  </form>
+</div>
 
 <header class="bar">
   <button class="icon" id="btnMenu" title="一覧" aria-label="一覧">☰</button>
@@ -139,6 +156,25 @@
       <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault"></label>
       <div class="row"><button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button></div>
       <div class="picker" id="picker" hidden></div>
+    </section>
+
+    <section>
+      <h3>パスワード</h3>
+      <p class="muted">この端末に控えるノート・書きかけ・サインイン情報は、パスワードで暗号化してある。</p>
+      <label class="check"><input type="checkbox" id="setRemember"> この端末では入力を省く（自分専用の端末だけにする）</label>
+      <label>画面を離れてから鍵をかけるまで
+        <select id="setAutolock">
+          <option value="1">1 分</option>
+          <option value="5">5 分</option>
+          <option value="15">15 分</option>
+          <option value="60">1 時間</option>
+          <option value="0">かけない（閉じるまで）</option>
+        </select>
+      </label>
+      <div class="row">
+        <button type="button" class="btn" id="btnLockNow">今すぐ鍵をかける</button>
+        <button type="button" class="btn" id="btnChangePw">パスワードを変える</button>
+      </div>
     </section>
 
     <section>

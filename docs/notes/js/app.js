@@ -5,8 +5,9 @@
 //          → 裏で OneDrive から最新を取り、変わっていれば差し替える
 //   書く   → すぐ drafts に控える（閉じても消えない）→ 2 秒止まったら OneDrive へ送る
 //   送る   → 読んだときの版（eTag）を添える。食い違えば「競合」を出して選ばせる
-import * as DB from './db.js';
+import * as DB from './store.js';
 import * as Auth from './auth.js';
+import * as L from './lock.js';
 import * as G from './graph.js';
 import * as V from './vault.js';
 import * as R from './render.js';
@@ -24,6 +25,9 @@ let draftTimer = 0;
 let retryTimer = 0;
 let pushing = null;
 const blobUrls = new Map();
+// 開いたフォルダと最近のノート。ノート名が入るので localStorage ではなく暗号化して控える
+let openFolders = new Set();
+let recent = [];
 const wide = () => matchMedia('(min-width: 1200px)').matches;
 const touch = () => matchMedia('(pointer: coarse)').matches;
 
@@ -88,7 +92,7 @@ async function saveTree() {
 }
 
 function renderTree() {
-  const open = new Set(JSON.parse(localStorage.getItem('notes.open') || '[]'));
+  const open = openFolders;
   const t = V.tree();
   const node = (n, depth) => {
     let h = '';
@@ -109,9 +113,8 @@ function renderTree() {
 $('tree').addEventListener('toggle', (e) => {
   const d = e.target;
   if (!d.matches || !d.matches('details.folder')) return;
-  const open = new Set(JSON.parse(localStorage.getItem('notes.open') || '[]'));
-  if (d.open) open.add(d.dataset.path); else open.delete(d.dataset.path);
-  try { localStorage.setItem('notes.open', JSON.stringify([...open])); } catch { /* 入らなくても困らない */ }
+  if (d.open) openFolders.add(d.dataset.path); else openFolders.delete(d.dataset.path);
+  DB.setting('open', [...openFolders]).catch(() => {});
 }, true);
 
 async function refreshTree() {
@@ -202,6 +205,7 @@ $('q').addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- 画面の切り替え
 
 function route() {
+  if (!L.unlocked()) return;
   const h = new URLSearchParams(location.hash.slice(1));
   const path = h.get('n');
   if (path) openNote(path, h.get('h') || '');
@@ -238,7 +242,6 @@ async function showHome() {
   status('');
   renderTree();
 
-  const recent = JSON.parse(localStorage.getItem('notes.recent') || '[]');
   const drafts = await DB.all('drafts');
   let h = '';
   if (!vault || !(await Auth.clientId())) {
@@ -259,9 +262,8 @@ async function showHome() {
 }
 
 function remember(path) {
-  let r = JSON.parse(localStorage.getItem('notes.recent') || '[]').filter((p) => p !== path);
-  r.unshift(path);
-  try { localStorage.setItem('notes.recent', JSON.stringify(r.slice(0, 15))); } catch { /* 入らなくても困らない */ }
+  recent = [path].concat(recent.filter((p) => p !== path)).slice(0, 15);
+  DB.setting('recent', recent).catch(() => {});
 }
 
 // 別のノートへ移る前に、書きかけを控えて送る
@@ -880,8 +882,37 @@ async function openSettings() {
   $('setupHelp').open = !$('setClient').value;
   $('picker').hidden = true;
   await refreshSignState();
+  await refreshLockState();
   $('dlgSettings').showModal();
 }
+
+async function refreshLockState() {
+  $('setRemember').checked = await L.remembered();
+  $('setAutolock').value = String(lockAfter());
+  $('setAutolock').disabled = $('setRemember').checked;
+}
+$('setRemember').addEventListener('change', async (e) => {
+  if (e.target.checked) await L.rememberNow(); else await L.forget();
+  refreshLockState();
+});
+$('setAutolock').addEventListener('change', (e) => {
+  try { localStorage.setItem('notes.autolock', e.target.value); } catch { /* 無視 */ }
+});
+$('btnLockNow').addEventListener('click', async () => {
+  if (cur && cur.dirty) await saveDraft(cur);
+  L.lockNow();
+});
+$('btnChangePw').addEventListener('click', async () => {
+  const oldPw = prompt('今のパスワード');
+  if (oldPw === null) return;
+  const nw = prompt('新しいパスワード（6 文字以上）');
+  if (nw === null) return;
+  if (nw.length < 6) return toast('6 文字以上にしてください');
+  if (prompt('新しいパスワードをもう一度') !== nw) return toast('2 回の入力が違います');
+  toast('入れ直しています…');
+  if (await L.change(oldPw, nw)) toast('パスワードを変えました');
+  else toast('今のパスワードが違います');
+});
 
 async function refreshSignState() {
   const on = await Auth.signedIn();
@@ -1016,9 +1047,78 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// ---------------------------------------------------------------- パスワード
+
+// 鍵が開くまで画面を出さない。初めてならパスワードを決めてもらう
+async function unlockScreen() {
+  const first = !(await L.configured());
+  document.body.classList.add('locked');
+  $('lock').hidden = false;
+  $('lockMsg').textContent = first
+    ? 'この端末で使うパスワードを決めてください。端末に控えるノートやサインイン情報は、このパスワードで暗号化されます。'
+    : 'パスワードを入れてください。';
+  $('lockPw').autocomplete = first ? 'new-password' : 'current-password';
+  $('lockPw2').hidden = !first;
+  $('lockOk').textContent = first ? '決めて始める' : '開く';
+  $('lockForgot').hidden = first;
+  $('lockErr').hidden = true;
+  setTimeout(() => $('lockPw').focus(), 50);
+
+  await new Promise((done) => {
+    const err = (m) => { $('lockErr').textContent = m; $('lockErr').hidden = false; };
+    $('lockForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const pw = $('lockPw').value;
+      $('lockOk').disabled = true;
+      try {
+        if (first) {
+          if (pw.length < 6) return err('6 文字以上にしてください');
+          if (pw !== $('lockPw2').value) return err('2 回の入力が違います');
+          await L.setup(pw);
+          if ($('lockRemember').checked) await L.unlock(pw, true);
+        } else if (!(await L.unlock(pw, $('lockRemember').checked))) {
+          $('lockPw').select();
+          return err('パスワードが違います');
+        }
+        $('lockPw').value = $('lockPw2').value = '';
+        done();
+      } finally {
+        $('lockOk').disabled = false;
+      }
+    };
+  });
+  $('lock').hidden = true;
+  document.body.classList.remove('locked');
+}
+
+$('lockForgot').addEventListener('click', async () => {
+  if (!confirm('この端末に控えたノート・書きかけ・サインイン情報をすべて消して、パスワードを決め直します。\n' +
+    'OneDrive のファイルは消えません。OneDrive にまだ送っていない書きかけは失われます。')) return;
+  await L.reset();
+  location.reload();
+});
+
+// 画面を離れてしばらく経ったら鍵をかける（「入力を省く」にしていなければ）
+let hiddenAt = 0;
+const lockAfter = () => Number(localStorage.getItem('notes.autolock') || 5);
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  const min = lockAfter();
+  if (!hiddenAt || min <= 0 || !L.unlocked() || (await L.remembered())) return;
+  if (Date.now() - hiddenAt > min * 60 * 1000) {
+    if (cur && cur.dirty) await saveDraft(cur);
+    L.lockNow();
+  }
+});
+
 async function start() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   RD.applyPrefs();
+
+  if (!(await L.tryResume())) await unlockScreen();
+  document.body.classList.remove('locked');
+  openFolders = new Set((await DB.setting('open')) || []);
+  recent = (await DB.setting('recent')) || [];
 
   const back = await Auth.finishSignIn();
   if (back && !back.ok) toast('サインインできませんでした：' + back.message);

@@ -1,6 +1,6 @@
 // 画面一式をキャッシュして、電波がなくても開けるようにする。
 // ノートの本文は IndexedDB 側にあるのでここでは触らない。OneDrive への通信（別オリジン）にも触らない。
-const VERSION = 'notes-v2';
+const VERSION = 'notes-v3';
 const SHELL = [
   './',
   './index.html',
@@ -14,6 +14,8 @@ const SHELL = [
   './js/render.js',
   './js/vault.js',
   './js/reader.js',
+  './js/lock.js',
+  './js/store.js',
   './vendor/editor.js',
   './vendor/marked.js',
   './vendor/purify.js',
