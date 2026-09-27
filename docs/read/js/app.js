@@ -14,7 +14,7 @@ import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
-import { splitAozora, decodeText, looksAozora, splitPublisher } from './md.js';
+import { splitAozora, decodeText, looksAozora, splitPublisher, resplitParagraphs } from './md.js';
 import { supported as zipOK } from './zip.js';
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -172,6 +172,7 @@ async function addBook(meta, chapters, status = 'reading') {
     cover: meta.cover || null,
     coverUrl: '',                 // ネットで見つけた書影（Blob にできなかったとき URL のまま持つ）
     teihon: meta.teihon || null,  // 青空文庫の底本（どの版から起こしたか）。書影探しに使う
+    paraFix: 1,                   // 段落を1行ずつ組む版で取り込んだ（前の版の本は起動時に直す）
     manual: meta.manual || null,
   };
   await DB.put('books', book);
@@ -1214,6 +1215,33 @@ async function bulkCovers(ids, { upgrade = false } = {}) {
     '<div class="actions"><button class="btn primary" id="cb-ok">閉じる</button></div>';
   $('#cb-ok', end).onclick = () => { closeSheet(); render(); };
   render();
+}
+
+// ---------------------------------------------------------------- 段落の修復（前の版の本）
+// 前の版はテキストの改行を消して、本1冊を1つの段落につないでいた。起動時に1回だけ、
+// 取り込み済みの本の段落を切り直す。文字は1字も変えないので、しおり・抜き書きはそのまま。
+async function repairParagraphs() {
+  const todo = S.books.filter((b) => !b.paraFix && (b.kind === 'aozora' || b.kind === 'txt'));
+  let n = 0;
+  for (const b of todo) {
+    try {
+      const f = await DB.get('files', b.id);
+      if (!(await DB.get('books', b.id))) continue;      // 途中で消された本は触らない
+      if (f && f.chapters) {
+        let changed = false;
+        const chapters = f.chapters.map((c) => {
+          const html = resplitParagraphs(c.html || '');
+          if (html !== c.html) changed = true;
+          return { ...c, html };
+        });
+        if (changed) { await DB.put('files', { ...f, chapters }); n++; }
+      }
+      b.paraFix = 1;
+      await putBookSafe(b);
+    } catch (e) { console.warn('段落の修復', b.title, e); }
+    await new Promise((r) => setTimeout(r, 0));          // 画面を止めない
+  }
+  if (n) toast('本の改行を直しました（' + n + '冊）');
 }
 
 // ---------------------------------------------------------------- 表紙を自動で探す
@@ -2518,6 +2546,8 @@ async function boot() {
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
 
+  // 前の版で取り込んだ本の段落を切り直す（1回だけ。済んだ本は paraFix で飛ばす）
+  setTimeout(() => repairParagraphs(), 1500);
   // 表紙の自動探し。起動の邪魔をしないよう少し待ってから。10分に1回まで（autoCovers 側で見る）
   setTimeout(() => autoCovers(), 6000);
   addEventListener('online', () => autoCovers());

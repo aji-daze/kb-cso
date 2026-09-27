@@ -419,6 +419,10 @@ input, select, textarea { font-size: 16px; }
 #rflow[data-dir="v"] { writing-mode: vertical-rl; right: 0; }
 #rflow[data-dir="h"] { writing-mode: horizontal-tb; left: 0; column-gap: 0; column-fill: auto; }
 #rflow p { margin: 0; text-indent: 1em; }
+/* テキストから起こした日本語の段落は、本文の全角空白で字下げする（CSS で重ねない）。
+   空行は1行ぶん空ける。行の高さの単位 lh が使えない端末は em で近似 */
+#rflow p.t { text-indent: 0; }
+#rflow p.sp { min-block-size: 1.7em; min-block-size: 1lh; }
 #rflow h1, #rflow h2, #rflow h3, #rflow h4 { margin: 0; text-indent: 0; line-height: 1.5; font-weight: 600; }
 #rflow h1 { font-size: 1.3em; margin-block: 1.6em .8em; }
 #rflow h2 { font-size: 1.16em; margin-block: 1.4em .7em; }

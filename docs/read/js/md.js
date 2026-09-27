@@ -96,15 +96,38 @@ export function mdToChapters(src, fallbackTitle) {
 
 // プレーンテキスト。空行で段落を切る。青空文庫のルビ記法が入っていれば拾う。
 export function txtToChapters(src, fallbackTitle) {
-  const body = aozoraRuby(esc(src.replace(/\r\n?/g, '\n')));
-  const paras = body.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const text = src.replace(/\r\n?/g, '\n');
+  // 日本語か。日本語のテキスト（青空文庫を含む）は「1行＝1段落」で、段落の間に空行が無い。
+  // 英語などは行の途中で折り返してあり、段落は空行で分かれている。
+  const cjk = (text.match(/[぀-鿿＀-￯]/g) || []).length;
+  const jp = cjk > text.replace(/\s/g, '').length * 0.2;
+  const body = aozoraRuby(esc(text));
+
+  const units = [];   // { text, gap }（gap: 直前に空行があった）
+  if (jp) {
+    let gap = false;
+    for (const line of body.split('\n')) {
+      // 行末の空白だけ落とす。行頭の全角空白は字下げで、本文のうち
+      const t = line.replace(/[ \t　]+$/, '');
+      if (!t.replace(/[\s　]/g, '')) { gap = true; continue; }
+      units.push({ text: t, gap });
+      gap = false;
+    }
+  } else {
+    // 折り返しの改行は空白に戻す（そのまま消すと単語同士がくっつく）
+    for (const block of body.split(/\n\s*\n/)) {
+      const t = block.split('\n').map((l) => l.trim()).filter(Boolean).join(' ');
+      if (t) units.push({ text: t, gap: false });
+    }
+  }
+
   const parts = [];
   const chs = [];
   let hasBody = false;
   let title = fallbackTitle || '本文';
-  for (const p of paras) {
+  for (const u of units) {
     // 「　　　第一章」のような短い行は見出し扱いにする
-    const plain = p.replace(/<[^>]+>/g, '').trim();
+    const plain = u.text.replace(/<[^>]+>/g, '').trim();
     if (plain.length <= 24 && /^[　\s]*(第[^\n]{1,12}[章節話部篇編]|[０-９0-9]{1,3}|[一二三四五六七八九十百]{1,6})[　\s]*$/.test(plain)) {
       // md 側と同じ理由で、中身が入るまでは章を切らない
       if (hasBody) { chs.push({ title, html: parts.join('') }); parts.length = 0; hasBody = false; }
@@ -112,11 +135,49 @@ export function txtToChapters(src, fallbackTitle) {
       parts.push('<h2>' + plain + '</h2>');
       continue;
     }
+    // 日本語の段落は元の字下げ（全角空白）で組む。CSS の字下げを重ねないよう class="t"。
+    // 空行は1行ぶん空ける（文字は足さない。しおりの位置がずれないように）
+    if (jp && u.gap && hasBody) parts.push('<p class="t sp"></p>');
     hasBody = true;
-    parts.push('<p>' + p.replace(/\n/g, '') + '</p>');
+    parts.push(jp ? '<p class="t">' + u.text + '</p>' : '<p>' + u.text + '</p>');
   }
   if (parts.length) chs.push({ title, html: parts.join('') });
   return chs.length ? chs : [{ title: fallbackTitle || '本文', html: '<p></p>' }];
+}
+
+// 前の版で取り込んだ本の段落を切り直す。前の版は行の改行を消して1段落につないでいた。
+// 青空文庫の段落は全角空白（字下げ）か「『（で始まり、行は。」』などで終わるので、
+// その境目で区切る。文字は1字も足さず減らさない（区切りを入れるだけ）ので、
+// しおり・抜き書きの位置（章と文字の位置）はそのまま使える。
+const LINE_END = '。」』）！？!?…';
+const LINE_START = '　「『（';
+export function resplitParagraphs(html) {
+  return html.replace(/<p>([\s\S]*?)<\/p>/g, (whole, inner) => {
+    const pieces = [];
+    let cur = '', prev = '', inRt = false;
+    for (let i = 0; i < inner.length;) {
+      if (inner[i] === '<') {
+        const j = inner.indexOf('>', i);
+        if (j < 0) { cur += inner.slice(i); break; }
+        const tag = inner.slice(i, j + 1);
+        if (/^<rt[\s>]/i.test(tag)) inRt = true;
+        else if (/^<\/rt>/i.test(tag)) inRt = false;
+        cur += tag; i = j + 1;
+        continue;
+      }
+      let len = 1;
+      if (inner[i] === '&') { const j = inner.indexOf(';', i); if (j > i && j - i < 10) len = j + 1 - i; }
+      const ch = inner.slice(i, i + len);
+      if (!inRt && prev && LINE_END.includes(prev) && LINE_START.includes(ch) && cur) { pieces.push(cur); cur = ''; }
+      cur += ch;
+      if (!inRt) prev = ch;
+      i += len;
+    }
+    if (cur) pieces.push(cur);
+    if (pieces.length < 2) return whole;
+    // 最初の塊は前の版で行頭の字下げが落ちているので CSS の字下げのまま。2つ目からは元の字下げで組む
+    return pieces.map((x, k) => (k ? '<p class="t">' : '<p>') + x + '</p>').join('');
+  });
 }
 
 // 青空文庫のテキストファイルを、題名・著者・本文に分ける。
@@ -160,7 +221,8 @@ export function splitAozora(raw) {
   const teihon = end >= 0 ? parseTeihon(body.slice(end, end + 6)) : null;
   if (end >= 0) body = body.slice(0, end);
 
-  return { title, author, body: body.join('\n').trim(), teihon };
+  // 先頭の空行と末尾の空白だけ落とす。trim() だと最初の行の字下げ（全角空白）まで消える
+  return { title, author, body: body.join('\n').replace(/^(?:[ \t\u3000]*\n)+/, '').replace(/\s+$/, ''), teihon };
 }
 
 // 「底本：「罪と罰（上）」岩波文庫、岩波書店」と、その下の発行年を読む。
