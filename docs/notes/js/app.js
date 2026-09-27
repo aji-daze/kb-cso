@@ -10,6 +10,8 @@ import * as Auth from './auth.js';
 import * as G from './graph.js';
 import * as V from './vault.js';
 import * as R from './render.js';
+import * as RD from './reader.js';
+import { createEditor } from '../vendor/editor.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -22,6 +24,15 @@ let draftTimer = 0;
 let retryTimer = 0;
 let pushing = null;
 const blobUrls = new Map();
+const wide = () => matchMedia('(min-width: 1200px)').matches;
+const touch = () => matchMedia('(pointer: coarse)').matches;
+
+// 編集欄（CodeMirror）。中身はノートを開くたびに差し替える
+let editorPath = null;
+const editor = createEditor($('editor'), {
+  onChange: (text) => { if (!cur) return; cur.text = text; markDirty(cur); },
+  onSave: () => { if (cur && cur.dirty) schedulePush(0); },
+});
 
 // ---------------------------------------------------------------- 表示の小物
 
@@ -63,10 +74,6 @@ function fail(e) {
   toast(navigator.onLine ? e.message : '電波がありません');
 }
 
-function applyTheme(t) {
-  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-  else delete document.documentElement.dataset.theme;
-}
 
 const side = {
   open() { document.body.classList.add('side-open'); },
@@ -116,6 +123,8 @@ async function refreshTree() {
     lastTreeAt = Date.now();
     await saveTree();
     renderTree();
+    // 一覧が無いうちに開こうとしたノート（初回起動・控えを消した後）は、ここで開き直す
+    if (cur && !cur.loaded && V.get(cur.path)) { cur = null; route(); }
     pushDrafts();
   } catch (e) {
     renderTree();
@@ -220,8 +229,11 @@ async function showHome() {
   cur = null;
   $('title').textContent = 'ノート';
   $('btnMode').hidden = true;
+  $('btnOutline').hidden = true;
+  $('outline').hidden = true;
+  document.body.classList.remove('editing');
   $('view').hidden = true;
-  $('editor').hidden = true;
+  $('editwrap').hidden = true;
   $('home').hidden = false;
   status('');
   renderTree();
@@ -292,7 +304,7 @@ async function openNote(path, heading) {
     Object.assign(note, { text: cached.text, baseETag: cached.eTag, loaded: true });
   }
   if (note.loaded) show(note, heading);
-  else { $('view').hidden = false; $('editor').hidden = true; $('view').innerHTML = '<p class="muted">読み込み中…</p>'; }
+  else { $('view').hidden = false; $('editwrap').hidden = true; $('view').innerHTML = '<p class="muted">読み込み中…</p>'; }
 
   const item = V.get(path);
   if (!item) {
@@ -329,23 +341,29 @@ async function openNote(path, heading) {
 
 function showMissing(note) {
   $('view').hidden = false;
-  $('editor').hidden = true;
+  $('editwrap').hidden = true;
   $('btnMode').hidden = true;
+  $('btnOutline').hidden = true;
   $('view').innerHTML = '<div class="card"><p>「' + esc(V.title(note.path)) + '」はまだありません。</p>' +
     '<button class="btn primary" data-act="create" data-path="' + esc(note.path) + '">作る</button></div>';
 }
 
 function show(note, heading, keepScroll) {
   if (cur !== note) return;
+  hidePalette();
   if (note.mode === 'edit') {
-    const ed = $('editor');
-    if (ed.value !== note.text) ed.value = note.text;
-    ed.hidden = false;
+    if (editorPath !== note.path) { editor.setText(note.text); editorPath = note.path; }
+    else editor.replaceText(note.text);
+    $('editwrap').hidden = false;
     $('view').hidden = true;
-    $('btnMode').textContent = '👁';
-    $('btnMode').title = '閲覧 (Ctrl+E)';
+    $('btnMode').textContent = '閲覧';
+    $('btnMode').title = '閲覧に戻る (Ctrl+E)';
+    $('btnOutline').hidden = true;
+    $('outline').hidden = true;
+    document.body.classList.add('editing');
     return;
   }
+  document.body.classList.remove('editing');
   const main = $('main');
   const y = main.scrollTop;
   const view = $('view');
@@ -354,9 +372,12 @@ function show(note, heading, keepScroll) {
   loadMedia(view);
   loadEmbeds(view, note.path);
   view.hidden = false;
-  $('editor').hidden = true;
-  $('btnMode').textContent = '✎';
-  $('btnMode').title = '編集 (Ctrl+E)';
+  $('editwrap').hidden = true;
+  $('btnMode').textContent = '編集';
+  $('btnMode').title = '編集する (Ctrl+E)';
+  $('btnOutline').hidden = false;
+  if (wide() && localStorage.getItem('notes.outline') === '1') $('outline').hidden = false;
+  renderOutline();
   if (keepScroll) main.scrollTop = y;
   else {
     const el = R.findHeading(view, heading);
@@ -598,35 +619,17 @@ $('view').addEventListener('change', (e) => {
   markDirty(cur);
 });
 
-$('editor').addEventListener('input', () => {
-  if (!cur) return;
-  cur.text = $('editor').value;
-  markDirty(cur);
-});
-
-// Tab で字下げ（textarea の既定だとフォーカスが外れる）
-$('editor').addEventListener('keydown', (e) => {
-  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
-  e.preventDefault();
-  const ed = e.target;
-  const s = ed.selectionStart;
-  const lineStart = ed.value.lastIndexOf('\n', s - 1) + 1;
-  if (e.shiftKey) {
-    if (ed.value.slice(lineStart, lineStart + 1) === '\t') {
-      ed.setRangeText('', lineStart, lineStart + 1, 'end');
-    }
-  } else {
-    ed.setRangeText('\t', s, ed.selectionEnd, 'end');
-  }
-  ed.dispatchEvent(new Event('input'));
-});
-
+// 閲覧 ⇄ 編集。読んでいた位置（全体の何割か）を引き継ぐ
 function toggleMode() {
   if (!cur || !cur.loaded) return;
+  const main = $('main');
+  const ratio = main.scrollTop / Math.max(1, main.scrollHeight - main.clientHeight);
   cur.mode = cur.mode === 'edit' ? 'view' : 'edit';
   show(cur, '', true);
-  if (cur.mode === 'edit') $('editor').focus();
-  else if (cur.dirty) schedulePush(0);
+  requestAnimationFrame(() => { main.scrollTop = ratio * (main.scrollHeight - main.clientHeight); });
+  // スマホ・タブレットはすぐキーボードを出さない（読んでいた所が隠れる）。書きたい所を押せば出る
+  if (cur.mode === 'edit' && !touch()) editor.focus();
+  else if (cur.mode === 'view' && cur.dirty) schedulePush(0);
 }
 $('btnMode').addEventListener('click', toggleMode);
 
@@ -640,6 +643,181 @@ document.addEventListener('keydown', (e) => {
 $('btnMenu').addEventListener('click', side.toggle);
 $('scrim').addEventListener('click', side.close);
 $('btnRefresh').addEventListener('click', refreshTree);
+
+// ---------------------------------------------------------------- 編集の道具帯
+
+// 押しても編集欄からフォーカスを奪わない（キーボードが引っ込まない）
+$('tools').addEventListener('pointerdown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+$('tools').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-cmd]');
+  if (!b || !cur) return;
+  const c = b.dataset.cmd;
+  if (/^h[0-3]$/.test(c)) editor.heading(Number(c[1]));
+  else if (c === 'bold') editor.wrap('**', '**');
+  else if (['ul', 'ol', 'task', 'quote'].includes(c)) editor.list(c);
+  else if (c === 'link') editor.insert('[[]]', 2);
+  else if (c === 'hr') editor.insert('\n---\n');
+  else if (c === 'undo') editor.undo();
+  else if (c === 'redo') editor.redo();
+  else if (c === 'marker') {
+    hlTarget = { kind: 'editor' };
+    openPalette(b.getBoundingClientRect(), true);
+  }
+});
+
+// ---------------------------------------------------------------- マーカー
+
+let hlTarget = null; // { kind: 'sel', range } / { kind: 'mark', el } / { kind: 'editor' }
+let selTimer = 0;
+
+$('hlColors').innerHTML = RD.COLORS.map((c, i) =>
+  '<button type="button" data-i="' + i + '" title="' + c.name + '" style="background:' + c.css + '"></button>').join('');
+
+function openPalette(rect, canRemove) {
+  const pop = $('hlPop');
+  $('hlOff').hidden = !canRemove;
+  pop.hidden = false;
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  let top = rect.bottom + 10;
+  if (top + h > vh - 8) top = rect.top - h - 10;
+  pop.style.left = Math.max(8, Math.min(vw - w - 8, rect.left + rect.width / 2 - w / 2)) + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
+}
+
+function hidePalette() {
+  $('hlPop').hidden = true;
+  hlTarget = null;
+}
+
+function applyMarker(color, remove) {
+  const t = hlTarget;
+  hidePalette();
+  if (!t || !cur) return;
+  if (t.kind === 'editor') { editor.marker(remove ? 'off' : color.md); return; }
+  const res = t.kind === 'sel'
+    ? RD.markSelection(cur.text, $('view'), t.range, color)
+    : RD.editMark(cur.text, $('view'), t.el, { color, remove });
+  getSelection().removeAllRanges();
+  if (!res.text) { if (res.error) toast(res.error); return; }
+  cur.text = res.text;
+  markDirty(cur);
+  show(cur, '', true);
+}
+
+// ボタンは pointerdown で受ける。click まで待つと、その前に選択が外れて対象が消える
+$('hlPop').addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  e.preventDefault();
+  if (b.id === 'hlOff') applyMarker(null, true);
+  else applyMarker(RD.COLORS[Number(b.dataset.i)], false);
+});
+
+// 閲覧中に文字を選ぶと色が出る
+document.addEventListener('selectionchange', () => {
+  clearTimeout(selTimer);
+  selTimer = setTimeout(() => {
+    if (!cur || cur.mode !== 'view') return;
+    const sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) {
+      if (hlTarget && hlTarget.kind === 'sel') hidePalette();
+      return;
+    }
+    const r = sel.getRangeAt(0);
+    const view = $('view');
+    if (!view.contains(r.startContainer) || !view.contains(r.endContainer)) return;
+    const el = (n) => (n.nodeType === 3 ? n.parentElement : n);
+    if (el(r.startContainer).closest('.embed, .props') || !r.toString().trim()) return;
+    hlTarget = { kind: 'sel', range: r.cloneRange() };
+    openPalette(r.getBoundingClientRect(), false);
+  }, 250);
+});
+
+// 引いてあるマーカーを押すと、色を変える・外す
+$('view').addEventListener('click', (e) => {
+  const m = e.target.closest('mark');
+  if (!m || m.closest('.embed') || !getSelection().isCollapsed) return;
+  hlTarget = { kind: 'mark', el: m };
+  openPalette(m.getBoundingClientRect(), true);
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if ($('hlPop').hidden || e.target.closest('#hlPop, mark, .hl-btn')) return;
+  if (hlTarget && hlTarget.kind === 'sel') return; // 選択中は selectionchange 側で閉じる
+  hidePalette();
+});
+$('main').addEventListener('scroll', () => { if (hlTarget && hlTarget.kind !== 'sel') hidePalette(); }, { passive: true });
+
+// ---------------------------------------------------------------- 目次・マーカー一覧
+
+let olTab = 'heads';
+let olItems = [];
+
+function renderOutline() {
+  if ($('outline').hidden || !cur) return;
+  const { heads, marks } = RD.outline($('view'));
+  for (const b of $('outline').querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === olTab);
+  const body = $('olBody');
+  if (olTab === 'heads') {
+    olItems = heads.map((h) => h.el);
+    body.innerHTML = heads.length
+      ? heads.map((h, i) => '<a href="#" class="ol-h" data-i="' + i + '" style="--lv:' + (h.level - 1) + '">' + esc(h.text) + '</a>').join('')
+      : '<p class="muted pad">見出しがありません</p>';
+  } else {
+    olItems = marks.map((m) => m.el);
+    body.innerHTML = marks.length
+      ? marks.map((m, i) => '<a href="#" class="ol-m" data-i="' + i + '"><i style="background:' + esc(m.color || 'var(--mark)') + '"></i>' + esc(m.text) + '</a>').join('')
+      : '<p class="muted pad">マーカーはまだありません。本文の文字を選ぶと引けます。</p>';
+  }
+}
+
+function toggleOutline(open) {
+  const el = $('outline');
+  el.hidden = open === undefined ? !el.hidden : !open;
+  if (wide()) try { localStorage.setItem('notes.outline', el.hidden ? '0' : '1'); } catch { /* 無視 */ }
+  renderOutline();
+}
+
+$('btnOutline').addEventListener('click', () => toggleOutline());
+$('btnOutlineClose').addEventListener('click', () => toggleOutline(false));
+$('outline').addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab) { olTab = tab.dataset.tab; renderOutline(); return; }
+  const a = e.target.closest('a[data-i]');
+  if (!a) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const el = olItems[Number(a.dataset.i)];
+  if (!el) return;
+  el.scrollIntoView({ block: olTab === 'heads' ? 'start' : 'center', behavior: 'smooth' });
+  if (olTab === 'marks') { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); }
+  if (!wide()) toggleOutline(false);
+});
+
+// ---------------------------------------------------------------- 文字の見え方
+
+function syncLook() {
+  const p = RD.prefs();
+  $('lookFs').value = p.fs;
+  $('lookFsV').textContent = p.fs + 'px';
+  $('lookLh').value = p.lh;
+  $('lookLhV').textContent = Number(p.lh).toFixed(1);
+  for (const seg of $('dlgLook').querySelectorAll('.seg')) {
+    for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === p[seg.dataset.k]);
+  }
+}
+function setLook(k, v) {
+  RD.setPrefs({ ...RD.prefs(), [k]: v });
+  syncLook();
+}
+$('btnLook').addEventListener('click', () => { syncLook(); $('dlgLook').showModal(); });
+$('lookFs').addEventListener('input', (e) => setLook('fs', Number(e.target.value)));
+$('lookLh').addEventListener('input', (e) => setLook('lh', Number(e.target.value)));
+$('dlgLook').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg button');
+  if (b) setLook(b.closest('.seg').dataset.k, b.dataset.v);
+});
 
 // ---------------------------------------------------------------- 新しいノート
 
@@ -664,7 +842,7 @@ async function doCreate(path) {
     renderTree();
     if (cur && cur.path === path) cur = null; // 「まだありません」から作ったときは開き直す
     go(path);
-    setTimeout(() => { if (cur && cur.path === path) { cur.mode = 'edit'; show(cur); $('editor').focus(); } }, 50);
+    setTimeout(() => { if (cur && cur.path === path) { cur.mode = 'edit'; show(cur); editor.focus(); } }, 50);
     return true;
   } catch (e) {
     if (e instanceof G.Exists) { toast('同じ名前のノートがもうあります'); return false; }
@@ -699,7 +877,6 @@ async function openSettings() {
   $('setClient').value = await Auth.clientId();
   $('setTenant').value = (await DB.setting('tenant')) || 'common';
   $('setVault').value = vault;
-  $('setTheme').value = (await DB.setting('theme')) || 'auto';
   $('setupHelp').open = !$('setClient').value;
   $('picker').hidden = true;
   await refreshSignState();
@@ -718,8 +895,6 @@ async function refreshSignState() {
 async function storeSettings() {
   await DB.setting('clientId', $('setClient').value.trim() || null);
   await DB.setting('tenant', $('setTenant').value);
-  await DB.setting('theme', $('setTheme').value);
-  applyTheme($('setTheme').value);
   const v = $('setVault').value.trim().replace(/^\/+|\/+$/g, '');
   if (v !== vault) {
     vault = v;
@@ -732,7 +907,6 @@ async function storeSettings() {
 }
 
 $('btnSettings').addEventListener('click', openSettings);
-$('setTheme').addEventListener('change', () => applyTheme($('setTheme').value));
 $('btnSaveSettings').addEventListener('click', async () => {
   await storeSettings();
   $('dlgSettings').close();
@@ -844,7 +1018,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-  applyTheme(await DB.setting('theme'));
+  RD.applyPrefs();
 
   const back = await Auth.finishSignIn();
   if (back && !back.ok) toast('サインインできませんでした：' + back.message);

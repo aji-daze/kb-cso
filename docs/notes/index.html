@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- resizes-content：Android でキーボードが出たとき画面を縮め、下の道具帯をキーボードの上に出す -->
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ノート">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -21,7 +22,9 @@
   <button class="icon" id="btnMenu" title="一覧" aria-label="一覧">☰</button>
   <div class="bar-title" id="title">ノート</div>
   <span class="status" id="status" hidden></span>
-  <button class="icon" id="btnMode" title="編集 (Ctrl+E)" aria-label="編集" hidden>✎</button>
+  <button class="icon" id="btnOutline" title="目次・マーカー" aria-label="目次・マーカー" hidden>☷</button>
+  <button class="icon txt" id="btnLook" title="文字の見え方" aria-label="文字の見え方">Aa</button>
+  <button class="mode" id="btnMode" title="編集 (Ctrl+E)" hidden>編集</button>
   <button class="icon" id="btnNew" title="新しいノート" aria-label="新しいノート">＋</button>
   <button class="icon" id="btnSettings" title="設定" aria-label="設定">⚙</button>
 </header>
@@ -45,9 +48,59 @@
   <main class="main" id="main">
     <section class="home" id="home"></section>
     <article class="md" id="view" hidden></article>
-    <textarea class="editor" id="editor" hidden spellcheck="false" autocapitalize="off" placeholder="ここに書く"></textarea>
+    <div class="editwrap" id="editwrap" hidden>
+      <div class="tools" id="tools" role="toolbar" aria-label="書式">
+        <button type="button" data-cmd="h0" title="本文">本文</button>
+        <button type="button" data-cmd="h1" title="大見出し">H1</button>
+        <button type="button" data-cmd="h2" title="中見出し">H2</button>
+        <button type="button" data-cmd="h3" title="小見出し">H3</button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="bold" title="太字 (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-cmd="marker" title="マーカー (Ctrl+Shift+M)" class="hl-btn"><span>マーカー</span></button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="ul" title="箇条書き">・</button>
+        <button type="button" data-cmd="ol" title="番号付き">1.</button>
+        <button type="button" data-cmd="task" title="チェックボックス">☑</button>
+        <button type="button" data-cmd="quote" title="引用">❝</button>
+        <button type="button" data-cmd="link" title="ノートへのリンク">[[ ]]</button>
+        <button type="button" data-cmd="hr" title="区切り線">―</button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="undo" title="元に戻す (Ctrl+Z)">↶</button>
+        <button type="button" data-cmd="redo" title="やり直す (Ctrl+Y)">↷</button>
+      </div>
+      <div class="editor" id="editor"></div>
+    </div>
   </main>
+
+  <aside class="outline" id="outline" hidden>
+    <div class="ol-tabs">
+      <button type="button" class="on" data-tab="heads">目次</button>
+      <button type="button" data-tab="marks">マーカー</button>
+      <button type="button" class="icon ol-close" id="btnOutlineClose" aria-label="閉じる">×</button>
+    </div>
+    <div class="ol-body" id="olBody"></div>
+  </aside>
 </div>
+
+<!-- マーカーの色（閲覧中に文字を選んだとき・マーカーを押したとき・編集の道具帯） -->
+<div class="hlpop" id="hlPop" hidden>
+  <div class="hl-colors" id="hlColors"></div>
+  <button type="button" class="hl-off" id="hlOff">外す</button>
+</div>
+
+<!-- 文字の見え方（この端末だけ） -->
+<dialog id="dlgLook">
+  <form method="dialog" class="dlg">
+    <h2>文字の見え方 <small class="muted">この端末だけ</small></h2>
+    <label>文字の大きさ <b id="lookFsV"></b><input id="lookFs" type="range" min="14" max="26" step="1"></label>
+    <label>行の間隔 <b id="lookLhV"></b><input id="lookLh" type="range" min="1.5" max="2.4" step="0.1"></label>
+    <div class="seg" data-k="font"><span>書体</span><button type="button" data-v="sans">ゴシック</button><button type="button" data-v="serif">明朝</button></div>
+    <div class="seg" data-k="measure"><span>本文の幅</span><button type="button" data-v="narrow">狭い</button><button type="button" data-v="normal">標準</button><button type="button" data-v="wide">広い</button></div>
+    <div class="seg" data-k="theme"><span>配色</span><button type="button" data-v="auto">自動</button><button type="button" data-v="light">白</button><button type="button" data-v="sepia">セピア</button><button type="button" data-v="dark">黒</button></div>
+    <p class="look-sample" id="lookSample">吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。何でも薄暗いじめじめした所で<mark>ニャーニャー泣いていた事だけは記憶している</mark>。</p>
+    <div class="dlg-foot"><button class="btn primary">閉じる</button></div>
+  </form>
+</dialog>
 
 <!-- 設定 -->
 <dialog id="dlgSettings">
@@ -96,17 +149,6 @@
         <span class="muted" id="prefetchInfo"></span>
       </div>
       <div class="row"><button type="button" class="btn danger" id="btnClearCache">端末の控えを消す</button></div>
-    </section>
-
-    <section>
-      <h3>表示</h3>
-      <label>配色
-        <select id="setTheme">
-          <option value="auto">端末に合わせる</option>
-          <option value="light">明るい</option>
-          <option value="dark">暗い</option>
-        </select>
-      </label>
     </section>
 
     <div class="dlg-foot">
