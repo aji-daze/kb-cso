@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MEMO">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+<meta name="description" content="開いた瞬間に書ける、最小のメモ">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>MEMO</title>
+<!-- 速さのために CSS も JS もこのファイルに直書きする。外部ファイル・フォント・ライブラリは読まない。 -->
+<style>
+:root{--bg:#0b0b0d;--fg:#ecece8;--sub:#8a8a92;--line:#222227;--hi:#1a1a1f;--acc:#7fb4ff;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#f6f6f3;--fg:#1b1b1d;--sub:#77777e;--line:#e2e2dd;--hi:#ecece7;--acc:#2a64c8;color-scheme:light}}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;display:flex;flex-direction:column;overflow:hidden;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.bar{display:flex;align-items:center;gap:2px;height:44px;padding:0 6px;border-bottom:1px solid var(--line);flex:none}
+.bar button{min-width:40px;height:40px;border-radius:8px;font-size:18px;color:var(--sub)}
+.bar button:active,.bar button:hover{background:var(--hi);color:var(--fg)}
+#st{flex:1;text-align:center;font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ed{flex:1;width:100%;resize:none;border:0;outline:0;background:transparent;color:inherit;font:inherit;padding:16px max(16px,calc((100% - 760px)/2)) 40vh;tab-size:4}
+#ed::placeholder{color:var(--sub)}
+#dr{position:fixed;inset:0;z-index:9;display:none;background:rgba(0,0,0,.45)}
+#dr.on{display:block}
+#pn{position:absolute;top:0;bottom:0;left:0;width:min(380px,88vw);background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#q{margin:10px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--hi);color:inherit;font:inherit;outline:0}
+#ls{flex:1;overflow:auto;list-style:none;padding:0 6px}
+#ls li{padding:8px 10px;border-radius:8px;cursor:pointer}
+#ls li:hover,#ls li.cur{background:var(--hi)}
+#ls b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls small{display:block;font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls .none{color:var(--sub);cursor:default;background:none}
+.ft{display:flex;gap:4px;padding:8px;border-top:1px solid var(--line);font-size:13px}
+.ft button{flex:1;padding:8px 0;border-radius:8px;color:var(--sub)}
+.ft button:hover{background:var(--hi);color:var(--fg)}
+#to{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--fg);color:var(--bg);font-size:13px;
+  padding:8px 14px;border-radius:8px;display:none;z-index:10;align-items:center;gap:12px}
+#to.on{display:flex}
+#to button{color:var(--acc);font-weight:600}
+</style>
+</head>
+<body>
+<div class="bar">
+  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧">≡</button>
+  <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ">＋</button>
+  <div id="st"></div>
+  <button id="bS" title="共有・コピー" aria-label="共有・コピー">⇪</button>
+  <button id="bD" title="このメモを削除" aria-label="削除">×</button>
+</div>
+<textarea id="ed" placeholder="書く" autofocus spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+<div id="dr"><div id="pn">
+  <input id="q" type="search" placeholder="検索" autocomplete="off">
+  <ul id="ls"></ul>
+  <div class="ft">
+    <button id="bE">書き出し</button>
+    <button id="bI">読み込み</button>
+  </div>
+</div></div>
+<div id="to"><span id="tm"></span><button id="tu" hidden>元に戻す</button></div>
+<script>
+// 起動時にやるのは「空の入力欄にカーソルを置く」ことだけ。
+// 保存データは1件ずつ別キー（memo:<id>）にあるので、一覧を開くまで読まない。
+(function(){
+'use strict';
+var P='memo:',LS=localStorage,$=function(i){return document.getElementById(i)};
+var ed=$('ed'),st=$('st'),dr=$('dr'),q=$('q'),ls=$('ls'),to=$('to');
+var cur=null,saved='',timer=0,toT=0,undo=null;
+
+ed.focus();
+
+function nid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function get(id){try{return JSON.parse(LS.getItem(P+id))}catch(e){return null}}
+function all(){
+  var a=[];
+  for(var i=0;i<LS.length;i++){var k=LS.key(i);if(k&&k.indexOf(P)===0){var m=get(k.slice(P.length));if(m&&typeof m.t==='string'){m.id=k.slice(P.length);a.push(m)}}}
+  return a.sort(function(x,y){return y.u-x.u});
+}
+function fmt(ms){
+  var d=new Date(ms),n=new Date(),p=function(v){return(v<10?'0':'')+v};
+  var hm=p(d.getHours())+':'+p(d.getMinutes());
+  if(d.toDateString()===n.toDateString())return hm;
+  return(d.getFullYear()===n.getFullYear()?'':d.getFullYear()+'/')+(d.getMonth()+1)+'/'+d.getDate()+' '+hm;
+}
+function status(){
+  var n=ed.value.length;
+  st.textContent=(n?n+'字':'')+(cur&&get(cur)?(n?' · ':'')+fmt(get(cur).u):'');
+}
+
+// 保存。中身が空になったメモは消す（空メモを溜めない）。
+function save(){
+  clearTimeout(timer);timer=0;
+  var t=ed.value;
+  if(t===saved)return;
+  if(!t.trim()){if(cur)LS.removeItem(P+cur);cur=null;saved=t;status();return}
+  var now=Date.now(),old=cur&&get(cur);
+  if(!cur)cur=nid();
+  try{LS.setItem(P+cur,JSON.stringify({t:t,c:old?old.c:now,u:now}));saved=t}
+  catch(e){toast('保存できません（容量不足）。書き出してから古いメモを消してください')}
+  status();
+}
+function later(){clearTimeout(timer);timer=setTimeout(save,250)}
+
+function open(id){
+  save();
+  var m=id&&get(id);
+  cur=m?id:null;saved=m?m.t:'';
+  ed.value=saved;ed.setSelectionRange(0,0);ed.scrollTop=0;
+  status();close();ed.focus();
+}
+
+function toast(msg,fn){
+  $('tm').textContent=msg;$('tu').hidden=!fn;undo=fn||null;to.className='on';
+  clearTimeout(toT);toT=setTimeout(function(){to.className='';undo=null},fn?5000:2500);
+}
+
+// 一覧
+function render(){
+  var w=q.value.trim().toLowerCase(),a=all(),h='',n=0;
+  for(var i=0;i<a.length;i++){
+    var t=a[i].t;if(w&&t.toLowerCase().indexOf(w)<0)continue;
+    var lines=t.trim().split('\n'),head=lines[0].slice(0,80),rest=lines.slice(1).join(' ').trim().slice(0,80);
+    h+='<li data-id="'+a[i].id+'"'+(a[i].id===cur?' class="cur"':'')+'><b></b><small></small></li>';
+    a[i]._h=head;a[i]._r=fmt(a[i].u)+(rest?'　'+rest:'');n++;
+  }
+  ls.innerHTML=n?h:'<li class="none">'+(w?'見つかりません':'メモはまだありません')+'</li>';
+  // 本文は textContent で入れる（HTML として解釈させない）
+  var li=ls.children,j=0;
+  for(i=0;i<a.length&&j<li.length;i++){if('_h' in a[i]){li[j].firstChild.textContent=a[i]._h;li[j].lastChild.textContent=a[i]._r;j++}}
+}
+function openList(){save();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
+function close(){dr.className=''}
+
+ed.addEventListener('input',function(){later();st.textContent=ed.value.length+'字'});
+$('bL').onclick=openList;
+$('bN').onclick=function(){open(null)};
+$('bD').onclick=function(){
+  save();
+  if(!cur){ed.value='';saved='';status();ed.focus();return}
+  var id=cur,m=get(id);LS.removeItem(P+id);open(null);
+  toast('削除しました',function(){LS.setItem(P+id,JSON.stringify(m));open(id)});
+};
+$('tu').onclick=function(){if(undo)undo();to.className='';undo=null};
+$('bS').onclick=function(){
+  var t=ed.value;if(!t)return;
+  if(navigator.share&&matchMedia('(pointer:coarse)').matches){navigator.share({text:t}).catch(function(){})}
+  else if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')})}
+};
+dr.onclick=function(e){if(e.target===dr)close()};
+q.oninput=render;
+q.onkeydown=function(e){if(e.key==='Enter'&&!e.isComposing){e.preventDefault();var f=ls.querySelector('li[data-id]');if(f)open(f.getAttribute('data-id'))}};
+ls.onclick=function(e){var li=e.target.closest('li[data-id]');if(li)open(li.getAttribute('data-id'))};
+
+$('bE').onclick=function(){
+  var a=all().map(function(m){return{id:m.id,t:m.t,c:m.c,u:m.u}});
+  var b=new Blob([JSON.stringify({app:'memo',v:1,memos:a},null,1)],{type:'application/json'});
+  var x=document.createElement('a'),d=new Date();
+  x.href=URL.createObjectURL(b);x.download='memo-'+d.getFullYear()+(d.getMonth()+101+'').slice(1)+(d.getDate()+100+'').slice(1)+'.json';
+  x.click();setTimeout(function(){URL.revokeObjectURL(x.href)},1000);
+};
+$('bI').onclick=function(){
+  var f=document.createElement('input');f.type='file';f.accept='.json,.txt,.md,application/json,text/plain';
+  f.onchange=function(){
+    var file=f.files[0];if(!file)return;
+    file.text().then(function(s){
+      var n=0,now=Date.now();
+      try{
+        var d=JSON.parse(s),a=Array.isArray(d)?d:d.memos;
+        a.forEach(function(m){
+          if(!m||typeof m.t!=='string'||!m.t.trim())return;
+          var id=m.id||nid(),ex=get(id);
+          if(ex&&ex.u>=(m.u||0))return; // 手元の方が新しければ上書きしない
+          LS.setItem(P+id,JSON.stringify({t:m.t,c:m.c||now,u:m.u||now}));n++;
+        });
+      }catch(e){
+        if(!s.trim())return;
+        LS.setItem(P+nid(),JSON.stringify({t:s,c:now,u:now}));n=1; // 普通のテキストは1件のメモとして取り込む
+      }
+      render();toast(n+'件読み込みました');
+    });
+  };
+  f.click();
+};
+
+document.addEventListener('keydown',function(e){
+  var mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();
+  if(mod&&k==='k'){e.preventDefault();dr.className?(close(),ed.focus()):openList()}
+  else if(mod&&k==='s'){e.preventDefault();save();toast('保存しました')}
+  else if(e.altKey&&(k==='n'||e.code==='KeyN')){e.preventDefault();open(null)}
+  else if(k==='escape'&&dr.className){close();ed.focus()}
+});
+// Tab でフォーカスを逃がさず字下げを入れる
+ed.addEventListener('keydown',function(e){
+  if(e.key==='Tab'&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();document.execCommand('insertText',false,'\t')}
+});
+
+// 閉じる・裏に回る瞬間に必ず書き込む
+addEventListener('pagehide',save);
+document.addEventListener('visibilitychange',function(){if(document.hidden)save()});
+// 別タブで同じメモが書き換わったら、こちらが未編集のときだけ追従する
+addEventListener('storage',function(e){
+  if(!cur||e.key!==P+cur||ed.value!==saved)return;
+  var m=get(cur);if(!m){cur=null;saved='';ed.value=''}else{saved=m.t;ed.value=m.t}status();
+});
+
+// Service Worker は描画が終わってから。起動の邪魔をしない。
+if('serviceWorker' in navigator)addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
+})();
+</script>
+</body>
+</html>
