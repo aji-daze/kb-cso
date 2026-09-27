@@ -183,7 +183,7 @@ picture { display: contents; }
 /* 背表紙。薄い地に天地の罫線を2本ずつ、左に光、右に陰。
    色は JS から --base / --rule / --edge / --ink で渡す。 */
 .spine .sp {
-  width: 100%; border-radius: 2px 2px 0 0; overflow: hidden; color: var(--ink);
+  position: relative; width: 100%; border-radius: 2px 2px 0 0; overflow: hidden; color: var(--ink);
   display: flex; justify-content: center; align-items: center; padding: 19px 0;
   background:
     linear-gradient(180deg, transparent 0 8px, var(--rule) 8px 9px,
@@ -201,6 +201,13 @@ picture { display: contents; }
   font-weight: 600; white-space: nowrap; overflow: hidden;
 }
 .spine:hover .sp { outline: 1.5px solid var(--acc); outline-offset: -1px; }
+/* 読みかけ（進み・しおりがある）本の背表紙に、上の縁から垂らす小さなリボン。
+   題名は中央に寄る列なので、リボンは端に寄せて重ならないようにする（右上）。
+   .sp は overflow:hidden で、150px の段の高さはここでは変えない（UI2-01）。 */
+.spine .sp.bm::before {
+  content: ""; position: absolute; top: 0; right: 3px; width: 4px; height: 18px;
+  background: var(--acc); clip-path: polygon(0 0, 100% 0, 100% 78%, 50% 100%, 0 78%);
+}
 .noshelf { align-self: center; font-size: 12.5px; color: var(--sub); padding: 60px 0; }
 .btn {
   border: 1px solid var(--line); background: var(--surface); color: var(--tx);
@@ -243,15 +250,15 @@ picture { display: contents; }
 .ghead em { font-style: normal; font-weight: 400; font-size: 11px; color: var(--sub); }
 .ghead:first-of-type { margin-top: 4px; }
 
-.view.picking { padding-bottom: calc(76px + var(--safe-b)); }
+/* 帯が折り返して2段になる分だけ、下の余白を余分に取っておく（UI2-03） */
+.view.picking { padding-bottom: calc(136px + var(--safe-b)); }
 
-/* まとめて動かす帯。タブの上に出す。 */
+/* まとめて動かす帯。タブの上に出す。狭い画面では折り返し、横スクロールでは隠さない。 */
 .pickbar {
   position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + var(--safe-b));
-  z-index: 25; display: flex; align-items: center; gap: 6px;
+  z-index: 25; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   padding: 9px 12px; background: var(--surface2);
   border-top: 1px solid var(--line); box-shadow: var(--shadow);
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
 }
 .pickbar button {
   flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--tx);
@@ -480,9 +487,15 @@ input, select, textarea { font-size: 16px; }
 .rui.top { top: 0; padding: calc(9px + var(--safe-t)) 10px 9px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--pg2); }
 .rui.top b { flex: 1; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rui.bottom { bottom: 0; border-top: 1px solid var(--pg2); max-height: 78%; overflow-y: auto; padding: 10px 16px calc(16px + var(--safe-b)); }
+/* 「既定に戻す」「閉じる」の行は、スクロールしても常に手の届く位置に置く（UI2-05） */
+.rui.bottom > .ctl:last-child {
+  position: sticky; bottom: 0; z-index: 2; background: var(--pg);
+  margin-bottom: calc(-1 * (16px + var(--safe-b)));
+  padding-bottom: calc(16px + var(--safe-b));
+}
 .rbtn {
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); color: var(--ink);
-  padding: 9px 13px; border-radius: 3px; font-size: 12px; flex: 0 0 auto;
+  padding: 9px 13px; border-radius: var(--r-sm); font-size: 12px; flex: 0 0 auto;
   min-height: 38px; display: inline-flex; align-items: center; justify-content: center;
 }
 .rbtn.on { background: var(--ink); color: var(--pg); border-color: var(--ink); font-weight: 600; }
@@ -500,7 +513,7 @@ input, select, textarea { font-size: 16px; }
   display: flex; gap: 8px; background: var(--ink); color: var(--pg); border-radius: 4px;
   padding: 6px; z-index: 6; box-shadow: 0 6px 20px rgba(0,0,0,.3);
 }
-#selbar button { color: inherit; font-size: 13px; padding: 7px 12px; border-radius: 3px; }
+#selbar button { color: inherit; font-size: 13px; padding: 7px 12px; border-radius: var(--r-sm); }
 #selbar button:hover { background: color-mix(in srgb, var(--pg) 20%, transparent); }
 
 /* 目次 */
@@ -536,6 +549,6 @@ input, select, textarea { font-size: 16px; }
 .cv-cell span { font-size: 11px; color: var(--sub); margin-top: 5px; line-height: 1.4; }
 .cv-cell em {
   position: absolute; left: 4px; top: 4px; font-style: normal; font-size: 10px; font-weight: 600;
-  background: var(--acc); color: var(--on-acc); padding: 2px 5px; border-radius: 3px;
+  background: var(--acc); color: var(--on-acc); padding: 2px 5px; border-radius: var(--r-sm);
 }
 .cv-stat { font-size: 11px; color: var(--sub); line-height: 1.7; margin: 4px 0 12px; }

@@ -145,14 +145,16 @@ function applyChrome() {
 }
 
 // ================================================================ 本の取り込み
-function chapChars(chapters) { return chapters.map((c) => plain(c.html).length); }
+// 紙・Kindle の本は本文を持たない（chapters が null）。そのときは 0 章として数える。
+function chapChars(chapters) { return (chapters || []).map((c) => plain(c.html).length); }
 
 // 何冊まとめて入れたら「積んでいる」に置くか。
 // 20冊を同時に読み始めることはないので、束で入れたぶんは積む側へ。
 const BULK_AT = 5;
-let addStatus = 'reading';
 
-async function addBook(meta, chapters) {
+// どの状態で入れるかは呼び出し側が引数で渡す（モジュール変数だと、並行して
+// 取り込みが走ったときに混線する。OS2-04）。
+async function addBook(meta, chapters, status = 'reading') {
   const counts = chapChars(chapters);
   const book = {
     id: DB.uid('b'),
@@ -160,7 +162,7 @@ async function addBook(meta, chapters) {
     author: meta.author || '',
     kind: meta.kind,
     source: meta.source || '',
-    status: addStatus,
+    status,
     added: Date.now(),
     finished: 0,
     vertical: !!meta.vertical,
@@ -182,7 +184,8 @@ export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const isBookName = (n) => BOOK_EXT.test(n || '');
 
 // 取り込みの本体。ファイル選択・Google ドライブ・OneDrive のどれからでもここに来る。
-async function importBlob(filename, blob, source) {
+// status は「読んでいる」か「積んでいる」か。呼び出し側が、まとめて入れているかどうかで決める。
+async function importBlob(filename, blob, source, status = 'reading') {
   const name = String(filename).replace(/\.[^.]+$/, '');
 
   // 青空文庫のテキストは zip で配られる（中身は Shift_JIS、ルビは ｜漢字《かんじ》）
@@ -197,7 +200,7 @@ async function importBlob(filename, blob, source) {
     const title = a.title || name;
     return addBook({
       title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, teihon: a.teihon,
-    }, txtToChapters(a.body, title));
+    }, txtToChapters(a.body, title), status);
   }
 
   if (/\.epub$/i.test(filename) || blob.type === 'application/epub+zip') {
@@ -206,7 +209,7 @@ async function importBlob(filename, blob, source) {
     return addBook({
       title: b.title || name, author: b.author, kind: 'epub',
       vertical: b.vertical, cover: b.cover, source: source || filename,
-    }, b.chapters);
+    }, b.chapters, status);
   }
   // 文字コードは中身から判別する。青空文庫のテキストは Shift_JIS なので、
   // UTF-8 と決めつけると読めない（zip を展開した .txt がこれに当たる）。
@@ -219,14 +222,14 @@ async function importBlob(filename, blob, source) {
     const title = a.title || name;
     return addBook({
       title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, teihon: a.teihon,
-    }, txtToChapters(a.body, title));
+    }, txtToChapters(a.body, title), status);
   }
 
   const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
   return addBook({
     title: name, kind: isMd ? 'md' : 'txt',
     vertical: !isMd && /[《》｜]/.test(text), source: source || filename,
-  }, chs);
+  }, chs, status);
 }
 
 // 取り込んだ本を、覚えているフォルダ（OneDrive の同期先など）へ複製する。
@@ -248,13 +251,11 @@ async function importFiles(files) {
   let n = 0, err = 0, first = '';
   const ok = [];
   const bulk = files.length >= BULK_AT;
-  addStatus = bulk ? 'stack' : 'reading';
-  try {
-    for (const f of files) {
-      try { await importBlob(f.name, f); ok.push(f); n++; }
-      catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
-    }
-  } finally { addStatus = 'reading'; }
+  const status = bulk ? 'stack' : 'reading';
+  for (const f of files) {
+    try { await importBlob(f.name, f, undefined, status); ok.push(f); n++; }
+    catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
+  }
   if (n) setTimeout(() => autoCovers(true), 1500);   // 入れた本の表紙を探す（設定で切れる）
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
   if (n) toast(n + '冊を' + (bulk ? '「積んでいる」に' : '棚に') + '入れました' +
@@ -263,6 +264,34 @@ async function importFiles(files) {
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
   render();
   return { n, err, first, copied };
+}
+
+// Android の共有シートから来た起動（?share=1）。sw.js が横取りして Cache
+// 'pocha-share' に置いたファイルを取り出し、importFiles にそのまま渡す（OS2-02）。
+async function importFromShare() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('share') !== '1') return;
+  // 先に URL から外す（あとで失敗しても、開き直すたびに二重に処理しない）
+  const url = new URL(location.href);
+  url.searchParams.delete('share');
+  history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  if (!('caches' in window)) return;
+  try {
+    const cache = await caches.open('pocha-share');
+    const idxRes = await cache.match('./__share__/index');
+    const idx = idxRes ? await idxRes.json() : { n: 0 };
+    const files = [];
+    for (let i = 0; i < (idx.n || 0); i++) {
+      const res = await cache.match('./__share__/file-' + i);
+      if (!res) continue;
+      const blob = await res.blob();
+      const name = decodeURIComponent(res.headers.get('X-Share-Filename') || ('共有された本' + i));
+      files.push(new File([blob], name, { type: blob.type }));
+    }
+    for (const k of await cache.keys()) await cache.delete(k);   // 使い終わったら空にする
+    if (!files.length) { toast('ファイルだけ受け取れます'); return; }
+    await importFiles(files);
+  } catch (e) { console.warn('共有の取り込み', e); }
 }
 
 // 最初に開いたとき棚が空だと何も確かめられないので、自前の短い文章を1つ入れておく。
@@ -352,7 +381,8 @@ function hash32(s) {
 // 背表紙。題名から色・幅・高さを決めるので、同じ本はいつも同じ姿になる。
 // 外側の button は高さを揃えてあり（段を等間隔にするため）、中の span だけが伸び縮みする。
 // 色は薄く。天地の罫線と背の陰は CSS 側で、ここで渡す3色から引く。
-function spineHTML(b) {
+// hasMark: 読みかけ（しおりがある）かどうか。true なら上の縁にリボンを垂らす（UI2-01）。
+function spineHTML(b, hasMark) {
   const h = hash32(b.title || '?') % 360;
   const sat = 15 + (hash32(b.id) % 4) * 4;                  // 15〜27%
   const lit = 84 + (hash32(b.title + '#') % 4) * 2;         // 84〜90%
@@ -367,7 +397,7 @@ function spineHTML(b) {
   const t = [...(b.title || '')];
   const label = t.length > cap ? t.slice(0, cap - 1).join('') + '…' : t.join('');
   return '<button class="spine" data-id="' + b.id + '" style="width:' + w + 'px" title="' + esc(b.title) + '">' +
-    '<span class="sp" style="height:' + ht + 'px;' + v + '">' +
+    '<span class="sp' + (hasMark ? ' bm' : '') + '" style="height:' + ht + 'px;' + v + '">' +
     '<span>' + esc(label) + '</span></span></button>';
 }
 
@@ -448,11 +478,13 @@ async function renderNow() {
       '</button>' +
 
       '<section class="shelfcase">' +
-        '<button class="cap" id="n-shelf"><span>読みかけ</span>' +
-          '<em>' + (opening ? opening + '冊' : 'まだなし') + '</em>' +
+        // 見出しは実際に並ぶ本（読んでいる棚まるごと）に合わせた言い方にする。
+        // 「読みかけ」はそのうち進捗が付いている本だけの数（UI2-01）。
+        '<button class="cap" id="n-shelf"><span>読んでいる ' + reading.length + '冊' +
+          (opening ? '・読みかけ ' + opening + '冊' : '') + '</span>' +
           '<i class="rail"></i><em class="to">棚へ ▸</em>' + bearHTML('') + '</button>' +
         '<div class="spines">' +
-          (order.length ? order.map(spineHTML).join('')
+          (order.length ? order.map((b) => spineHTML(b, started(b, mk.get(b.id)))).join('')
             : '<span class="noshelf">「読んでいる」棚に本がありません</span>') +
         '</div>' +
       '</section>' +
@@ -547,9 +579,15 @@ async function renderShelf() {
   const mk = await allMarks();
   const all = S.books.filter((b) => b.status === S.shelfTab);
   const authors = authorCounts(all);
-  const picked = S.pick;   // Set か null
   let list = S.shelfAuthor != null ? all.filter((b) => (b.author || '') === S.shelfAuthor) : all;
   list = sortBooks(list, S.shelfSort, mk);
+  // 選んでいる最中に絞り込み・並べ替えを変えても、今の一覧に無い本は選択から外す。
+  // 「すべて」・移す・消す・表紙を探す、はすべて今見えている本だけが対象になる（OS2-01）。
+  if (S.pick) {
+    const visible = new Set(list.map((b) => b.id));
+    for (const id of [...S.pick]) if (!visible.has(id)) S.pick.delete(id);
+  }
+  const picked = S.pick;   // Set か null
   const groups = (S.shelfSort === 'author' && S.shelfAuthor == null && list.length > 1)
     ? groupByAuthor(list) : [[null, list]];
 
@@ -575,7 +613,11 @@ async function renderShelf() {
             ? '<div class="ghead">' + esc(name || '作家なし') + '<em>' + rows.length + '冊</em></div>' : '') +
           '<div class="grid">' + rows.map((b) => coverCell(b, mk.get(b.id), picked || null)).join('') + '</div>'
         ).join('')
-      : '<div class="empty">' + (S.shelfAuthor != null ? 'この作家の本はここにありません' : 'ここには何もありません') + '</div>') +
+      : '<div class="empty">' +
+          (S.shelfAuthor != null
+            ? '<b>この作家の本はここにありません</b>作家の絞り込みを外すか、別の作家を選んでください。'
+            : '<b>ここには何もありません</b>「＋ 本を入れる」から取り込んでください。') +
+          '</div>') +
     '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>' +
     (picked ? pickBar(picked, list) : '');
   el.classList.toggle('picking', !!picked);   // 帯のぶん下に余白を足す
@@ -809,7 +851,7 @@ async function renderLog() {
     '</div>' +
     '<div class="h">この4週間</div>' +
     (noData
-      ? '<div class="empty">まだ記録がありません</div>'
+      ? '<div class="empty"><b>まだ記録がありません</b>本を開くと、ここに読んだ時間が積み上がります。</div>'
       : '<div class="bars">' + days.map((d) =>
           '<div class="' + (d.ms ? '' : 'zero') + '" style="height:' + Math.max(2, Math.round(d.ms / max * 84)) + 'px" title="' + fmt(d.ms) + '"></div>').join('') + '</div>' +
         '<div class="barlbl"><span>4週間前</span><span>今日</span></div>') +
@@ -949,6 +991,17 @@ async function bookSheet(id) {
 // 探すのは押されたときだけ。送るのは題名と著者名（と見つかった ISBN）だけ。本文やメモは送らない。
 // 底本の出版社名は送らず、返ってきた候補との照合に端末の中で使う。
 
+// DB.put の直前に、その本がまだ棚にあるか確かめる。無ければ書かない。
+// 表紙探しのように時間の掛かる処理の間に本を消されても、消えたはずの本を
+// 書き戻して「ゾンビ」として復活させないためのガード（OS2-03）。
+async function putBookSafe(b) {
+  if (!(await DB.get('books', b.id))) return false;
+  await DB.put('books', b);
+  return true;
+}
+// 容量不足かどうか（IndexedDB の書き込み失敗の見分け）
+const isQuotaExceeded = (e) => !!e && (e.name === 'QuotaExceededError' || /quota/i.test(String((e && e.message) || '')));
+
 // 青空文庫の本は、底本（どの版から起こしたか）を持っていなければ目録から引いて補う。
 // 取り込みのときの元ファイル名（2943_ruby_8114.zip など）の先頭が作品ID。
 async function ensureTeihon(b) {
@@ -960,7 +1013,7 @@ async function ensureTeihon(b) {
   const sp = splitPublisher(w.teihon.publisher);
   b.teihon = { name: w.teihon.name, series: sp.series, publisher: sp.publisher,
     year: String(w.teihon.year || '').replace(/\D/g, '').slice(0, 4) };
-  await DB.put('books', b);
+  await putBookSafe(b);
   return b.teihon;
 }
 
@@ -973,29 +1026,34 @@ function dropCoverCache(b) {
 // ネットの画像を表紙にする。取り込めれば Blob で持つ（通信なしでも出る）。
 // CORS で取り込めなければ URL のまま持つ（通信できるときに出る。ブラウザのキャッシュが効く）。
 // by: 'user'（自分で選んだ）か 'auto'（自動・まとめて）。'user' の本は自動では触らない。
+// 戻り値: 実際に書けたか（本が既に消えていれば false）。DB の書き込みが失敗すれば例外を投げる
+// （容量不足など。呼び出し側でトーストを出す）。
 async function setCover(b, url, by = 'user') {
   const blob = await Cover.fetchBlob(url);
   if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;   // EPUB の元の表紙は取っておく
   b.cover = blob || null;
   b.coverUrl = blob ? '' : url;
   b.coverBy = by;
-  await DB.put('books', b);
+  if (!(await putBookSafe(b))) return false;
   dropCoverCache(b);
   await loadBooks();
+  return true;
 }
 async function setCoverFile(b, file) {
   if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;
   b.cover = file; b.coverUrl = ''; b.coverBy = 'user';
-  await DB.put('books', b);
+  if (!(await putBookSafe(b))) return false;
   dropCoverCache(b);
   await loadBooks();
+  return true;
 }
 async function clearCover(b) {
   // 外したら、自動でも付け直さない（外したという選択を守る）
   b.cover = b.coverOrig || null; b.coverUrl = ''; delete b.coverOrig; b.coverBy = 'user';
-  await DB.put('books', b);
+  if (!(await putBookSafe(b))) return false;
   dropCoverCache(b);
   await loadBooks();
+  return true;
 }
 
 function teihonLabel(tb) {
@@ -1041,19 +1099,41 @@ function coverSheet(b) {
       im.onerror = next;
       im.onload = () => { if (im.naturalWidth < 40 || im.naturalHeight < 60) next(); };
     });
+    // 表紙の保存は try/catch で囲む。容量不足などで失敗しても、シートは
+    // 必ず閉じる状態に戻し、固まったままにしない（OS2-05）。
     $$('.cv-cell', box).forEach((btn) => {
       btn.onclick = async () => {
-        await setCover(b, $('img', btn).src);
-        closeSheet(); render(); toast('表紙を変えました');
+        try {
+          const ok = await setCover(b, $('img', btn).src);
+          closeSheet();
+          if (ok) { render(); toast('表紙を変えました'); }
+        } catch (e) {
+          closeSheet();
+          toast('保存できませんでした（端末の空きが足りない可能性があります）');
+        }
       };
     });
     $('#cv-file', box).onchange = async (e) => {
       const f = e.target.files[0];
       if (!f) return;
-      await setCoverFile(b, f); closeSheet(); render(); toast('表紙を変えました');
+      try {
+        const ok = await setCoverFile(b, f);
+        closeSheet();
+        if (ok) { render(); toast('表紙を変えました'); }
+      } catch (er) {
+        closeSheet();
+        toast('保存できませんでした（端末の空きが足りない可能性があります）');
+      }
     };
     if ($('#cv-clear', box)) $('#cv-clear', box).onclick = async () => {
-      await clearCover(b); closeSheet(); render(); toast('表紙を外しました');
+      try {
+        const ok = await clearCover(b);
+        closeSheet();
+        if (ok) { render(); toast('表紙を外しました'); }
+      } catch (e) {
+        closeSheet();
+        toast('保存できませんでした（端末の空きが足りない可能性があります）');
+      }
     };
   });
 }
@@ -1083,12 +1163,20 @@ async function bulkCovers(ids) {
     const res = await Cover.search(b);
     status = res.status;
     const pick = await Cover.pickBest(res);
-    if (pick) {
-      await setCover(b, pick.url, 'auto');
-      b.coverAuto = { at: Date.now(), same: !!pick.same, tries: 0 };
-      await DB.put('books', b);
-      found++; if (pick.same) same++;
-    } else miss++;
+    try {
+      if (pick) {
+        const applied = await setCover(b, pick.url, 'auto');
+        if (applied) {
+          b.coverAuto = { at: Date.now(), same: !!pick.same, tries: 0 };
+          await putBookSafe(b);
+          found++; if (pick.same) same++;
+        }
+      } else miss++;
+    } catch (e) {
+      // 容量不足ならそこで止める。それ以外の1冊の失敗は次へ進む（OS2-05）
+      if (isQuotaExceeded(e)) { halted = '保存できませんでした（端末の空きが足りない可能性があります）。'; break; }
+      miss++;
+    }
     bar.style.width = Math.round((i + 1) / todo.length * 100) + '%';
     if (Object.values(res.status).every((v) => v.startsWith('取れません'))) {
       halted = 'どの取得元にもつながらないので止めました。'; break;
@@ -1175,14 +1263,23 @@ async function autoCovers(force = false) {
       const st = b.coverAuto || {};
       const has = !!(b.cover || b.coverUrl);
       const pick = await Cover.pickBest(res);
-      if (pick && (!has || (pick.same && !st.same))) {
-        await setCover(b, pick.url, 'auto');
-        b.coverAuto = { at: now, same: !!pick.same, tries: 0 };
-        if (has) upgraded++; else added++;
-      } else {
-        b.coverAuto = { at: now, same: !!st.same, tries: (st.tries || 0) + 1 };
+      try {
+        if (pick && (!has || (pick.same && !st.same))) {
+          const applied = await setCover(b, pick.url, 'auto');
+          if (applied) {
+            b.coverAuto = { at: now, same: !!pick.same, tries: 0 };
+            if (has) upgraded++; else added++;
+            await putBookSafe(b);
+          }
+        } else {
+          b.coverAuto = { at: now, same: !!st.same, tries: (st.tries || 0) + 1 };
+          await putBookSafe(b);
+        }
+      } catch (e) {
+        // 容量不足なら今回の探しを止める。それ以外の1冊の失敗は次の本へ進む（OS2-05）
+        if (isQuotaExceeded(e)) break;
+        console.warn('表紙の自動探し', b.title, e);
       }
-      await DB.put('books', b);
       await new Promise((r) => setTimeout(r, AUTO_GAP_MS));
     }
   } catch (e) {
@@ -1512,6 +1609,8 @@ async function folderList(handle) {
 async function folderGet(items, msg, handle, replace) {
   let n = 0, err = 0, first = '';
   const done = [];
+  // フォルダの一括取り込みにも、まとめて入れたら「積んでいる」の規則を当てる
+  const status = items.length >= BULK_AT ? 'stack' : 'reading';
   for (const f of items) {
     if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
     try {
@@ -1526,7 +1625,7 @@ async function folderGet(items, msg, handle, replace) {
         }
         if (olds.length) await loadBooks();
       }
-      await importBlob(f.name, file, src);
+      await importBlob(f.name, file, src, status);
       done.push(f); n++;
     } catch (e) {
       console.warn(f.path, e); err++;
@@ -1638,11 +1737,13 @@ async function cloudBrowse(prov, stack) {
 
 async function cloudGet(prov, items, msg) {
   let n = 0, err = 0;
+  // クラウドの一括取り込みにも、まとめて入れたら「積んでいる」の規則を当てる
+  const status = items.length >= BULK_AT ? 'stack' : 'reading';
   for (const x of items) {
     if (msg) msg.textContent = '落としています… ' + (n + err + 1) + ' / ' + items.length + '：' + x.name;
     try {
       const blob = await prov.download(x);
-      await importBlob(x.name, blob, prov.label + ':' + x.name);
+      await importBlob(x.name, blob, prov.label + ':' + x.name, status);
       n++;
     } catch (e) { console.warn(e); err++; }
   }
@@ -2021,6 +2122,8 @@ function onSelChange() {
   R.selTimer = setTimeout(() => {
     const s = selectionOffsets();
     $('#selbar').hidden = !s;
+    // 選択バーが出るときは、紙の設定・目次を隠す（重なって出ないようにする。UI2-04）
+    if (s) { hideUI(); $('#toc').hidden = true; }
   }, 180);
 }
 
@@ -2370,7 +2473,11 @@ async function boot() {
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { Stats.pause(); R.turnAt = Date.now(); }
+    // 隠れたら、そこまでの読書時間を区切りとして sessions に保存しておく
+    // （iOS でバックグラウンドのまま OS に落とされても、この分は消えない）。
+    // 戻ってきたら resume するだけで、id は同じまま計り直す。end() や
+    // pagehide と合わせても、同じ id を上書きするだけなので二重には数えない。
+    if (document.hidden) { Stats.checkpoint(); R.turnAt = Date.now(); }
     else { Stats.resume(); R.turnAt = Date.now(); }
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
@@ -2411,6 +2518,8 @@ async function boot() {
       else toast('OneDrive につなげませんでした: ' + r.message);
     }
   } catch (e) { console.warn(e); }
+
+  await importFromShare();
 
   DB.persist();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

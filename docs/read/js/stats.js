@@ -65,6 +65,20 @@ export function end() {
 export function pause() { if (cur) { cur.ms += Date.now() - cur.t0; cur.t0 = Date.now(); } }
 export function resume() { if (cur) cur.t0 = Date.now(); }
 
+// バックグラウンドに回ったとき（visibilitychange で hidden）に呼ぶ。
+// end() のようにセッションを打ち切らず、そこまでの合計を同じ id で書いておくだけ
+// （区切り保存）。id が同じなので、次に checkpoint するか本当に end() したときは
+// 同じ行を上書きするだけになり、二重には数えない。iOS でバックグラウンドのまま
+// OS に落とされても、直前の checkpoint 分は残る。
+export function checkpoint() {
+  if (!cur) return null;
+  pause();
+  if (cur.ms < 20000) return null;   // 20秒未満はまだ記録しない（end() と同じ基準）
+  const row = { id: cur.id, bookId: cur.bookId, at: cur.at, ms: cur.ms, chars: cur.chars };
+  DB.put('sessions', row);
+  return row;
+}
+
 export async function daily(days) {
   const rows = await DB.all('sessions');
   const out = new Map();
