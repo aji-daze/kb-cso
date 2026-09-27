@@ -6,8 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="MEMO">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#0b0b0d" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f6f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
 <meta name="description" content="開いた瞬間に書ける、最小のメモ">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -15,50 +15,61 @@
 <title>MEMO</title>
 <!-- 速さのために CSS も JS もこのファイルに直書きする。外部ファイル・フォント・ライブラリは読まない。 -->
 <style>
-:root{--bg:#0b0b0d;--fg:#ecece8;--sub:#8a8a92;--line:#222227;--hi:#1a1a1f;--acc:#7fb4ff;color-scheme:dark}
-@media (prefers-color-scheme:light){:root{--bg:#f6f6f3;--fg:#1b1b1d;--sub:#77777e;--line:#e2e2dd;--hi:#ecece7;--acc:#2a64c8;color-scheme:light}}
+:root{--bg:#0e0e0e;--fg:#d8d8d4;--sub:#5c5c5a;--faint:#2a2a29;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#fafaf8;--fg:#222;--sub:#a3a3a0;--faint:#ececea;color-scheme:light}}
 *{box-sizing:border-box;margin:0}
 html,body{height:100%}
-body{background:var(--bg);color:var(--fg);font:16px/1.7 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;display:flex;flex-direction:column;overflow:hidden;
+body{background:var(--bg);color:var(--fg);font:17px/1.85 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;letter-spacing:.02em;
+  display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.bar{display:flex;align-items:center;gap:2px;height:44px;padding:0 6px;border-bottom:1px solid var(--line);flex:none}
-.bar button{min-width:40px;height:40px;border-radius:8px;font-size:18px;color:var(--sub)}
-.bar button:active,.bar button:hover{background:var(--hi);color:var(--fg)}
-#st{flex:1;text-align:center;font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ed{flex:1;width:100%;resize:none;border:0;outline:0;background:transparent;color:inherit;font:inherit;padding:16px max(16px,calc((100% - 760px)/2)) 40vh;tab-size:4}
+::selection{background:var(--faint)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;display:block}
+.bar{display:flex;align-items:center;height:52px;padding:0 max(11px,calc((100% - 660px)/2 - 13px));flex:none;transition:opacity .6s}
+.bar button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);transition:color .2s}
+.bar button:hover,.bar button:active{color:var(--fg)}
+body.w .bar{opacity:0;transition:opacity 1.2s}
+#st{flex:1;text-align:center;font-size:11px;letter-spacing:.12em;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+#ed{flex:1;width:100%;resize:none;border:0;outline:0;background:transparent;color:inherit;font:inherit;letter-spacing:inherit;caret-color:var(--fg);
+  padding:8px max(24px,calc((100% - 660px)/2)) 45vh;tab-size:4}
 #ed::placeholder{color:var(--sub)}
-#dr{position:fixed;inset:0;z-index:9;display:none;background:rgba(0,0,0,.45)}
-#dr.on{display:block}
-#pn{position:absolute;top:0;bottom:0;left:0;width:min(380px,88vw);background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column;
-  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left)}
-#q{margin:10px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--hi);color:inherit;font:inherit;outline:0}
-#ls{flex:1;overflow:auto;list-style:none;padding:0 6px}
-#ls li{padding:8px 10px;border-radius:8px;cursor:pointer}
-#ls li:hover,#ls li.cur{background:var(--hi)}
-#ls b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ls small{display:block;font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ls .none{color:var(--sub);cursor:default;background:none}
-.ft{display:flex;gap:4px;padding:8px;border-top:1px solid var(--line);font-size:13px}
-.ft button{flex:1;padding:8px 0;border-radius:8px;color:var(--sub)}
-.ft button:hover{background:var(--hi);color:var(--fg)}
-#to{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--fg);color:var(--bg);font-size:13px;
-  padding:8px 14px;border-radius:8px;display:none;z-index:10;align-items:center;gap:12px}
+#dr{position:fixed;inset:0;z-index:9;visibility:hidden;background:var(--bg);opacity:0;transition:opacity .18s,visibility 0s .18s}
+#dr.on{visibility:visible;opacity:1;transition:opacity .18s}
+#pn{height:100%;max-width:660px;margin:0 auto;display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top) max(24px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px,env(safe-area-inset-left))}
+.top{display:flex;align-items:center;gap:8px;height:52px;flex:none;margin-top:16px}
+#q{flex:1;min-width:0;padding:6px 0;border:0;border-bottom:1px solid var(--faint);background:none;color:inherit;font:inherit;letter-spacing:inherit;outline:0;border-radius:0;-webkit-appearance:none}
+#q:focus{border-color:var(--sub)}
+#q::placeholder{color:var(--sub)}
+#q::-webkit-search-cancel-button{display:none}
+#bX{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);margin-right:-12px}
+#bX:hover{color:var(--fg)}
+#ls{flex:1;overflow:auto;list-style:none;padding:24px 0;scrollbar-width:none}
+#ls li{padding:12px 0;cursor:pointer;color:var(--sub);transition:color .15s}
+#ls li:hover{color:var(--fg)}
+#ls b{display:block;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls small{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls .none{cursor:default;font-size:13px}
+.ft{display:flex;gap:24px;padding:16px 0 24px;font-size:12px;letter-spacing:.08em}
+.ft button{color:var(--sub)}
+.ft button:hover{color:var(--fg)}
+#to{position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:12px;letter-spacing:.08em;color:var(--sub);
+  display:none;z-index:10;gap:16px;white-space:nowrap}
 #to.on{display:flex}
-#to button{color:var(--acc);font-weight:600}
+#to button{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
 </style>
 </head>
 <body>
 <div class="bar">
-  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧">≡</button>
-  <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ">＋</button>
+  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 16h9"/></svg></button>
+  <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
   <div id="st"></div>
-  <button id="bS" title="共有・コピー" aria-label="共有・コピー">⇪</button>
-  <button id="bD" title="このメモを削除" aria-label="削除">×</button>
+  <button id="bS" title="共有・コピー" aria-label="共有・コピー"><svg viewBox="0 0 24 24"><path d="M12 15V5M8 9l4-4 4 4M6 14v5h12v-5"/></svg></button>
+  <button id="bD" title="このメモを削除" aria-label="削除"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
-<textarea id="ed" placeholder="書く" autofocus spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+<textarea id="ed" autofocus spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
 <div id="dr"><div id="pn">
-  <input id="q" type="search" placeholder="検索" autocomplete="off">
+  <div class="top"><input id="q" type="search" placeholder="検索" autocomplete="off"><button id="bX" title="閉じる (Esc)" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button></div>
   <ul id="ls"></ul>
   <div class="ft">
     <button id="bE">書き出し</button>
@@ -136,11 +147,17 @@ function render(){
   var li=ls.children,j=0;
   for(i=0;i<a.length&&j<li.length;i++){if('_h' in a[i]){li[j].firstChild.textContent=a[i]._h;li[j].lastChild.textContent=a[i]._r;j++}}
 }
-function openList(){save();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
+function openList(){save();wake();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
 function close(){dr.className=''}
 
-ed.addEventListener('input',function(){later();st.textContent=ed.value.length+'字'});
+ed.addEventListener('input',function(){later();st.textContent=ed.value.length+'字';quiet()});
+// 書いている間はバーを消して文字だけにする。手が止まるかマウスが動けば戻す。
+var wT=0,mx=-1,my=-1,B=document.body;
+function quiet(){B.classList.add('w');clearTimeout(wT);wT=setTimeout(wake,1500)}
+function wake(){clearTimeout(wT);B.classList.remove('w')}
+addEventListener('mousemove',function(e){if(Math.abs(e.screenX-mx)+Math.abs(e.screenY-my)>4&&mx>=0)wake();mx=e.screenX;my=e.screenY});
 $('bL').onclick=openList;
+$('bX').onclick=function(){close();ed.focus()};
 $('bN').onclick=function(){open(null)};
 $('bD').onclick=function(){
   save();
