@@ -31,6 +31,7 @@ const S = {
   shelfSort: 'added',   // 棚の並べ替え
   shelfAuthor: null,    // 作家で絞る（null なら全部）
   pick: null,           // 選んでいる最中は Set。ふだんは null
+  coverAuto: true,      // 表紙を自動で探す（設定で切れる）
   noteTag: null,
   chrome: { theme: 'sumi', accent: 'kohaku', font: 'system' },
   paper: Paper.defaults(),
@@ -254,6 +255,7 @@ async function importFiles(files) {
       catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
     }
   } finally { addStatus = 'reading'; }
+  if (n) setTimeout(() => autoCovers(true), 1500);   // 入れた本の表紙を探す（設定で切れる）
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
   if (n) toast(n + '冊を' + (bulk ? '「積んでいる」に' : '棚に') + '入れました' +
     (copied ? '／' + copied + '件をフォルダにも保存' : '') +
@@ -970,24 +972,27 @@ function dropCoverCache(b) {
 
 // ネットの画像を表紙にする。取り込めれば Blob で持つ（通信なしでも出る）。
 // CORS で取り込めなければ URL のまま持つ（通信できるときに出る。ブラウザのキャッシュが効く）。
-async function setCover(b, url) {
+// by: 'user'（自分で選んだ）か 'auto'（自動・まとめて）。'user' の本は自動では触らない。
+async function setCover(b, url, by = 'user') {
   const blob = await Cover.fetchBlob(url);
   if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;   // EPUB の元の表紙は取っておく
   b.cover = blob || null;
   b.coverUrl = blob ? '' : url;
+  b.coverBy = by;
   await DB.put('books', b);
   dropCoverCache(b);
   await loadBooks();
 }
 async function setCoverFile(b, file) {
   if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;
-  b.cover = file; b.coverUrl = '';
+  b.cover = file; b.coverUrl = ''; b.coverBy = 'user';
   await DB.put('books', b);
   dropCoverCache(b);
   await loadBooks();
 }
 async function clearCover(b) {
-  b.cover = b.coverOrig || null; b.coverUrl = ''; delete b.coverOrig;
+  // 外したら、自動でも付け直さない（外したという選択を守る）
+  b.cover = b.coverOrig || null; b.coverUrl = ''; delete b.coverOrig; b.coverBy = 'user';
   await DB.put('books', b);
   dropCoverCache(b);
   await loadBooks();
@@ -1078,7 +1083,12 @@ async function bulkCovers(ids) {
     const res = await Cover.search(b);
     status = res.status;
     const pick = await Cover.pickBest(res);
-    if (pick) { await setCover(b, pick.url); found++; if (pick.same) same++; } else miss++;
+    if (pick) {
+      await setCover(b, pick.url, 'auto');
+      b.coverAuto = { at: Date.now(), same: !!pick.same, tries: 0 };
+      await DB.put('books', b);
+      found++; if (pick.same) same++;
+    } else miss++;
     bar.style.width = Math.round((i + 1) / todo.length * 100) + '%';
     if (Object.values(res.status).every((v) => v.startsWith('取れません'))) {
       halted = 'どの取得元にもつながらないので止めました。'; break;
@@ -1092,6 +1102,133 @@ async function bulkCovers(ids) {
     '<div class="actions"><button class="btn primary" id="cb-ok">閉じる</button></div>';
   $('#cb-ok', end).onclick = () => { closeSheet(); render(); };
   render();
+}
+
+// ---------------------------------------------------------------- 表紙を自動で探す
+// アプリが開いている間に、少しずつ探して付ける（閉じている間は動けない。PWA の制約）。
+//   探す本：表紙の無い本／別の版の表紙が付いていて、底本と同じ版がまだ無い本
+//   触らない本：自分で選んだ・外した表紙（coverBy === 'user'）、元から表紙のある EPUB
+//   見つからなかった本は 1→2→4→…→30日 と間を空けて探し直す
+//   Google Books の1日の上限を守るため、1回に12冊・1日に80件まで。上限に当たったら半日止める
+const AUTO_PER_RUN = 12, AUTO_PER_DAY = 80, AUTO_GAP_MS = 1500, AUTO_COOL_MS = 12 * 3600e3;
+const DAY_MS = 864e5;
+
+function coverAutoOn() { return S.coverAuto !== false; }
+
+function coverDue(b, now) {
+  if (b.coverBy === 'user') return false;
+  if (b.kind === 'epub' && (b.cover || b.coverOrig) && b.coverBy !== 'auto') return false;
+  const st = b.coverAuto || {};
+  const has = !!(b.cover || b.coverUrl);
+  if (has && (st.same || !b.teihon)) return false;          // 同じ版が付いた／比べる底本が無い
+  const waitDays = has ? 30 : (st.tries ? Math.min(30, 2 ** (st.tries - 1)) : 0);
+  return !st.at || now - st.at >= waitDays * DAY_MS;
+}
+
+// 1日の使用回数と、上限に当たったときの休み。端末ごとの話なので localStorage に置く。
+function coverBudget() {
+  const today = new Date().toISOString().slice(0, 10);
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem('pocha.coverDay') || '{}'); } catch {}
+  if (v.d !== today) v = { d: today, n: 0 };
+  return {
+    left: AUTO_PER_DAY - v.n,
+    use() { v.n++; try { localStorage.setItem('pocha.coverDay', JSON.stringify(v)); } catch {} },
+  };
+}
+function coverCooling() {
+  let t = 0;
+  try { t = +localStorage.getItem('pocha.coverWait') || 0; } catch {}
+  return Date.now() < t;
+}
+function coverCoolDown() {
+  try { localStorage.setItem('pocha.coverWait', String(Date.now() + AUTO_COOL_MS)); } catch {}
+}
+
+let coverRunning = false, coverLastRun = 0;
+async function autoCovers(force = false) {
+  if (coverRunning || !coverAutoOn() || !navigator.onLine || document.hidden) return;
+  // 上限に当たったあとの休みは、force でも守る（解くのは「今すぐ探す」だけ）
+  if (coverCooling()) return;
+  if (!force && Date.now() - coverLastRun < 10 * 60e3) return;
+  coverRunning = true; coverLastRun = Date.now();
+  let added = 0, upgraded = 0;
+  try {
+    const now = Date.now();
+    await loadBooks();
+    // 青空文庫の本は先に底本を補う（「別の版→同じ版」の付け替えに要る）
+    const todo = [];
+    for (const b of S.books) {
+      if (todo.length >= AUTO_PER_RUN) break;
+      if (b.coverBy === 'user') continue;
+      await ensureTeihon(b);
+      if (coverDue(b, now)) todo.push(b);
+    }
+    const budget = coverBudget();
+    for (const b of todo) {
+      if (document.hidden || !navigator.onLine || budget.left <= 0) break;
+      const res = await Cover.search(b);
+      budget.use(); budget.left--;
+      const failed = Object.values(res.status).every((v) => v.startsWith('取れません'));
+      const limited = Object.values(res.status).some((v) => /429|上限/.test(v));
+      if (failed || limited) { coverCoolDown(); break; }
+      const st = b.coverAuto || {};
+      const has = !!(b.cover || b.coverUrl);
+      const pick = await Cover.pickBest(res);
+      if (pick && (!has || (pick.same && !st.same))) {
+        await setCover(b, pick.url, 'auto');
+        b.coverAuto = { at: now, same: !!pick.same, tries: 0 };
+        if (has) upgraded++; else added++;
+      } else {
+        b.coverAuto = { at: now, same: !!st.same, tries: (st.tries || 0) + 1 };
+      }
+      await DB.put('books', b);
+      await new Promise((r) => setTimeout(r, AUTO_GAP_MS));
+    }
+  } catch (e) {
+    console.warn('表紙の自動探し', e);
+  } finally {
+    coverRunning = false;
+  }
+  if (added || upgraded) {
+    await loadBooks();
+    if (!R.open) render();
+    toast('表紙を' + (added ? added + '冊に付けました' : '') +
+      (added && upgraded ? '・' : '') + (upgraded ? upgraded + '冊を底本と同じ版に替えました' : ''));
+  }
+}
+
+// 設定画面の「表紙」の欄
+async function coverPanel(box) {
+  const now = Date.now();
+  let has = 0, same = 0, wait = 0, user = 0;
+  for (const b of S.books) {
+    if (b.cover || b.coverUrl) { has++; if (b.coverAuto && b.coverAuto.same) same++; }
+    if (b.coverBy === 'user') user++;
+    else if (coverDue(b, now)) wait++;
+  }
+  const on = coverAutoOn();
+  box.innerHTML =
+    '<button class="item" id="cp-auto"><span class="mark">' + (on ? '●' : '○') + '</span>' +
+      '<span><b>表紙を自動で探す</b>' +
+      '<span>アプリを開いている間に、表紙の無い本を少しずつ探して付けます。' +
+      'そのとき題名と著者名を Google Books・国立国会図書館に送ります（本文やメモは送りません）</span></span></button>' +
+    '<div style="color:var(--sub);font-size:12.5px;line-height:1.8;margin:6px 0 8px">' +
+      '表紙あり ' + has + '冊（うち底本と同じ版 ' + same + '冊）／これから探す ' + wait + '冊' +
+      (user ? '／自分で決めた ' + user + '冊（自動では触りません）' : '') +
+      (coverCooling() ? '<br>取得元の上限に当たったので、しばらく休んでいます' : '') + '</div>' +
+    (on && wait ? '<div class="actions"><button class="btn sm" id="cp-now">今すぐ探す</button></div>' : '');
+  $('#cp-auto', box).onclick = async () => {
+    S.coverAuto = !on;
+    await DB.setting('coverAuto', S.coverAuto);
+    coverPanel(box);
+    if (S.coverAuto) autoCovers(true);
+  };
+  if ($('#cp-now', box)) $('#cp-now', box).onclick = () => {
+    try { localStorage.removeItem('pocha.coverWait'); } catch {}
+    toast('探しています。見つかったら知らせます');
+    autoCovers(true);
+  };
 }
 
 // ================================================================ 青空文庫
@@ -1928,6 +2065,8 @@ async function gearSheet() {
     row('テーマ（アプリの画面）', 'g-theme', themes, S.chrome.theme) +
     row('アクセント', 'g-accent', accents, S.chrome.accent) +
     row('フォント', 'g-font', fonts, S.chrome.font) +
+    '<div class="h">表紙</div>' +
+    '<div id="g-cover"></div>' +
     '<div class="h">フォルダ</div>' +
     '<div id="g-folder"></div>' +
     '<div class="h">クラウド</div>' +
@@ -1953,6 +2092,7 @@ async function gearSheet() {
         };
       };
       bind('g-theme', 'theme'); bind('g-accent', 'accent'); bind('g-font', 'font');
+      coverPanel($('#g-cover', el));
       folderPanel($('#g-folder', el));
       cloudPanel($('#g-cloud', el));
       minchoPanel($('#g-mincho', el));
@@ -2149,6 +2289,7 @@ async function boot() {
   const paper = await DB.setting('paper');
   if (paper) S.paper = Object.assign(Paper.defaults(), paper);
   applyChrome();
+  S.coverAuto = (await DB.setting('coverAuto')) !== false;
   Font.install().catch(() => {});
   await Stats.load();
   await loadBooks();
@@ -2233,6 +2374,11 @@ async function boot() {
     else { Stats.resume(); R.turnAt = Date.now(); }
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
+
+  // 表紙の自動探し。起動の邪魔をしないよう少し待ってから。10分に1回まで（autoCovers 側で見る）
+  setTimeout(() => autoCovers(), 6000);
+  addEventListener('online', () => autoCovers());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) autoCovers(); });
 
   // Android の「戻る」など、こちらから history.back() を呼ばずに届く popstate。
   // 「今の history.state に対して、開いたままなのはおかしいもの」だけを閉じる。
