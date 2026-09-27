@@ -60,8 +60,14 @@ const toWork = (r) => ({ id: r[0], title: r[1], kana: r[2], author: r[3], txt: r
   teihon: r[6] || r[7] ? { name: r[6] || '', publisher: r[7] || '', year: r[8] || '' } : null });
 
 // 作品IDで1件引く（'2943' でも '002943' でもよい）。取り込み済みの本の底本を後から知るのに使う。
+// 端末の目録が底本の列を持たない古い形なら、自分のサイトから一度だけ入れ直す（外には何も送らない）。
+let refreshed = false;
 export async function byId(id) {
-  const rows = await index();
+  let rows = await index();
+  if (rows && rows.length && rows[0].length < 9 && !refreshed) {
+    refreshed = true;
+    try { await buildIndex(); rows = await index(); } catch { /* 入れ直せなくても、底本なしで探す */ }
+  }
   if (!rows || !id) return null;
   const n = parseInt(id, 10);
   const r = rows.find((x) => parseInt(x[0], 10) === n);
