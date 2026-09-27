@@ -519,3 +519,23 @@ input, select, textarea { font-size: 16px; }
   .rpage { inset: var(--mg) max(var(--mg), calc((100% - 760px) / 2)); }
   .rfoot { padding-inline: max(var(--mg), calc((100% - 760px) / 2)); }
 }
+
+/* ---------- 表紙を探す ---------- */
+.cv-note { font-size: 12.5px; color: var(--sub); line-height: 1.8; margin: 0 0 12px; }
+.cv-note b { color: var(--tx); }
+.cv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 14px 10px; margin-bottom: 12px; }
+.cv-cell {
+  display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start;
+  position: relative; padding: 0; background: none; text-align: left; min-height: 44px;
+}
+.cv-cell img {
+  width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 2px;
+  background: var(--surface2); box-shadow: var(--shadow);
+}
+.cv-cell:hover img, .cv-cell:focus-visible img { outline: 2px solid var(--acc); outline-offset: -1px; }
+.cv-cell span { font-size: 11px; color: var(--sub); margin-top: 5px; line-height: 1.4; }
+.cv-cell em {
+  position: absolute; left: 4px; top: 4px; font-style: normal; font-size: 10px; font-weight: 600;
+  background: var(--acc); color: var(--on-acc); padding: 2px 5px; border-radius: 3px;
+}
+.cv-stat { font-size: 11px; color: var(--sub); line-height: 1.7; margin: 4px 0 12px; }

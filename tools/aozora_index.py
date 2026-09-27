@@ -83,6 +83,11 @@ def main():
     i_free = col("作品著作権フラグ")
     i_txt = col("テキストファイルURL")
     i_html = next((i for i, h in enumerate(head) if "XHTML/HTML" in h), -1)
+    # 底本（どの版から起こしたか）。書影を探すときに、同じ出版社・同じ文庫の
+    # 表紙を選ぶのに使う。列が無い版の CSV でも止まらないよう、無ければ空で出す。
+    i_tb_name = col("底本名1")
+    i_tb_pub = col("底本出版社名1")
+    i_tb_year = col("底本初版発行年1")
     if i_title < 0 or (i_txt < 0 and i_html < 0):
         raise SystemExit(f"CSV の列が想定と違います: {head[:20]}")
 
@@ -104,10 +109,12 @@ def main():
         if key in seen:
             continue
         seen.add(key)
+        cell = lambda i: (r[i] if i >= 0 and len(r) > i else "")
         out.append([
             wid, r[i_title],
             (r[i_kana] if i_kana >= 0 and len(r) > i_kana else ""),
             author, txt, htm,
+            cell(i_tb_name), cell(i_tb_pub), cell(i_tb_year),
         ])
 
     out.sort(key=lambda x: (x[3], x[1]))

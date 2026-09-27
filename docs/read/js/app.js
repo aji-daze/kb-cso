@@ -5,6 +5,7 @@ import * as Notes from './notes.js';
 import * as Stats from './stats.js';
 import * as Aozora from './aozora.js';
 import * as Quotes from './quotes.js';
+import * as Cover from './cover.js';
 import * as Font from './font.js';
 import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
@@ -13,7 +14,7 @@ import { Pager } from './pager.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
-import { splitAozora, decodeText, looksAozora } from './md.js';
+import { splitAozora, decodeText, looksAozora, splitPublisher } from './md.js';
 import { supported as zipOK } from './zip.js';
 
 const $ = (s, r) => (r || document).querySelector(s);
@@ -118,7 +119,8 @@ function confirmSheet(title, body, okLabel, danger) {
 
 function coverStyle(b) {
   const url = S.covers.get(b.id);
-  if (url) return 'background-image:url(' + url + ')';
+  // 外の URL は style="…" の中に入るので、属性や url() を壊す文字は符号化する
+  if (url) return 'background-image:url(' + String(url).replace(/["'()\s\\<>]/g, encodeURIComponent) + ')';
   // 書影が無い本は、題名から作った色で塗る
   let h = 0;
   for (const c of (b.title || '?')) h = (h * 31 + c.codePointAt(0)) % 360;
@@ -165,6 +167,8 @@ async function addBook(meta, chapters) {
     chapChars: counts,
     chars: counts.reduce((a, b) => a + b, 0),
     cover: meta.cover || null,
+    coverUrl: '',                 // ネットで見つけた書影（Blob にできなかったとき URL のまま持つ）
+    teihon: meta.teihon || null,  // 青空文庫の底本（どの版から起こしたか）。書影探しに使う
     manual: meta.manual || null,
   };
   await DB.put('books', book);
@@ -191,7 +195,7 @@ async function importBlob(filename, blob, source) {
     const a = splitAozora(text);
     const title = a.title || name;
     return addBook({
-      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, teihon: a.teihon,
     }, txtToChapters(a.body, title));
   }
 
@@ -213,7 +217,7 @@ async function importBlob(filename, blob, source) {
     const a = splitAozora(text);
     const title = a.title || name;
     return addBook({
-      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, teihon: a.teihon,
     }, txtToChapters(a.body, title));
   }
 
@@ -302,6 +306,8 @@ async function loadBooks() {
   for (const b of S.books) {
     if (b.cover && !S.covers.has(b.id)) {
       try { S.covers.set(b.id, URL.createObjectURL(b.cover)); } catch { /* 表紙が壊れていても本は読める */ }
+    } else if (!b.cover && b.coverUrl && !S.covers.has(b.id)) {
+      S.covers.set(b.id, b.coverUrl);
     }
   }
   return S.books;
@@ -599,6 +605,7 @@ function pickBar(picked, list) {
     '<button data-a="all">' + (picked.size >= list.length && list.length ? '解除' : 'すべて') + '</button>' +
     '<span class="n">' + picked.size + '冊</span>' +
     moves.map(([k, v]) => '<button data-a="mv" data-st="' + k + '">' + v + 'へ</button>').join('') +
+    '<button data-a="cover">表紙を探す</button>' +
     '<button data-a="del" class="danger">消す</button>' +
   '</div>';
 }
@@ -615,6 +622,7 @@ function bindPickBar(el, list) {
       if (!ids.length) { toast('本を選んでください'); return; }
       if (btn.dataset.a === 'mv') return bulkStatus(ids, btn.dataset.st);
       if (btn.dataset.a === 'del') return bulkDelete(ids);
+      if (btn.dataset.a === 'cover') return bulkCovers(ids);
     };
   });
 }
@@ -905,6 +913,8 @@ async function bookSheet(id) {
     (b.manual
       ? '<button class="item" id="b-manual"><span class="mark">✎</span><span><b>進みを書き込む</b></span></button>'
       : '<button class="item" id="b-open"><span class="mark">▶</span><span><b>' + (m.pct ? '続きから読む' : '読む') + '</b></span></button>') +
+    '<button class="item" id="b-cover"><span class="mark">▣</span><span><b>表紙を探す</b>' +
+      '<span>ネットで書影を探す・端末の画像を選ぶ</span></span></button>' +
     Object.entries(STATUS).filter(([k]) => k !== b.status).map(([k, v]) =>
       '<button class="item" data-st="' + k + '"><span class="mark">·</span><span><b>「' + v + '」に移す</b></span></button>').join('') +
     '<button class="item" id="b-del"><span class="mark">✕</span><span><b style="color:var(--danger)">棚から消す</b>' +
@@ -914,6 +924,7 @@ async function bookSheet(id) {
       // そのまま読書画面に差し替える（pushReaderHistory 側で見ている）。
       if ($('#b-open', el)) $('#b-open', el).onclick = () => { dismissSheetDOM(); openBook(id); };
       if ($('#b-manual', el)) $('#b-manual', el).onclick = () => manualSheet(b);
+      $('#b-cover', el).onclick = () => coverSheet(b);
       $$('[data-st]', el).forEach((x) => {
         x.onclick = async () => {
           b.status = x.dataset.st;
@@ -930,6 +941,157 @@ async function bookSheet(id) {
         await loadBooks(); render(); toast('消しました');
       };
     });
+}
+
+// ================================================================ 書影
+// 探すのは押されたときだけ。送るのは題名と著者名（と見つかった ISBN）だけ。本文やメモは送らない。
+// 底本の出版社名は送らず、返ってきた候補との照合に端末の中で使う。
+
+// 青空文庫の本は、底本（どの版から起こしたか）を持っていなければ目録から引いて補う。
+// 取り込みのときの元ファイル名（2943_ruby_8114.zip など）の先頭が作品ID。
+async function ensureTeihon(b) {
+  if (b.teihon || b.kind !== 'aozora') return b.teihon || null;
+  const m = String(b.source || '').match(/(\d+)_(?:ruby|txt)_\d+/);
+  if (!m) return null;
+  const w = await Aozora.byId(m[1]).catch(() => null);
+  if (!w || !w.teihon) return null;
+  const sp = splitPublisher(w.teihon.publisher);
+  b.teihon = { name: w.teihon.name, series: sp.series, publisher: sp.publisher,
+    year: String(w.teihon.year || '').replace(/\D/g, '').slice(0, 4) };
+  await DB.put('books', b);
+  return b.teihon;
+}
+
+function dropCoverCache(b) {
+  const old = S.covers.get(b.id);
+  if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+  S.covers.delete(b.id);
+}
+
+// ネットの画像を表紙にする。取り込めれば Blob で持つ（通信なしでも出る）。
+// CORS で取り込めなければ URL のまま持つ（通信できるときに出る。ブラウザのキャッシュが効く）。
+async function setCover(b, url) {
+  const blob = await Cover.fetchBlob(url);
+  if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;   // EPUB の元の表紙は取っておく
+  b.cover = blob || null;
+  b.coverUrl = blob ? '' : url;
+  await DB.put('books', b);
+  dropCoverCache(b);
+  await loadBooks();
+}
+async function setCoverFile(b, file) {
+  if (b.kind === 'epub' && b.cover && !b.coverOrig) b.coverOrig = b.cover;
+  b.cover = file; b.coverUrl = '';
+  await DB.put('books', b);
+  dropCoverCache(b);
+  await loadBooks();
+}
+async function clearCover(b) {
+  b.cover = b.coverOrig || null; b.coverUrl = ''; delete b.coverOrig;
+  await DB.put('books', b);
+  dropCoverCache(b);
+  await loadBooks();
+}
+
+function teihonLabel(tb) {
+  if (!tb) return '';
+  const ed = [tb.series, tb.publisher].filter(Boolean).join('・') || tb.name;
+  return ed + (tb.year ? '（' + tb.year + '）' : '');
+}
+
+// 1冊の表紙を選ぶ。候補を並べ、底本と同じ版に印をつける。
+function coverSheet(b) {
+  sheet('<h3>表紙を探す</h3><div id="cv"><p class="cv-note">探しています…</p></div>', async (el) => {
+    const box = $('#cv', el);
+    await ensureTeihon(b);
+    const tb = b.teihon;
+    const head = '<p class="cv-note"><b>' + esc(b.title) + '</b>' + (b.author ? '　' + esc(b.author) : '') + '<br>' +
+      (tb ? '底本：' + esc(teihonLabel(tb)) + '。同じ版を先に出します'
+          : '底本が分かりません。題名と著者だけで探します') + '</p>';
+    box.innerHTML = head + '<p class="cv-note">探しています…</p>';
+    const res = await Cover.search(b);
+    if (!box.isConnected) return;                       // 待っている間に閉じられた
+    const list = res.list.slice(0, 24);
+    box.innerHTML = head +
+      (list.length
+        ? '<div class="cv-grid">' + list.map((c, i) =>
+            '<button class="cv-cell" data-i="' + i + '">' +
+            '<img alt="" referrerpolicy="no-referrer" data-k="0" src="' + esc(c.imgs[0]) + '">' +
+            (c.same ? '<em>底本と同じ版</em>' : '') +
+            '<span>' + esc([c.series || c.publisher, c.year].filter(Boolean).join('・') || '出版社不明') + '</span>' +
+            '</button>').join('') + '</div>'
+        : '<div class="empty">見つかりませんでした</div>') +
+      '<p class="cv-stat">' + Object.entries(res.status).map(([k, v]) => esc(k) + '：' + esc(v)).join('<br>') + '</p>' +
+      '<div class="actions">' +
+        '<label class="btn">端末の画像を選ぶ<input type="file" accept="image/*" id="cv-file" hidden></label>' +
+        (S.covers.has(b.id) ? '<button class="btn" id="cv-clear">表紙を外す</button>' : '') +
+      '</div>';
+    // 出ない画像は次の候補画像へ。全部だめならその候補ごと消す。小さすぎる絵（「画像なし」など）も同じ。
+    $$('.cv-cell img', box).forEach((im) => {
+      const c = list[+im.parentNode.dataset.i];
+      const next = () => {
+        const k = +im.dataset.k + 1;
+        if (k < c.imgs.length) { im.dataset.k = k; im.src = c.imgs[k]; } else im.parentNode.remove();
+      };
+      im.onerror = next;
+      im.onload = () => { if (im.naturalWidth < 40 || im.naturalHeight < 60) next(); };
+    });
+    $$('.cv-cell', box).forEach((btn) => {
+      btn.onclick = async () => {
+        await setCover(b, $('img', btn).src);
+        closeSheet(); render(); toast('表紙を変えました');
+      };
+    });
+    $('#cv-file', box).onchange = async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      await setCoverFile(b, f); closeSheet(); render(); toast('表紙を変えました');
+    };
+    if ($('#cv-clear', box)) $('#cv-clear', box).onclick = async () => {
+      await clearCover(b); closeSheet(); render(); toast('表紙を外しました');
+    };
+  });
+}
+
+// 選んだ本の表紙をまとめて探す。自動で付けるのは、題名と著者が合うものだけ
+// （訳本は訳者も合うもの）。底本と同じ版があればそれを選ぶ。
+async function bulkCovers(ids) {
+  const all = ids.map((id) => S.books.find((b) => b.id === id)).filter(Boolean);
+  const todo = all.filter((b) => !b.cover && !b.coverUrl);
+  if (!todo.length) { toast('選んだ本にはもう表紙があります'); return; }
+  if (!(await confirmSheet(todo.length + '冊の表紙を探しますか',
+    '題名と著者名を Google Books と国立国会図書館に送って探します（見つかった本の ISBN は openBD にも）。本文やメモは送りません。' +
+    '底本と同じ版を先に選び、訳本は訳者が合うものだけ付けます。' +
+    (all.length > todo.length ? '（表紙がある ' + (all.length - todo.length) + '冊は飛ばします）' : ''), '探す'))) return;
+
+  sheet('<h3>表紙を探しています</h3>' +
+    '<div id="cb-msg" style="font-size:13px;color:var(--sub);line-height:1.8;min-height:52px"></div>' +
+    '<div class="prog" style="margin:10px 0"><i id="cb-bar" style="width:0%"></i></div>' +
+    '<div id="cb-end"></div>');
+  const msg = $('#cb-msg'), bar = $('#cb-bar'), end = $('#cb-end');
+  let found = 0, same = 0, miss = 0, status = {}, halted = '';
+  for (let i = 0; i < todo.length; i++) {
+    if (!msg.isConnected) return;                          // シートを閉じたらやめる
+    const b = todo[i];
+    msg.textContent = (i + 1) + ' / ' + todo.length + '　' + b.title;
+    await ensureTeihon(b);
+    const res = await Cover.search(b);
+    status = res.status;
+    const pick = await Cover.pickBest(res);
+    if (pick) { await setCover(b, pick.url); found++; if (pick.same) same++; } else miss++;
+    bar.style.width = Math.round((i + 1) / todo.length * 100) + '%';
+    if (Object.values(res.status).every((v) => v.startsWith('取れません'))) {
+      halted = 'どの取得元にもつながらないので止めました。'; break;
+    }
+    await new Promise((r) => setTimeout(r, 900));          // 取得元に負担をかけない間隔
+  }
+  if (!msg.isConnected) return;
+  msg.innerHTML = '付けた：<b>' + found + '冊</b>（うち底本と同じ版 ' + same + '冊）<br>見つからない：' + miss + '冊' +
+    (halted ? '<br><b style="color:var(--danger)">' + esc(halted) + '</b>' : '');
+  end.innerHTML = '<p class="cv-stat">' + Object.entries(status).map(([k, v]) => esc(k) + '：' + esc(v)).join('<br>') + '</p>' +
+    '<div class="actions"><button class="btn primary" id="cb-ok">閉じる</button></div>';
+  $('#cb-ok', end).onclick = () => { closeSheet(); render(); };
+  render();
 }
 
 // ================================================================ 青空文庫

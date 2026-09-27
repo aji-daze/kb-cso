@@ -1,10 +1,10 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'pocha-v1.7.1';
+const VERSION = 'pocha-v1.8.0';
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',
   './js/app.js', './js/db.js', './js/zip.js', './js/md.js', './js/epub.js',
-  './js/aozora.js', './js/quotes.js', './js/font.js', './js/drive.js', './js/onedrive.js', './js/folder.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
+  './js/aozora.js', './js/quotes.js', './js/cover.js', './js/font.js', './js/drive.js', './js/onedrive.js', './js/folder.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/character.png', './art/bear.png', './art/bear.webp',
   './icons/apple-touch-icon.png', './icons/icon-maskable-512.png',
 ];
@@ -26,6 +26,9 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   // 青空文庫などの外部取得はキャッシュしない（本文は IndexedDB に入れる）
+  // 外の取得（書影の画像も含む）はここでは覚えない。
+  // CORS の無い画像を Cache に入れると、Chrome は1件あたり数MBとして容量を数えるため、
+  // 本を入れている IndexedDB の容量を食う。書影は取り込めるものは Blob で IndexedDB に持つ。
   if (url.origin !== location.origin) return;
 
   e.respondWith(
