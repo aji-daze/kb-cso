@@ -22,11 +22,17 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
 const plain = (html) => { const d = document.createElement('div'); d.innerHTML = html; d.querySelectorAll('rt,rp').forEach((x) => x.remove()); return d.textContent || ''; };
 
 const KINDS = { epub: 'EPUB', md: 'Markdown', txt: 'テキスト', aozora: '青空文庫', paper: '紙', kindle: 'Kindle' };
-const STATUS = { reading: '読んでいる', stack: '積んでいる', done: '読んだ' };
+// 本の状態。取り込んだ本は stack（本棚にあるだけ）。開くと reading、読み終えると done。
+const STATUS = { stack: '本棚', reading: '読んでいる', done: '読んだ' };
+// 棚の絞り込み。「本棚」は状態を問わず全部を見せる。
+const SHELF_TABS = { all: '本棚', reading: '読んでいる', done: '読んだ' };
+// 状態を移すときの言い方（本の画面・まとめて選んだとき）
+const MOVE = { reading: '読んでいるへ', done: '読んだへ', stack: '外す' };
+const MOVE_LONG = { reading: '「読んでいる」に入れる', done: '読み終えた（「読んだ」へ）', stack: '「読んでいる」「読んだ」から外す（本棚に戻す）' };
 
 const S = {
   view: 'now',
-  shelfTab: 'reading',
+  shelfTab: 'all',
   shelfSort: 'added',   // 棚の並べ替え
   shelfAuthor: null,    // 作家で絞る（null なら全部）
   pick: null,           // 選んでいる最中は Set。ふだんは null
@@ -143,13 +149,9 @@ function applyChrome() {
 // 紙・Kindle の本は本文を持たない（chapters が null）。そのときは 0 章として数える。
 function chapChars(chapters) { return (chapters || []).map((c) => plain(c.html).length); }
 
-// 何冊まとめて入れたら「積んでいる」に置くか。
-// 20冊を同時に読み始めることはないので、束で入れたぶんは積む側へ。
-const BULK_AT = 5;
-
-// どの状態で入れるかは呼び出し側が引数で渡す（モジュール変数だと、並行して
-// 取り込みが走ったときに混線する。OS2-04）。
-async function addBook(meta, chapters, status = 'reading') {
+// 取り込んだ本は「本棚」に入るだけ（stack）。開いた時点で「読んでいる」に移る。
+// 紙・Kindle の登録は読んでいる本を書きとめるものなので、呼び出し側が reading を渡す。
+async function addBook(meta, chapters, status = 'stack') {
   const counts = chapChars(chapters);
   const book = {
     id: DB.uid('b'),
@@ -178,8 +180,7 @@ export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const isBookName = (n) => BOOK_EXT.test(n || '');
 
 // 取り込みの本体。ファイル選択・Google ドライブ・OneDrive のどれからでもここに来る。
-// status は「読んでいる」か「積んでいる」か。呼び出し側が、まとめて入れているかどうかで決める。
-async function importBlob(filename, blob, source, status = 'reading') {
+async function importBlob(filename, blob, source, status = 'stack') {
   const name = String(filename).replace(/\.[^.]+$/, '');
 
   // 青空文庫のテキストは zip で配られる（中身は Shift_JIS、ルビは ｜漢字《かんじ》）
@@ -244,14 +245,12 @@ async function mirrorToFolder(files) {
 async function importFiles(files) {
   let n = 0, err = 0, first = '';
   const ok = [];
-  const bulk = files.length >= BULK_AT;
-  const status = bulk ? 'stack' : 'reading';
   for (const f of files) {
-    try { await importBlob(f.name, f, undefined, status); ok.push(f); n++; }
+    try { await importBlob(f.name, f); ok.push(f); n++; }
     catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
   }
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
-  if (n) toast(n + '冊を' + (bulk ? '「積んでいる」に' : '棚に') + '入れました' +
+  if (n) toast(n + '冊を本棚に入れました' +
     (copied ? '／' + copied + '件をフォルダにも保存' : '') +
     (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
@@ -471,7 +470,7 @@ async function renderNow() {
           '<i class="rail"></i><em class="to">棚へ ▸</em>' + bearHTML('') + '</button>' +
         '<div class="spines">' +
           (order.length ? order.map((b) => spineHTML(b, started(b, mk.get(b.id)))).join('')
-            : '<span class="noshelf">「読んでいる」棚に本がありません</span>') +
+            : '<span class="noshelf">読んでいる本はありません。「本棚」から開くとここに並びます</span>') +
         '</div>' +
       '</section>' +
 
@@ -488,7 +487,7 @@ async function renderNow() {
     if (owned) openBook(owned.id); else aozoraSheet(q.work);
   };
   $('#n-cont', el).onclick = () => (cur.manual ? manualSheet(cur) : openBook(cur.id));
-  $('#n-shelf', el).onclick = () => { S.view = 'shelf'; remember(); render(); };
+  $('#n-shelf', el).onclick = () => { S.view = 'shelf'; S.shelfTab = 'reading'; S.shelfAuthor = null; remember(); render(); };
   $$('.spine', el).forEach((s) => { s.onclick = () => bookSheet(s.dataset.id); });
 }
 
@@ -505,7 +504,8 @@ function coverCell(b, m, picked) {
       (b.author ? '<span class="ba">' + esc(b.author) + '</span>' : '') +
       (picked !== null
         ? '<span class="tick" aria-hidden="true">' + (on ? '✓' : '') + '</span>'
-        : (b.status === 'done' ? '<span class="chk" aria-hidden="true">✓</span>' : '')) +
+        : (b.status === 'done' ? '<span class="chk" aria-hidden="true">✓</span>'
+          : b.status === 'reading' ? '<span class="rib" aria-hidden="true"></span>' : '')) +
     '</span>' +
     '<span class="prog"' + (p ? '' : ' hidden') + '><i style="width:' + p + '%"></i></span>' +
     '<span class="bn">' + esc(b.title) + '</span>' +
@@ -562,7 +562,8 @@ function groupByAuthor(list) {
 async function renderShelf() {
   const el = $('#v-shelf');
   const mk = await allMarks();
-  const all = S.books.filter((b) => b.status === S.shelfTab);
+  // 「本棚」は全部。「読んでいる」「読んだ」はその絞り込み。
+  const all = S.shelfTab === 'all' ? S.books : S.books.filter((b) => b.status === S.shelfTab);
   const authors = authorCounts(all);
   let list = S.shelfAuthor != null ? all.filter((b) => (b.author || '') === S.shelfAuthor) : all;
   list = sortBooks(list, S.shelfSort, mk);
@@ -578,9 +579,9 @@ async function renderShelf() {
 
   el.innerHTML =
     '<div class="seg" id="s-seg">' +
-      Object.entries(STATUS).map(([k, v]) =>
+      Object.entries(SHELF_TABS).map(([k, v]) =>
         '<button data-k="' + k + '" aria-pressed="' + (S.shelfTab === k) + '">' + v +
-        '<em>' + S.books.filter((b) => b.status === k).length + '</em></button>').join('') +
+        '<em>' + (k === 'all' ? S.books.length : S.books.filter((b) => b.status === k).length) + '</em></button>').join('') +
     '</div>' +
     (all.length
       ? '<div class="bar">' +
@@ -601,7 +602,11 @@ async function renderShelf() {
       : '<div class="empty">' +
           (S.shelfAuthor != null
             ? '<b>この作家の本はここにありません</b>作家の絞り込みを外すか、別の作家を選んでください。'
-            : '<b>ここには何もありません</b>「＋ 本を入れる」から取り込んでください。') +
+            : S.shelfTab === 'reading'
+              ? '<b>読んでいる本はありません</b>「本棚」から本を開くと、ここに並びます。'
+              : S.shelfTab === 'done'
+                ? '<b>読み終えた本はまだありません</b>'
+                : '<b>本棚は空です</b>「＋ 本を入れる」から取り込んでください。') +
           '</div>') +
     '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>' +
     (picked ? pickBar(picked, list) : '');
@@ -609,7 +614,8 @@ async function renderShelf() {
 
   $$('#s-seg button', el).forEach((b) => {
     b.onclick = () => {
-      S.shelfTab = b.dataset.k; S.shelfAuthor = null; S.pick = null; remember(); renderShelf();
+      // 作家の絞り込みは残したまま、状態の絞り込みだけを替える
+      S.shelfTab = b.dataset.k; S.pick = null; remember(); renderShelf();
     };
   });
   if ($('#s-author', el)) $('#s-author', el).onclick = () => authorSheet(authors);
@@ -629,11 +635,12 @@ async function renderShelf() {
 }
 
 function pickBar(picked, list) {
-  const moves = Object.entries(STATUS).filter(([k]) => k !== S.shelfTab);
+  // 「外す」は本棚に戻すだけ（本は消えない）。本棚の絞り込みでは3つとも出す。
+  const moves = Object.entries(MOVE).filter(([k]) => k !== S.shelfTab);
   return '<div class="pickbar">' +
     '<button data-a="all">' + (picked.size >= list.length && list.length ? '解除' : 'すべて') + '</button>' +
     '<span class="n">' + picked.size + '冊</span>' +
-    moves.map(([k, v]) => '<button data-a="mv" data-st="' + k + '">' + v + 'へ</button>').join('') +
+    moves.map(([k, v]) => '<button data-a="mv" data-st="' + k + '">' + v + '</button>').join('') +
     '<button data-a="del" class="danger">消す</button>' +
   '</div>';
 }
@@ -666,7 +673,7 @@ async function bulkStatus(ids, st) {
   S.pick = new Set();
   await loadBooks();
   render();
-  toast(ids.length + '冊を「' + STATUS[st] + '」に移しました');
+  toast(st === 'stack' ? ids.length + '冊を本棚に戻しました' : ids.length + '冊を「' + STATUS[st] + '」に移しました');
 }
 
 async function bulkDelete(ids) {
@@ -903,7 +910,7 @@ function manualNewSheet() {
         await addBook({
           title: t, author: $('#m-a', el).value.trim(), kind: $('#m-k', el).value,
           manual: { unit, total: Math.max(1, +$('#m-n', el).value || 1), cur: 0 },
-        }, null);
+        }, null, 'reading');
         closeSheet(); render(); toast('棚に置きました');
       };
     });
@@ -920,6 +927,7 @@ function manualSheet(b) {
       $('#p-s', el).onclick = async () => {
         b.manual.cur = Math.max(0, Math.min(b.manual.total, +$('#p-n', el).value || 0));
         if (b.manual.cur >= b.manual.total && b.status !== 'done') { b.status = 'done'; b.finished = Date.now(); }
+        else if (b.manual.cur > 0 && b.status === 'stack') b.status = 'reading';
         await DB.put('books', b); await loadBooks(); closeSheet(); render(); toast('書き込みました');
       };
     });
@@ -939,8 +947,8 @@ async function bookSheet(id) {
     (b.manual
       ? '<button class="item" id="b-manual"><span class="mark">✎</span><span><b>進みを書き込む</b></span></button>'
       : '<button class="item" id="b-open"><span class="mark">▶</span><span><b>' + (m.pct ? '続きから読む' : '読む') + '</b></span></button>') +
-    Object.entries(STATUS).filter(([k]) => k !== b.status).map(([k, v]) =>
-      '<button class="item" data-st="' + k + '"><span class="mark">·</span><span><b>「' + v + '」に移す</b></span></button>').join('') +
+    Object.entries(MOVE_LONG).filter(([k]) => k !== b.status).map(([k, v]) =>
+      '<button class="item" data-st="' + k + '"><span class="mark">·</span><span><b>' + v + '</b></span></button>').join('') +
     '<button class="item" id="b-del"><span class="mark">✕</span><span><b style="color:var(--danger)">棚から消す</b>' +
       '<span>本文も抜き書きも消えます</span></span></button>',
     (el) => {
@@ -977,6 +985,25 @@ async function putBookSafe(b) {
 // ---------------------------------------------------------------- 表紙探しの後片づけ
 // 表紙をネットから探す機能は外した。探して付けた画像と、そのための記録を1回だけ消す
 // （容量の節約）。EPUB が元から持っていた表紙は、差し替えていたなら元に戻して残す。
+// 前の版では、取り込んだだけの本も「読んでいる」に入っていた（1〜4冊のとき）。
+// 開いた形跡のない本は「本棚」に戻す。「積んでいる」も同じ stack なのでそのまま。1回だけ。
+async function settleStatus() {
+  if (await DB.setting('statusV2')) return;
+  const mk = await allMarks();
+  const last = await DB.setting('lastBook');
+  let n = 0;
+  for (const b of S.books) {
+    if (b.status !== 'reading' || b.manual || b.id === last) continue;
+    const m = mk.get(b.id);
+    if (started(b, m) || (m && (m.ch > 0 || m.off > 0))) continue;
+    b.status = 'stack';
+    await putBookSafe(b);
+    n++;
+  }
+  await DB.setting('statusV2', true);
+  if (n) await loadBooks();
+}
+
 async function dropFetchedCovers() {
   if (await DB.setting('coversCleared')) return;
   for (const b of await DB.all('books')) {
@@ -1299,8 +1326,6 @@ async function folderList(handle) {
 async function folderGet(items, msg, handle, replace) {
   let n = 0, err = 0, first = '';
   const done = [];
-  // フォルダの一括取り込みにも、まとめて入れたら「積んでいる」の規則を当てる
-  const status = items.length >= BULK_AT ? 'stack' : 'reading';
   for (const f of items) {
     if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
     try {
@@ -1314,7 +1339,7 @@ async function folderGet(items, msg, handle, replace) {
         }
         if (olds.length) await loadBooks();
       }
-      await importBlob(f.name, file, src, status);
+      await importBlob(f.name, file, src);
       done.push(f); n++;
     } catch (e) {
       console.warn(f.path, e); err++;
@@ -1426,13 +1451,11 @@ async function cloudBrowse(prov, stack) {
 
 async function cloudGet(prov, items, msg) {
   let n = 0, err = 0;
-  // クラウドの一括取り込みにも、まとめて入れたら「積んでいる」の規則を当てる
-  const status = items.length >= BULK_AT ? 'stack' : 'reading';
   for (const x of items) {
     if (msg) msg.textContent = '落としています… ' + (n + err + 1) + ' / ' + items.length + '：' + x.name;
     try {
       const blob = await prov.download(x);
-      await importBlob(x.name, blob, prov.label + ':' + x.name, status);
+      await importBlob(x.name, blob, prov.label + ':' + x.name);
       n++;
     } catch (e) { console.warn(e); err++; }
   }
@@ -2036,7 +2059,7 @@ function recallView() {
   try { v = localStorage.getItem('pocha.view') || ''; } catch {}
   const [view, tab, sort] = v.split('/');
   if (VIEWS.includes(view)) S.view = view;
-  if (STATUS[tab]) S.shelfTab = tab;
+  if (SHELF_TABS[tab]) S.shelfTab = tab;
   if (SORTS[sort]) S.shelfSort = sort;
 }
 
@@ -2081,6 +2104,7 @@ async function boot() {
   Font.install().catch(() => {});
   await Stats.load();
   await loadBooks();
+  await settleStatus();
   recallView();
   render();
 

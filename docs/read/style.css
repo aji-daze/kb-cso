@@ -334,6 +334,12 @@ picture { display: contents; }
 .bc.yoko .bt, .bc.yoko .ba { writing-mode: horizontal-tb; align-self: stretch; text-align: center; }
 .bc.yoko .bt { max-height: 50%; padding: 6px 5px; letter-spacing: .02em; font-size: 12px; margin-top: 4%; }
 .bc.yoko .ba { text-overflow: ellipsis; margin-top: auto; }
+/* 読んでいる本には、しおり紐を1本垂らす（「本棚」で全部を並べたときの見分け） */
+.bc .rib {
+  position: absolute; z-index: 2; top: 0; right: 16%; width: 5px; height: 22%;
+  background: var(--acc); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 86%, 0 100%);
+}
 .bc .chk {
   position: absolute; right: 6px; top: 6px; width: 18px; height: 18px; border-radius: 50%;
   background: var(--acc); color: var(--on-acc); font-size: 11px; line-height: 18px; text-align: center;
