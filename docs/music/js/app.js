@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.9.0';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -50,6 +50,7 @@ function applyAppearance() {
   }
   // Android の通知バーの色をテーマに合わせる
   const t = THEMES.find((x) => x.id === theme) || THEMES[0];
+  if (db.setting('themeBg', null) !== t.bg) db.setSetting('themeBg', t.bg); // sw.js が manifest の色に使う
   const meta = document.querySelector('meta[name=theme-color]');
   if (meta) meta.setAttribute('content', t.bg);
   const cs = document.querySelector('meta[name=color-scheme]');
@@ -364,10 +365,11 @@ function openDialog(html, onmount) {
 const closeDialog = () => popNav();
 
 function menuDialog(title, options) {
+  const anyIcon = options.some((o) => o.icon); // 1つでもアイコンがあれば、無いものにも同じ幅の余白を取って揃える
   const html =
     (title ? `<h3>${esc(title)}</h3>` : '') +
     options
-      .map((o, i) => `<div class="opt${o.danger ? ' danger' : ''}${o.sel ? ' sel' : ''}" data-i="${i}">${o.icon ? `<svg><use href="#i-${o.icon}"/></svg>` : ''}<span>${esc(o.label)}</span></div>`)
+      .map((o, i) => `<div class="opt${o.danger ? ' danger' : ''}${o.sel ? ' sel' : ''}" data-i="${i}">${o.icon ? `<svg><use href="#i-${o.icon}"/></svg>` : anyIcon ? '<svg aria-hidden="true"></svg>' : ''}<span>${esc(o.label)}</span></div>`)
       .join('');
   openDialog(html, (root) => {
     root.querySelectorAll('.opt').forEach((n) =>
@@ -909,6 +911,9 @@ function render() {
     $('#mainTitle').textContent = 'ミュージック';
     renderTabsNav();
     [...$('#tabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === r.name));
+    const onTab = $('#tabs .on');
+    if (onTab) onTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    syncTabsFade();
     if (r.name === 'songs') renderSongs();
     else if (r.name === 'albums') renderAlbums();
     else if (r.name === 'artists') renderArtists();
@@ -943,7 +948,9 @@ function emptyState(msg) {
 
 function songRowHTML(t, i, opts = {}) {
   const sub = [t.artist, t.album].filter(Boolean).join(' · ');
-  return `<div class="row" data-act="play" data-id="${t.id}" data-i="${i}">
+  // 描き直すたび（タブ切り替え・検索・並べ替え・削除）に再生中の強調が消えないよう、ここで付ける
+  const playing = state.qi >= 0 && state.queue[state.qi] === t.id ? ' playing' : '';
+  return `<div class="row${playing}" data-act="play" data-id="${t.id}" data-i="${i}">
     <div class="chk"><svg><use href="#i-check"/></svg></div>
     ${opts.num ? `<div class="num">${t.trackNo || i + 1}</div>` : ''}
     <div class="txt"><div class="t">${esc(t.title)}</div><div class="s">${esc(sub || '不明')}${t.duration ? ' · ' + fmtTime(t.duration) : ''}</div></div>
@@ -1024,7 +1031,7 @@ function renderAlbums() {
   const groups = albumsShowAll || minTracks <= 1 ? all : all.filter((g) => g.tracks.length >= minTracks);
   const hidden = all.length - groups.length;
   if (!groups.length) {
-    view.innerHTML = emptyState('アルバムがありません');
+    view.innerHTML = emptyState(state.query ? '見つかりませんでした' : 'アルバムがありません。<br>曲を取り込むと、タグのアルバム名ごとにここへ並びます。');
     if (hidden) view.innerHTML += `<div class="albums-note" data-act="albumsShowAll">${hidden}枚のアルバムを非表示（${minTracks - 1}曲以下）</div>`;
     return;
   }
@@ -1052,7 +1059,7 @@ function renderAlbums() {
 
 function renderArtists() {
   const groups = groupArtists(filtered());
-  if (!groups.length) return (view.innerHTML = emptyState('アーティストがいません'));
+  if (!groups.length) return (view.innerHTML = emptyState(state.query ? '見つかりませんでした' : 'アーティストがいません。<br>曲を取り込むと、タグのアーティストごとにここへ並びます。'));
   const box = document.createElement('div');
   view.appendChild(box);
   mountChunked(
@@ -1640,7 +1647,7 @@ function updateMediaSession(t, artUrlStr) {
       title: t.title,
       artist: t.artist || '',
       album: t.album || '',
-      artwork: artUrlStr ? [{ src: artUrlStr, sizes: '512x512', type: 'image/jpeg' }] : [],
+      artwork: artUrlStr ? [{ src: artUrlStr, sizes: '512x512' }] : [],
     });
   } catch {}
 }
@@ -1841,6 +1848,7 @@ function savePlayback() {
       ids: state.queue,
       base: state.base,
       i: state.qi,
+      id: state.queue[state.qi] || null, // 番号だけだと、曲を消したあとに別の曲で復元してしまう
       pos: audio.currentTime || 0,
       label: state.ctxLabel,
     });
@@ -1909,13 +1917,37 @@ function trackInfo(t) {
 
 // 実際の削除処理（確認ダイアログは呼び出し側で済ませておくこと）。
 // キュー・シャッフル前配列・プレイリストからも取り除いた上でライブラリを読み直す。
+// キューから曲を取り除き、再生位置（state.qi）を合わせ直す。
+// 単に filter するだけだと、再生中の曲より前を消したときに qi が後ろへずれ、
+// 次の曲を飛ばしたり、別の曲を「再生中」と表示したりしていた。
+function removeFromQueue(set) {
+  const hadSession = state.qi >= 0;
+  const curId = state.queue[state.qi];
+  const curDeleted = hadSession && set.has(curId);
+  const keptBefore = hadSession ? state.queue.slice(0, state.qi).filter((x) => !set.has(x)).length : 0;
+  if (curDeleted) pauseWith('曲を削除');
+  state.queue = state.queue.filter((x) => !set.has(x));
+  state.base = state.base.filter((x) => !set.has(x));
+  if (!hadSession) return;
+  if (!state.queue.length) {
+    stopPlayback();
+    return;
+  }
+  if (!curDeleted) {
+    state.qi = state.queue.indexOf(curId);
+    savePlayback();
+    return;
+  }
+  // 再生中の曲そのものが消えた: 次に来るはずだった曲を読み込んで待機する
+  state.qi = Math.min(keptBefore, state.queue.length - 1);
+  loadCurrent(false);
+}
+
 async function deleteTracksConfirmed(ids) {
   if (!ids.length) return;
   await db.deleteTracks(ids);
   const set = new Set(ids);
-  if (set.has(state.queue[state.qi])) pauseWith('曲を削除');
-  state.queue = state.queue.filter((x) => !set.has(x));
-  state.base = state.base.filter((x) => !set.has(x));
+  removeFromQueue(set);
   for (const pl of state.playlists) {
     const before = pl.trackIds.length;
     pl.trackIds = pl.trackIds.filter((x) => !set.has(x));
@@ -3492,9 +3524,7 @@ async function findDuplicatesDialog() {
         }
         await db.deleteTracks(remove);
         const set = new Set(remove);
-        if (set.has(state.queue[state.qi])) stopPlayback();
-        state.queue = state.queue.filter((x) => !set.has(x));
-        state.base = state.base.filter((x) => !set.has(x));
+        removeFromQueue(set);
         for (const pl of state.playlists) {
           const before = pl.trackIds.length;
           pl.trackIds = pl.trackIds.filter((x) => !set.has(x));
@@ -3579,16 +3609,65 @@ function renderEq() {
   };
 }
 
+function syncTabsFade() {
+  const el = $('#tabs');
+  el.classList.toggle('fade-l', el.scrollLeft > 2);
+  el.classList.toggle('fade-r', el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+}
+
+/* ---- タブと Android の戻るボタン ----
+   いちばん左のタブを「ホーム」とする。ほかのタブに移ったら戻る操作を1つだけ積み、
+   戻るボタンでホームのタブへ帰る。ホームで戻るとアプリを閉じる（Android の普通の作法）。
+   これまではどのタブからでも戻る一発でアプリが閉じていた。 */
+let tabNavActive = false;
+let tabNavCloser = null;
+function homeTabId() {
+  const v = visibleTabs();
+  return v[0] ? v[0].id : 'songs';
+}
+function switchTab(id) {
+  const home = homeTabId();
+  if (id === home) {
+    // 積んである「ホームへ戻る」がいちばん上にあればそれを消化する（中でホームへ切り替わる）。
+    // 上に検索などが積まれているときは、そちらを壊さないよう画面だけ切り替える
+    if (tabNavActive && navStack[navStack.length - 1] === tabNavCloser) popNav();
+    else {
+      state.routes = [{ name: id }];
+      render();
+    }
+    return;
+  }
+  state.routes = [{ name: id }];
+  if (!tabNavActive) {
+    tabNavActive = true;
+    tabNavCloser = () => {
+      tabNavActive = false;
+      tabNavCloser = null;
+      state.routes = [{ name: homeTabId() }];
+      render();
+    };
+    pushNav(tabNavCloser);
+  }
+  render();
+}
+
+// 検索欄も戻るボタンで閉じられるようにする（これまでは検索中に戻るとアプリが閉じていた）
+function closeSearchNow() {
+  state.searchOpen = false;
+  $('#q').value = '';
+  state.query = '';
+  render();
+}
+
 /* ============================ イベント配線 ============================ */
 function wire() {
   // タブ
+  $('#tabs').addEventListener('scroll', syncTabsFade, { passive: true });
+  window.addEventListener('resize', syncTabsFade);
   $('#tabs').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
     if (!b) return;
-    const go = () => {
-      state.routes = [{ name: b.dataset.tab }];
-      render();
-    };
+    const go = () => switchTab(b.dataset.tab);
     if (state.selectMode) {
       exitSelectMode();
       setTimeout(go, 0); // 選択解除（popNav の非同期な後始末）を待ってから切り替える
@@ -3601,13 +3680,14 @@ function wire() {
     renderSettings();
   };
   $('#btnSearch').onclick = () => {
-    state.searchOpen = !state.searchOpen;
-    if (!state.searchOpen) {
-      $('#q').value = '';
-      state.query = '';
+    if (state.searchOpen) {
+      popNav(); // 積んである「検索を閉じる」を消化する
+      return;
     }
+    state.searchOpen = true;
+    pushNav(closeSearchNow);
     render();
-    if (state.searchOpen) $('#q').focus();
+    $('#q').focus();
   };
   let qTimer;
   $('#q').addEventListener('input', (e) => {
@@ -3855,6 +3935,7 @@ function wire() {
     if (waitingCount <= 2 && Date.now() - lastPlayStartAt >= 1000) plog('waiting（データ待ち）');
   });
   let tick = 0;
+  audio.addEventListener('ratechange', syncTime);
   audio.addEventListener('timeupdate', () => {
     syncTime();
     if (Date.now() - tick > 5000) {
@@ -4101,9 +4182,11 @@ async function restorePlayback() {
   if (!ids.length) return;
   state.queue = ids;
   state.base = (last.base || ids).filter((id) => state.byId.has(id));
-  state.qi = Math.min(Math.max(0, last.i || 0), ids.length - 1);
+  // 保存時の曲が残っていればそれを、消えていれば近い位置の曲を頭から
+  const at = last.id ? ids.indexOf(last.id) : -1;
+  state.qi = at >= 0 ? at : Math.min(Math.max(0, last.i || 0), ids.length - 1);
   state.ctxLabel = last.label || '';
-  await loadCurrent(false, last.pos || 0);
+  await loadCurrent(false, at >= 0 || !last.id ? last.pos || 0 : 0);
 }
 
 async function init() {
