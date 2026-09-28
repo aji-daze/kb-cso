@@ -1,10 +1,11 @@
 // 画面一式をキャッシュし、2回目以降はネットワークを待たずに開く。
 // 保存データは localStorage 側にあるのでここでは触らない。
-const VERSION = 'memo-v5';
+const VERSION = 'memo-v6';
 const SHELL = [
   './',
   './index.html',
   './manifest.json',
+  './sync.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

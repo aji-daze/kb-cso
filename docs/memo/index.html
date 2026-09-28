@@ -29,6 +29,8 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;strok
 .bar button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);transition:color .2s}
 .bar button:hover,.bar button:active{color:var(--fg)}
 body.w .bar{opacity:0;transition:opacity 1.2s}
+#sy{height:44px;padding:0 8px;font-size:11px;letter-spacing:.08em;color:var(--sub);white-space:nowrap}
+#sy[hidden]{display:none}
 #st{flex:1;text-align:center;font-size:11px;letter-spacing:.12em;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
 /* 本文。文字は透明な textarea で受け、真下の pre に同じ文字を飾り付きで描く（下線など）。 */
 #ed{flex:1;overflow:auto;padding:8px 0 45vh;cursor:text;--gx:max(24px,calc((100% - 660px)/2))}
@@ -89,6 +91,7 @@ body.k #kb{display:flex}
   <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 16h9"/></svg></button>
   <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
   <div id="st"></div>
+  <button id="sy" hidden></button>
   <button id="bU" title="下線 (Ctrl/⌘+U)" aria-label="下線"><svg viewBox="0 0 24 24"><path d="M8 5v6a4 4 0 008 0V5M7 19h10"/></svg></button>
   <button id="bC" title="コードブロック (Alt+C)" aria-label="コードブロック"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg></button>
   <button id="bS" title="共有・コピー" aria-label="共有・コピー"><svg viewBox="0 0 24 24"><path d="M12 15V5M8 9l4-4 4 4M6 14v5h12v-5"/></svg></button>
@@ -108,6 +111,7 @@ body.k #kb{display:flex}
   <div class="ft">
     <button id="bE">書き出し</button>
     <button id="bI">読み込み</button>
+    <button id="bY">同期</button>
   </div>
 </div></div>
 <div id="to"><span id="tm"></span><button id="tu" hidden>元に戻す</button></div>
@@ -299,6 +303,13 @@ addEventListener('resize',function(){var p=ed.querySelectorAll('.t,.cw');for(var
 // ---- 保存と一覧 ----
 function nid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function get(id){try{return JSON.parse(LS.getItem(P+id))}catch(e){return null}}
+// 書き込みは必ず setM / rmM を通す。変更したメモの ID を送信待ち（memo.q）に残し、
+// オフラインの間もたまっていく。Google ドライブ同期（sync.js）がこれを見て送る。
+var Q='memo.q';
+function getQ(){var q=null;try{q=JSON.parse(LS.getItem(Q))}catch(e){}q=q||{};q.dirty=q.dirty||{};q.del=q.del||{};return q}
+function mark(id,gone){var q=getQ();if(gone){q.del[id]=1;delete q.dirty[id]}else{q.dirty[id]=1;delete q.del[id]}LS.setItem(Q,JSON.stringify(q));if(window.MemoSync)MemoSync.kick()}
+function setM(id,m){LS.setItem(P+id,JSON.stringify(m));mark(id)}
+function rmM(id){LS.removeItem(P+id);mark(id,1)}
 function all(){
   var a=[];
   for(var i=0;i<LS.length;i++){var k=LS.key(i);if(k&&k.indexOf(P)===0){var m=get(k.slice(P.length));if(m&&typeof m.t==='string'){m.id=k.slice(P.length);a.push(m)}}}
@@ -320,10 +331,10 @@ function save(){
   clearTimeout(timer);timer=0;
   var t=getText();
   if(t===saved)return;
-  if(!t.trim()){if(cur)LS.removeItem(P+cur);cur=null;saved=t;status();return}
+  if(!t.trim()){if(cur)rmM(cur);cur=null;saved=t;status();return}
   var now=Date.now(),old=cur&&get(cur);
   if(!cur)cur=nid();
-  try{LS.setItem(P+cur,JSON.stringify({t:t,c:old?old.c:now,u:now}));saved=t;curU=now;keep()}
+  try{setM(cur,{t:t,c:old?old.c:now,u:now});saved=t;curU=now;keep()}
   catch(e){toast('保存できません（容量不足）。書き出してから古いメモを消してください')}
   status();
 }
@@ -385,8 +396,8 @@ $('bN').onclick=function(){open(null)};
 $('bD').onclick=function(){
   save();
   if(!cur){load('');curU=0;put(area(ed.firstChild),0);status();return}
-  var id=cur,m=get(id);LS.removeItem(P+id);open(null);
-  toast('削除しました',function(){LS.setItem(P+id,JSON.stringify(m));open(id)});
+  var id=cur,m=get(id);rmM(id);open(null);
+  toast('削除しました',function(){setM(id,m);open(id)});
 };
 $('tu').onclick=function(){if(undo)undo();to.className='';undo=null};
 $('bS').onclick=function(){
@@ -420,13 +431,13 @@ $('bI').onclick=function(){
           if(!m||typeof m.t!=='string'||!m.t.trim())return;
           var id=m.id||nid(),ex=get(id);
           if(ex&&ex.u>=(m.u||0))return; // 手元の方が新しければ上書きしない
-          LS.setItem(P+id,JSON.stringify({t:m.t,c:m.c||now,u:m.u||now}));n++;
+          setM(id,{t:m.t,c:m.c||now,u:m.u||now});n++;
           if(id===cur){curU=m.u||now;load(m.t)}
         });
       }catch(e){
         if(!s.trim())return;
         if(/^\s*[\[{]/.test(s)){toast('このファイルは読み込めません');return}
-        LS.setItem(P+nid(),JSON.stringify({t:s,c:now,u:now}));n=1; // 普通のテキストは1件のメモとして取り込む
+        setM(nid(),{t:s,c:now,u:now});n=1; // 普通のテキストは1件のメモとして取り込む
       }
       render();toast(n+'件読み込みました');
     });
@@ -470,10 +481,34 @@ if('launchQueue' in window)launchQueue.setConsumer(function(p){
   if(!p.files||!p.files.length)return;
   Promise.all(p.files.map(function(h){return h.getFile().then(function(f){return f.text()})})).then(function(ts){
     save();var last=null,now=Date.now();
-    ts.forEach(function(t){if(t.trim()){last=nid();LS.setItem(P+last,JSON.stringify({t:t,c:now,u:now}))}});
+    ts.forEach(function(t){if(t.trim()){last=nid();setM(last,{t:t,c:now,u:now})}});
     if(last)open(last);
   });
 });
+
+// ---- Google ドライブ同期 ----
+// 同期の処理は sync.js にある。設定済みのときだけ、描画が終わってから読む（起動の速さに影響させない）。
+window.MEMO={
+  P:P,get:get,all:all,nid:nid,getQ:getQ,setM:setM,save:save,toast:toast,fmt:fmt,sy:$('sy'),
+  putRaw:function(id,m){LS.setItem(P+id,JSON.stringify(m))},     // ドライブから取り込んだ分（送信待ちにしない）
+  rmRaw:function(id){LS.removeItem(P+id)},
+  unq:function(id,kind){var q=getQ();delete q[kind][id];LS.setItem(Q,JSON.stringify(q))},
+  // ドライブ側の変更を画面に反映する。開いているメモは、こちらで書きかけでなければ読み直す
+  remote:function(id){
+    if(id===cur&&getText()===saved){var m=get(id);if(!m){cur=null;curU=0;load('')}else{curU=m.u;load(m.t)}status()}
+    if(dr.className)render();
+  }
+};
+function loadSync(cb){
+  if(window.MemoSync){if(cb)cb();return}
+  var x=document.createElement('script');x.src='sync.js';x.onload=function(){if(cb)cb()};
+  x.onerror=function(){toast('同期の部品を読み込めませんでした（オフライン？）')};document.head.appendChild(x);
+}
+$('bY').onclick=function(){loadSync(function(){MemoSync.panel()})};
+$('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
+if(LS.getItem('memo.s')||/[#&](access_token|error)=/.test(location.hash)){
+  if(location.hash)loadSync();else addEventListener('load',function(){setTimeout(loadSync,300)});
+}
 
 // Service Worker は描画が終わってから。起動の邪魔をしない。
 if('serviceWorker' in navigator)addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
