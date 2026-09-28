@@ -943,7 +943,9 @@ function emptyState(msg) {
 
 function songRowHTML(t, i, opts = {}) {
   const sub = [t.artist, t.album].filter(Boolean).join(' · ');
-  return `<div class="row" data-act="play" data-id="${t.id}" data-i="${i}">
+  // 描き直すたび（タブ切り替え・検索・並べ替え・削除）に再生中の強調が消えないよう、ここで付ける
+  const playing = state.qi >= 0 && state.queue[state.qi] === t.id ? ' playing' : '';
+  return `<div class="row${playing}" data-act="play" data-id="${t.id}" data-i="${i}">
     <div class="chk"><svg><use href="#i-check"/></svg></div>
     ${opts.num ? `<div class="num">${t.trackNo || i + 1}</div>` : ''}
     <div class="txt"><div class="t">${esc(t.title)}</div><div class="s">${esc(sub || '不明')}${t.duration ? ' · ' + fmtTime(t.duration) : ''}</div></div>
@@ -1841,6 +1843,7 @@ function savePlayback() {
       ids: state.queue,
       base: state.base,
       i: state.qi,
+      id: state.queue[state.qi] || null, // 番号だけだと、曲を消したあとに別の曲で復元してしまう
       pos: audio.currentTime || 0,
       label: state.ctxLabel,
     });
@@ -1909,13 +1912,37 @@ function trackInfo(t) {
 
 // 実際の削除処理（確認ダイアログは呼び出し側で済ませておくこと）。
 // キュー・シャッフル前配列・プレイリストからも取り除いた上でライブラリを読み直す。
+// キューから曲を取り除き、再生位置（state.qi）を合わせ直す。
+// 単に filter するだけだと、再生中の曲より前を消したときに qi が後ろへずれ、
+// 次の曲を飛ばしたり、別の曲を「再生中」と表示したりしていた。
+function removeFromQueue(set) {
+  const hadSession = state.qi >= 0;
+  const curId = state.queue[state.qi];
+  const curDeleted = hadSession && set.has(curId);
+  const keptBefore = hadSession ? state.queue.slice(0, state.qi).filter((x) => !set.has(x)).length : 0;
+  if (curDeleted) pauseWith('曲を削除');
+  state.queue = state.queue.filter((x) => !set.has(x));
+  state.base = state.base.filter((x) => !set.has(x));
+  if (!hadSession) return;
+  if (!state.queue.length) {
+    stopPlayback();
+    return;
+  }
+  if (!curDeleted) {
+    state.qi = state.queue.indexOf(curId);
+    savePlayback();
+    return;
+  }
+  // 再生中の曲そのものが消えた: 次に来るはずだった曲を読み込んで待機する
+  state.qi = Math.min(keptBefore, state.queue.length - 1);
+  loadCurrent(false);
+}
+
 async function deleteTracksConfirmed(ids) {
   if (!ids.length) return;
   await db.deleteTracks(ids);
   const set = new Set(ids);
-  if (set.has(state.queue[state.qi])) pauseWith('曲を削除');
-  state.queue = state.queue.filter((x) => !set.has(x));
-  state.base = state.base.filter((x) => !set.has(x));
+  removeFromQueue(set);
   for (const pl of state.playlists) {
     const before = pl.trackIds.length;
     pl.trackIds = pl.trackIds.filter((x) => !set.has(x));
@@ -3492,9 +3519,7 @@ async function findDuplicatesDialog() {
         }
         await db.deleteTracks(remove);
         const set = new Set(remove);
-        if (set.has(state.queue[state.qi])) stopPlayback();
-        state.queue = state.queue.filter((x) => !set.has(x));
-        state.base = state.base.filter((x) => !set.has(x));
+        removeFromQueue(set);
         for (const pl of state.playlists) {
           const before = pl.trackIds.length;
           pl.trackIds = pl.trackIds.filter((x) => !set.has(x));
@@ -4101,9 +4126,11 @@ async function restorePlayback() {
   if (!ids.length) return;
   state.queue = ids;
   state.base = (last.base || ids).filter((id) => state.byId.has(id));
-  state.qi = Math.min(Math.max(0, last.i || 0), ids.length - 1);
+  // 保存時の曲が残っていればそれを、消えていれば近い位置の曲を頭から
+  const at = last.id ? ids.indexOf(last.id) : -1;
+  state.qi = at >= 0 ? at : Math.min(Math.max(0, last.i || 0), ids.length - 1);
   state.ctxLabel = last.label || '';
-  await loadCurrent(false, last.pos || 0);
+  await loadCurrent(false, at >= 0 || !last.id ? last.pos || 0 : 0);
 }
 
 async function init() {

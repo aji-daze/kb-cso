@@ -135,7 +135,7 @@ self.addEventListener('fetch', (e) => {
         const hit = await caches.match(req);
         const fresh = fetch(hit ? new Request(req.url, { cache: 'no-cache' }) : req)
           .then((res) => save(req, res))
-          .catch(() => hit);
+          .catch(() => hit || new Response('', { status: 504, statusText: 'offline' }));
         return hit || fresh;
       })()
     );
@@ -158,7 +158,7 @@ self.addEventListener('fetch', (e) => {
     caches.match(req).then((hit) => {
       const fresh = fetch(hit ? new Request(req.url, { cache: 'no-cache' }) : req)
         .then((res) => save(req, res))
-        .catch(() => hit);
+        .catch(() => hit || new Response('', { status: 504, statusText: 'offline' }));
       return hit || fresh;
     })
   );
