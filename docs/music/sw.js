@@ -1,6 +1,6 @@
 // アプリ本体をキャッシュして、電波がなくても起動できるようにする。
 // 曲のデータは IndexedDB 側に入っているのでここでは扱わない。
-const VERSION = 'music-v18';
+const VERSION = 'music-v19';
 const SHELL = [
   './',
   './index.html',
@@ -144,7 +144,32 @@ self.addEventListener('fetch', (e) => {
 
   // ページ本体と manifest は更新を見逃したくないのでネットワーク優先。
   // （ここをキャッシュ優先にすると、アプリを更新しても古い版を掴み続ける）
-  if (req.mode === 'navigate' || url.pathname.endsWith('/manifest.json')) {
+  // manifest は、保存してあるテーマの下地色で theme_color / background_color を差し替えて返す。
+  // 起動画面（スプラッシュ）が明るいテーマでも暗いまま、という食い違いを無くすため。
+  // 何か失敗したら元の manifest をそのまま返す。
+  if (url.pathname.endsWith('/manifest.json')) {
+    e.respondWith(
+      fetch(req)
+        .then((res) => save(req, res))
+        .catch(() => caches.match(req))
+        .then(async (res) => {
+          if (!res || !res.ok) return res || new Response('', { status: 504, statusText: 'offline' });
+          try {
+            const bg = await readIconBlobFromDb('themeBg'); // settings ストアから値を読む関数（名前はアイコン用だが中身は汎用）
+            if (typeof bg !== 'string' || !/^#[0-9a-f]{6}$/i.test(bg)) return res;
+            const j = await res.clone().json();
+            j.theme_color = bg;
+            j.background_color = bg;
+            return new Response(JSON.stringify(j), { headers: { 'content-type': 'application/manifest+json' } });
+          } catch (err) {
+            return res;
+          }
+        })
+    );
+    return;
+  }
+
+  if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req)
         .then((res) => save(req, res))
