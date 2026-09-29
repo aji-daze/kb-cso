@@ -126,7 +126,19 @@
   <form method="dialog" class="dlg">
     <h2>設定</h2>
 
-    <section>
+    <section id="secMode">
+      <h3>つなぎ方</h3>
+      <p id="modeState"></p>
+      <p class="muted" id="folderHint">この PC（Chrome／Edge）なら、<b>C:\Users\A.H\OneDrive\Obsidian</b> を直接開けます。
+        Microsoft のサインインもアプリ登録も要りません（pomenote と同じ方式）。OneDrive フォルダそのものを選んでも、中の Obsidian を使います。
+        スマホ・タブレットは OneDrive につなぐ方で使います。</p>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnPickFolder">PC のフォルダを選ぶ</button>
+        <button type="button" class="btn" id="btnUseOneDrive">OneDrive につなぐ方に戻す</button>
+      </div>
+    </section>
+
+    <section id="secMs">
       <h3>1. Microsoft アカウント</h3>
       <details id="setupHelp">
         <summary>初回だけ：アプリの登録手順</summary>
@@ -153,7 +165,7 @@
       </div>
     </section>
 
-    <section>
+    <section id="secVault">
       <h3>2. 保管庫のフォルダ</h3>
       <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault　または　C:\Users\A.H\OneDrive\…"></label>
       <p class="muted">PC のエクスプローラーでコピーしたパス（C:\Users\…\OneDrive\…）をそのまま貼ってもよい。「/」は OneDrive の一番上。</p>
@@ -183,7 +195,7 @@
       </div>
     </section>
 
-    <section>
+    <section id="secOffline">
       <h3>3. 電波がないとき用</h3>
       <p class="muted">全ノートの本文をこの端末に控えておくと、電波がなくても読めて、本文検索も速くなる。変わったものだけ取り直す。</p>
       <div class="row">

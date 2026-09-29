@@ -59,6 +59,18 @@ Obsidian のプラグイン（Dataview など）の表示、グラフ表示。
 サインインは Microsoft の仕様で 1 日で切れるが、Microsoft 側にログインが残っていれば、次に開いたとき画面を出さずに自動で通り直す。
 それでも通らないときだけ、上に「サインイン」の帯が出る。
 
+## つなぎ方は 2 通り
+
+| | OneDrive につなぐ | PC のフォルダを直接開く |
+| --- | --- | --- |
+| 使える端末 | スマホ・タブレット・PC | PC の Chrome／Edge だけ |
+| 準備 | Microsoft Entra でアプリ登録（1 回）→ サインイン | ⚙ →「PC のフォルダを選ぶ」で `C:\Users\A.H\OneDrive\Obsidian` を選ぶだけ |
+| 仕組み | Microsoft Graph で OneDrive を直接読み書き | File System Access API でフォルダを直接読み書き（pomenote＝pomera-tab と同じ方式）。PC の OneDrive が雲へ上げる |
+| 保管庫 | `config.js` の `VAULT`（`C:\Users\A.H\OneDrive\Obsidian` ＝ OneDrive 上の `Obsidian`）を開く | OneDrive フォルダそのものを選んでも、中の `Obsidian` を使う |
+
+PC のフォルダ方式では、ブラウザを開き直すと「フォルダを使う許可」を聞き直される（ブラウザの決まり）。
+上に出る帯の「許可する」を押せば続きから使える。Obsidian の窓と行き来すると、戻ったときに Obsidian 側の変更を読み直す。
+
 ## 非公開の仕組み（パスワード）
 
 ノートの中身は GitHub には一切置かない。守りは3段になっている。
@@ -119,6 +131,8 @@ notes/
   config.js        クライアント ID（任意）
   js/auth.js       サインイン（認可コード + PKCE、秘密鍵なし）
   js/graph.js      OneDrive の読み書き（eTag による競合検出）
+  js/localfs.js    PC のフォルダの読み書き（File System Access API）
+  js/backend.js    OneDrive ／ PC のフォルダの切り替え
   js/vault.js      保管庫の目録と [[リンク]] の探し方（Obsidian と同じ規則）
   js/render.js     Markdown の表示（Obsidian の書き方を拾う）
   js/reader.js     文字の見え方・目次・マーカー

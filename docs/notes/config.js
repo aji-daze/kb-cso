@@ -3,8 +3,8 @@
 // 空のままなら、設定画面で端末ごとに入れる。
 export const CLIENT_ID = '';
 
-// 最初につなぐ OneDrive の場所。PC の「C:\Users\A.H\OneDrive」＝ OneDrive の一番上（'/'）。
-// 一番上を指定すると、その中から Obsidian の保管庫（.obsidian があるフォルダ）を自動で探してつなぐ。
-// 保管庫のフォルダが決まっているなら 'Documents/Obsidian/MyVault' のように書いてもよい。
-// Windows のパス（C:\Users\A.H\OneDrive\…）をそのまま書いても読み替える。
-export const VAULT = 'C:\\Users\\A.H\\OneDrive';
+// Obsidian の保管庫の場所。Windows のパスのまま書いてよい（OneDrive 上のパス 'Obsidian' に読み替える）。
+//  ・OneDrive につなぐとき：OneDrive の中のこのフォルダを開く
+//  ・PC のフォルダを直接開くとき：OneDrive フォルダそのものを選んでも、中のこのフォルダを使う
+// OneDrive の一番上（C:\Users\A.H\OneDrive）を書くと、中から .obsidian のあるフォルダを自動で探す。
+export const VAULT = 'C:\\Users\\A.H\\OneDrive\\Obsidian';

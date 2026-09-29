@@ -8,7 +8,7 @@
 import * as DB from './store.js';
 import * as Auth from './auth.js';
 import * as L from './lock.js';
-import * as G from './graph.js';
+import * as G from './backend.js';
 import * as V from './vault.js';
 import * as R from './render.js';
 import * as RD from './reader.js';
@@ -19,7 +19,6 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let vault = null;        // OneDrive の一番上からの保管庫のパス。'' は一番上、null はまだ決まっていない
-const full = (rel) => (vault ? vault + '/' : '') + rel;
 let cur = null;          // いま開いているノート { path, text, baseETag, dirty, mode, conflict }
 let lastTreeAt = 0;
 let pushTimer = 0;
@@ -77,6 +76,7 @@ function needSignIn() {
 
 function fail(e) {
   if (e instanceof G.NeedSignIn) return needSignIn();
+  if (e instanceof G.NeedPermission) return needPermission();
   console.error(e);
   toast(navigator.onLine ? e.message : '電波がありません');
 }
@@ -162,16 +162,32 @@ $('tree').addEventListener('toggle', (e) => {
   DB.setting('open', [...openFolders]).catch(() => {});
 }, true);
 
+// いまのつなぎ方で読み書きできる状態か
+async function ready() {
+  if (G.isFolder()) return G.folder.connect(false);
+  return vault !== null && (await Auth.signedIn());
+}
+const configured = async () => (G.isFolder() ? !!(await G.folder.saved()) : vault !== null && !!(await Auth.clientId()));
+
+// フォルダの許可が切れている（ブラウザを開き直した）ときの案内。許可はボタンを押した直後にしか出せない
+function needPermission() {
+  banner('PC のフォルダ「' + '<b>' + '…' + '</b>' + '」を使う許可が必要です。<button class="btn small primary">許可する</button>', async () => {
+    if (await G.folder.connect(true)) { banner(''); refreshTree(); if (cur) { const p = cur.path; cur = null; route(); } }
+    else toast('許可されませんでした');
+  });
+  G.folder.folderName().then((n) => { const b = $('banner').querySelector('b'); if (b) b.textContent = n; });
+}
+
 let treeJob = null;
 function refreshTree() {
   if (!treeJob) treeJob = loadTree().finally(() => { treeJob = null; });
   return treeJob;
 }
 async function loadTree() {
-  if (vault === null || !(await Auth.signedIn())) return;
+  if (!(await ready())) { if (G.isFolder() && (await G.folder.saved())) needPermission(); return; }
   $('treeInfo').textContent = '読み込み中…';
   try {
-    const list = await G.walk(vault, (n) => { $('treeInfo').textContent = '読み込み中… ' + n; });
+    const list = await G.walk((n) => { $('treeInfo').textContent = '読み込み中… ' + n; });
     V.load(list);
     lastTreeAt = Date.now();
     await saveTree();
@@ -181,7 +197,8 @@ async function loadTree() {
     pushDrafts();
   } catch (e) {
     renderTree();
-    if (e instanceof G.NotFound) toast('保管庫のフォルダが見つかりません：' + V.showVault(vault) + '。設定の「OneDrive から選ぶ」で選び直してください');
+    if (e instanceof G.NeedPermission) needPermission();
+    else if (e instanceof G.NotFound) toast('保管庫のフォルダが見つかりません：' + V.showVault(vault) + '。設定の「OneDrive から選ぶ」で選び直してください');
     else fail(e);
   }
 }
@@ -232,14 +249,14 @@ async function fullSearch(q) {
     hits.set(f.path, { path: f.path, snip });
   }
   const local = files.length;
-  showResults([...hits.values()], local < V.notes().length ? '本文は端末に控えたノートから探しています。OneDrive にも問い合わせ中…' : '');
+  showResults([...hits.values()], local < V.notes().length ? '本文は端末に控えたノートから探しています。' + (G.isFolder() ? 'フォルダも探しています…' : 'OneDrive にも問い合わせ中…') : '');
 
   // 控えていないノートもあるので OneDrive の検索にも聞く（索引の反映は少し遅れる）
-  if (!navigator.onLine || local >= V.notes().length) return;
+  if ((!navigator.onLine && !G.isFolder()) || local >= V.notes().length) return;
   try {
     const ids = new Set(await G.search(q));
     if (seq !== searchSeq) return;
-    for (const it of V.notes()) if (ids.has(it.id) && !hits.has(it.path)) hits.set(it.path, { path: it.path, snip: '<i>OneDrive の検索で見つかった</i>' });
+    for (const it of V.notes()) if (ids.has(it.id) && !hits.has(it.path)) hits.set(it.path, { path: it.path, snip: '<i>' + (G.isFolder() ? 'フォルダの本文で見つかった' : 'OneDrive の検索で見つかった') + '</i>' });
     showResults([...hits.values()]);
   } catch (e) {
     if (seq === searchSeq) showResults([...hits.values()], 'OneDrive の検索には失敗しました');
@@ -317,9 +334,13 @@ async function showHome() {
 
   const drafts = await DB.all('drafts');
   let h = '';
-  if (vault === null || !(await Auth.clientId())) {
-    h += '<div class="card"><h2>はじめに</h2><p>右上の ⚙ から、Microsoft アカウントでサインインして、Obsidian の保管庫のフォルダを選んでください。</p>' +
-      '<button class="btn primary" data-act="settings">設定を開く</button></div>';
+  if (!(await configured())) {
+    h += '<div class="card"><h2>はじめに</h2>' +
+      (G.folder.supported()
+        ? '<p><b>この PC なら</b>、OneDrive の Obsidian フォルダ（C:\\Users\\A.H\\OneDrive\\Obsidian）を選ぶだけで使えます。サインインは要りません。</p>' +
+          '<button class="btn primary" data-act="pickFolder">フォルダを選ぶ</button> '
+        : '<p>右上の ⚙ から Microsoft アカウントでサインインしてください。保管庫（C:\\Users\\A.H\\OneDrive\\Obsidian）には自動でつなぎます。</p>') +
+      '<button class="btn" data-act="settings">' + (G.folder.supported() ? 'OneDrive にサインインして使う' : '設定を開く') + '</button></div>';
   }
   if (drafts.length) {
     h += '<div class="card"><h2>OneDrive にまだ送っていない変更</h2>' + drafts.map((d) =>
@@ -683,7 +704,7 @@ $('cfBoth').addEventListener('click', async () => {
   const dir = V.dirName(note.path);
   const rel = (dir ? dir + '/' : '') + V.title(note.path) + ' (競合 ' + stamp() + ').md';
   try {
-    const it = await G.createText(full(rel), note.text);
+    const it = await G.createText(rel, note.text);
     V.upsert({ ...it, path: rel });
     await DB.put('files', { path: rel, text: note.text, eTag: it.eTag, at: Date.now() });
     await saveTree();
@@ -700,6 +721,7 @@ document.addEventListener('click', (e) => {
   if (!a) return;
   e.preventDefault();
   if (a.dataset.act === 'settings') return openSettings();
+  if (a.dataset.act === 'pickFolder') return pickFolder();
   if (a.dataset.act === 'create') return createNote(a.dataset.path);
   if (a.dataset.tag) {
     $('q').value = '#' + a.dataset.tag;
@@ -953,10 +975,10 @@ let shared = '';
 let sharedTitle = '';   // ほかのアプリから「共有」で受け取った文字。次に作るノートの中身にする
 
 async function doCreate(path) {
-  if (vault === null) return openSettings();
+  if (!(await configured())) return openSettings();
   const body = shared;
   try {
-    const it = await G.createText(full(path), body);
+    const it = await G.createText(path, body);
     shared = '';
     V.upsert({ ...it, path });
     await DB.put('files', { path, text: body, eTag: it.eTag, at: Date.now() });
@@ -1004,6 +1026,7 @@ async function openSettings() {
   $('picker').hidden = true;
   await refreshSignState();
   await refreshLockState();
+  await refreshModeState();
   $('dlgSettings').showModal();
 }
 
@@ -1049,6 +1072,51 @@ $('formPw').addEventListener('submit', async (e) => {
   }
 });
 
+// ---------------------------------------------------------------- つなぎ方（OneDrive ／ PC のフォルダ）
+
+async function switchMode(m) {
+  G.setMode(m);
+  await DB.setting('mode', m);
+  V.load([]);
+  await DB.setting('tree', null);
+  renderTree();
+  cur = null;
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  showHome();
+  refreshTree();
+}
+
+async function pickFolder() {
+  if (!G.folder.supported()) return toast('この端末のブラウザはフォルダを直接開けません（PC の Chrome／Edge だけ）');
+  try {
+    // OneDrive そのもの（C:\Users\A.H\OneDrive）を選んでも、中の Obsidian を保管庫にする
+    await G.folder.pick(V.normVault(VAULT) || 'Obsidian');
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('フォルダを開けませんでした：' + e.message);
+    return;
+  }
+  if ($('dlgSettings').open) $('dlgSettings').close();
+  toast('「' + (await G.folder.folderName()) + '」につなぎました');
+  await switchMode('folder');
+}
+
+async function refreshModeState() {
+  const folder = G.isFolder();
+  const name = await G.folder.folderName();
+  $('modeState').innerHTML = folder
+    ? 'いまは <b>PC のフォルダ</b>「' + esc(name || '（未選択）') + '」を直接読み書きしています。'
+    : 'いまは <b>OneDrive</b>（Microsoft でサインイン）につないでいます。';
+  $('btnPickFolder').hidden = !G.folder.supported();
+  $('btnPickFolder').textContent = folder ? '別のフォルダを選ぶ' : 'PC のフォルダを選ぶ';
+  $('btnUseOneDrive').hidden = !folder;
+  $('folderHint').hidden = !G.folder.supported();
+  $('secMs').hidden = folder;
+  $('secVault').hidden = folder;
+  $('secOffline').hidden = folder; // PC の中なので電波に関係なく読める
+}
+$('btnPickFolder').addEventListener('click', pickFolder);
+$('btnUseOneDrive').addEventListener('click', async () => { $('dlgSettings').close(); await switchMode('onedrive'); });
+
 async function refreshSignState() {
   const on = await Auth.signedIn();
   $('signState').textContent = on ? 'サインイン済み' : '未サインイン';
@@ -1056,7 +1124,7 @@ async function refreshSignState() {
   $('btnSignOut').hidden = !on;
   $('btnPick').disabled = !on;
   $('btnFind').disabled = !on;
-  $('btnPrefetch').disabled = !on;
+  $('btnPrefetch').disabled = !on && !G.isFolder();
 }
 
 async function storeSettings() {
@@ -1065,6 +1133,7 @@ async function storeSettings() {
   const v = V.normVault($('setVault').value);
   if (v !== vault) {
     vault = v;
+    G.setVault(v);
     await DB.setting('vault', v);
     await DB.setting('vaultResolved', true); // 自分で決めた場所は、自動で探し直さない
     V.load([]);
@@ -1152,6 +1221,7 @@ async function resolveRootVault() {
   await DB.setting('vaultResolved', true);
   if (found.length === 1) {
     vault = found[0];
+    G.setVault(vault);
     await DB.setting('vault', vault);
     toast('保管庫「' + V.showVault(vault) + '」につなぎました（⚙ で変えられます）');
   } else if (found.length > 1) {
@@ -1215,9 +1285,18 @@ document.addEventListener('visibilitychange', () => {
     if (cur && cur.dirty) { clearTimeout(draftTimer); saveDraft(cur); push(cur); }
     return;
   }
-  // 戻ってきた。PC 側で書き換えられているかもしれないので確かめる
-  if (!L.unlocked()) return;
-  if (Date.now() - lastTreeAt > 5 * 60 * 1000) refreshTree();
+  recheck();
+});
+// PC では Obsidian の窓と行き来しても画面は隠れない（visibilitychange が来ない）ので、窓の出入りでも同じことをする
+window.addEventListener('blur', () => { if (cur && cur.dirty) { clearTimeout(draftTimer); saveDraft(cur); push(cur); } });
+window.addEventListener('focus', () => recheck());
+
+let lastCheck = 0;
+function recheck() {
+  // 戻ってきた。PC 側（Obsidian）で書き換えられているかもしれないので確かめる
+  if (!L.unlocked() || Date.now() - lastCheck < 1500) return;
+  lastCheck = Date.now();
+  if (Date.now() - lastTreeAt > (G.isFolder() ? 60 * 1000 : 5 * 60 * 1000)) refreshTree();
   if (cur && !cur.dirty && cur.loaded && V.get(cur.path)) {
     const note = cur;
     G.meta(V.get(note.path).id).then(async (m) => {
@@ -1227,10 +1306,10 @@ document.addEventListener('visibilitychange', () => {
       Object.assign(note, { text: r.text, baseETag: r.eTag });
       await DB.put('files', { path: note.path, text: r.text, eTag: r.eTag, at: Date.now() });
       show(note, '', true);
-      toast('OneDrive の新しい版を読み込みました');
+      toast(G.isFolder() ? 'Obsidian 側の変更を読み込みました' : 'OneDrive の新しい版を読み込みました');
     }).catch(() => {});
   }
-});
+}
 
 // ---------------------------------------------------------------- パスワード
 
@@ -1314,12 +1393,21 @@ async function start() {
 
   const saved = await DB.setting('vault');
   vault = saved !== undefined ? saved : V.normVault(VAULT);
+  G.setVault(vault);
+  G.setMode((await DB.setting('mode')) || 'onedrive');
   const tree = await DB.setting('tree');
   if (tree) V.load(tree);
   renderTree();
   if (matchMedia('(min-width: 900px)').matches) side.open();
 
   route();
+
+  // PC のフォルダにつなぐとき：サインインは要らない。許可が残っていればそのまま読む
+  if (G.isFolder()) {
+    if (await G.folder.connect(false)) refreshTree();
+    else if (await G.folder.saved()) needPermission();
+    return;
+  }
 
   const signed = await Auth.signedIn();
   if (!signed || vault === null) {
