@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<!-- resizes-content：Android でキーボードが出たとき画面を縮め、下の道具帯をキーボードの上に出す -->
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ノート">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="description" content="OneDrive の Obsidian 保管庫を、どの端末からでも直接読み書きするノート">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>ノート</title>
+</head>
+<body class="locked">
+
+<!-- 鍵。開くまでは中身を何も出さない -->
+<div class="lock" id="lock" hidden>
+  <form class="lock-box" id="lockForm" autocomplete="on">
+    <img src="icons/icon-192.png" alt="" width="64" height="64">
+    <h1>ノート</h1>
+    <p class="muted" id="lockMsg"></p>
+    <!-- パスワード管理（Google パスワード マネージャーなど）が覚えられるように、名前の欄を隠して置く -->
+    <input type="text" name="username" autocomplete="username" value="notes" hidden>
+    <input type="password" id="lockPw" name="password" placeholder="パスワード" required>
+    <input type="password" id="lockPw2" placeholder="もう一度" autocomplete="new-password" hidden>
+    <label class="check"><input type="checkbox" id="lockRemember"> この端末では次から入力しない</label>
+    <p class="err" id="lockErr" hidden></p>
+    <button class="btn primary" id="lockOk">開く</button>
+    <button type="button" class="linkbtn" id="lockForgot">パスワードを忘れた</button>
+  </form>
+</div>
+
+<header class="bar">
+  <button class="icon" id="btnMenu" title="一覧" aria-label="一覧">☰</button>
+  <div class="bar-title" id="title">ノート</div>
+  <span class="status" id="status" hidden></span>
+  <button class="icon" id="btnOutline" title="目次・マーカー" aria-label="目次・マーカー" hidden>☷</button>
+  <button class="icon txt" id="btnLook" title="文字の見え方" aria-label="文字の見え方">Aa</button>
+  <button class="mode" id="btnMode" title="編集 (Ctrl+E)" hidden>編集</button>
+  <button class="icon" id="btnNew" title="新しいノート" aria-label="新しいノート">＋</button>
+  <button class="icon" id="btnSettings" title="設定" aria-label="設定">⚙</button>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<div class="layout">
+  <aside class="side" id="side">
+    <div class="search">
+      <input id="q" type="search" placeholder="検索（Enter で本文も）" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div class="results" id="results" hidden></div>
+    <nav class="tree" id="tree"></nav>
+    <div class="side-foot">
+      <span class="muted" id="treeInfo"></span>
+      <button class="btn small" id="btnSideNew">＋ 新規</button>
+      <button class="btn small" id="btnRefresh">再読込</button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main" id="main">
+    <section class="home" id="home"></section>
+    <div class="crumb" id="crumb" hidden></div>
+    <article class="md" id="view" hidden></article>
+    <div class="editwrap" id="editwrap" hidden>
+      <div class="tools" id="tools" role="toolbar" aria-label="書式">
+        <button type="button" data-cmd="h0" title="本文">本文</button>
+        <button type="button" data-cmd="h1" title="大見出し">H1</button>
+        <button type="button" data-cmd="h2" title="中見出し">H2</button>
+        <button type="button" data-cmd="h3" title="小見出し">H3</button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="bold" title="太字 (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-cmd="marker" title="マーカー (Ctrl+Shift+M)" class="hl-btn"><span>マーカー</span></button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="ul" title="箇条書き">・</button>
+        <button type="button" data-cmd="ol" title="番号付き">1.</button>
+        <button type="button" data-cmd="task" title="チェックボックス">☑</button>
+        <button type="button" data-cmd="quote" title="引用">❝</button>
+        <button type="button" data-cmd="link" title="ノートへのリンク">[[ ]]</button>
+        <button type="button" data-cmd="hr" title="区切り線">―</button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="undo" title="元に戻す (Ctrl+Z)">↶</button>
+        <button type="button" data-cmd="redo" title="やり直す (Ctrl+Y)">↷</button>
+      </div>
+      <div class="editor" id="editor"></div>
+    </div>
+  </main>
+
+  <aside class="outline" id="outline" hidden>
+    <div class="ol-tabs">
+      <button type="button" class="on" data-tab="heads">目次</button>
+      <button type="button" data-tab="marks">マーカー</button>
+      <button type="button" class="icon ol-close" id="btnOutlineClose" aria-label="閉じる">×</button>
+    </div>
+    <div class="ol-body" id="olBody"></div>
+  </aside>
+</div>
+
+<!-- マーカーの色（閲覧中に文字を選んだとき・マーカーを押したとき・編集の道具帯） -->
+<div class="hlpop" id="hlPop" hidden>
+  <div class="hl-colors" id="hlColors"></div>
+  <button type="button" class="hl-off" id="hlOff">外す</button>
+</div>
+
+<!-- 文字の見え方（この端末だけ） -->
+<dialog id="dlgLook">
+  <form method="dialog" class="dlg">
+    <h2>文字の見え方 <small class="muted">この端末だけ</small></h2>
+    <label>文字の大きさ <b id="lookFsV"></b><input id="lookFs" type="range" min="14" max="26" step="1"></label>
+    <label>行の間隔 <b id="lookLhV"></b><input id="lookLh" type="range" min="1.5" max="2.4" step="0.1"></label>
+    <div class="seg" data-k="font"><span>書体</span><button type="button" data-v="sans">ゴシック</button><button type="button" data-v="serif">明朝</button></div>
+    <div class="seg" data-k="measure"><span>本文の幅</span><button type="button" data-v="narrow">狭い</button><button type="button" data-v="normal">標準</button><button type="button" data-v="wide">広い</button></div>
+    <div class="seg" data-k="theme"><span>配色</span><button type="button" data-v="auto">自動</button><button type="button" data-v="light">白</button><button type="button" data-v="sepia">セピア</button><button type="button" data-v="dark">黒</button></div>
+    <p class="look-sample" id="lookSample">吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。何でも薄暗いじめじめした所で<mark>ニャーニャー泣いていた事だけは記憶している</mark>。</p>
+    <div class="dlg-foot"><button class="btn primary">閉じる</button></div>
+  </form>
+</dialog>
+
+<!-- 設定 -->
+<dialog id="dlgSettings">
+  <form method="dialog" class="dlg">
+    <h2>設定</h2>
+
+    <section>
+      <h3>1. Microsoft アカウント</h3>
+      <details id="setupHelp">
+        <summary>初回だけ：アプリの登録手順</summary>
+        <ol class="steps">
+          <li><a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener">Microsoft Entra 管理センター → アプリの登録</a> → 新規登録</li>
+          <li>サポートされるアカウントの種類は<b>「任意の組織ディレクトリ内のアカウントと個人用 Microsoft アカウント」</b></li>
+          <li>リダイレクト URI は<b>「シングルページ アプリケーション (SPA)」</b>を選び、<br><code id="redirectUri"></code><br>を入れる（末尾の / まで一致させる）</li>
+          <li>概要ページの<b>アプリケーション (クライアント) ID</b> を下に貼る</li>
+        </ol>
+        <p class="muted">栞で登録済みのアプリがあれば、それのリダイレクト URI に上の URL を追加するだけでよい。</p>
+      </details>
+      <label>クライアント ID<input id="setClient" type="text" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+      <label>アカウントの種類
+        <select id="setTenant">
+          <option value="common">個人・職場どちらも（common）</option>
+          <option value="consumers">個人用のみ（consumers）</option>
+          <option value="organizations">職場・学校のみ（organizations）</option>
+        </select>
+      </label>
+      <div class="row">
+        <span id="signState" class="muted"></span>
+        <button type="button" class="btn primary" id="btnSignIn">サインイン</button>
+        <button type="button" class="btn" id="btnSignOut">サインアウト</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>2. 保管庫のフォルダ</h3>
+      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault"></label>
+      <div class="row"><button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button></div>
+      <div class="picker" id="picker" hidden></div>
+    </section>
+
+    <section>
+      <h3>パスワード</h3>
+      <p class="muted">この端末に控えるノート・書きかけ・サインイン情報は、パスワードで暗号化してある。</p>
+      <label class="check"><input type="checkbox" id="setRemember"> この端末では入力を省く（自分専用の端末だけにする）</label>
+      <label>画面を離れてから鍵をかけるまで
+        <select id="setAutolock">
+          <option value="1">1 分</option>
+          <option value="5">5 分</option>
+          <option value="15">15 分</option>
+          <option value="60">1 時間</option>
+          <option value="0">かけない（閉じるまで）</option>
+        </select>
+      </label>
+      <div class="row">
+        <button type="button" class="btn" id="btnLockNow">今すぐ鍵をかける</button>
+        <button type="button" class="btn" id="btnChangePw">パスワードを変える</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>3. 電波がないとき用</h3>
+      <p class="muted">全ノートの本文をこの端末に控えておくと、電波がなくても読めて、本文検索も速くなる。変わったものだけ取り直す。</p>
+      <div class="row">
+        <button type="button" class="btn" id="btnPrefetch">全ノートを端末に保存</button>
+        <span class="muted" id="prefetchInfo"></span>
+      </div>
+      <div class="row"><button type="button" class="btn danger" id="btnClearCache">端末の控えを消す</button></div>
+    </section>
+
+    <div class="dlg-foot">
+      <button type="button" class="btn primary" id="btnSaveSettings">保存して閉じる</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 競合 -->
+<dialog id="dlgConflict">
+  <form method="dialog" class="dlg">
+    <h2>別の端末で書き換えられています</h2>
+    <p>このノートは、読み込んだあとに OneDrive 側で変更されました（PC の Obsidian など）。どちらを残しますか。</p>
+    <p class="muted" id="conflictInfo"></p>
+    <div class="col">
+      <button type="button" class="btn primary" id="cfBoth">両方残す（自分の版を別名で保存）</button>
+      <button type="button" class="btn" id="cfRemote">OneDrive の版にする（自分の変更は捨てる）</button>
+      <button type="button" class="btn danger" id="cfMine">自分の版で上書きする</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- パスワードを変える -->
+<dialog id="dlgPw">
+  <form class="dlg" id="formPw">
+    <h2>パスワードを変える</h2>
+    <input type="text" name="username" autocomplete="username" value="notes" hidden>
+    <label>今のパスワード<input type="password" id="pwOld" autocomplete="current-password" required></label>
+    <label>新しいパスワード（6 文字以上）<input type="password" id="pwNew" autocomplete="new-password" required></label>
+    <label>新しいパスワードをもう一度<input type="password" id="pwNew2" autocomplete="new-password" required></label>
+    <p class="err" id="pwErr" hidden></p>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="btnPwCancel">やめる</button>
+      <button type="submit" class="btn primary" id="btnPwOk">変える</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 新しいノート -->
+<dialog id="dlgNew">
+  <form method="dialog" class="dlg" id="formNew">
+    <h2>新しいノート</h2>
+    <label>名前<input id="newName" type="text" autocomplete="off" required></label>
+    <label>フォルダ<select id="newDir"></select></label>
+    <p class="err" id="newErr" hidden></p>
+    <div class="dlg-foot">
+      <button type="button" class="btn" id="btnNewCancel">やめる</button>
+      <button type="submit" class="btn primary" id="btnNewOk">作る</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
