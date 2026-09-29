@@ -134,8 +134,27 @@
         スマホ・タブレットは OneDrive につなぐ方で使います。</p>
       <div class="row">
         <button type="button" class="btn primary" id="btnPickFolder">PC のフォルダを選ぶ</button>
-        <button type="button" class="btn" id="btnUseOneDrive">OneDrive につなぐ方に戻す</button>
+        <button type="button" class="btn" id="btnUseOneDrive">OneDrive（Microsoft）につなぐ方にする</button>
       </div>
+    </section>
+
+    <section id="secGithub">
+      <h3>GitHub につなぐ（pomenote と同じ）</h3>
+      <p class="muted">pomenote（ポメラタブ）と同じ非公開リポジトリを読み書きする。PC の同期（pomera_sync）が OneDrive の Obsidian とそろえるので、
+        ここで書いたものは PC の Obsidian にも届く。スマホ・タブレット向け。トークンは pomenote で使っているものをそのまま使える
+        （fine-grained、pomera-data の <b>Contents: Read and write</b>）。トークンはこの端末の中でパスワードで暗号化して置く。</p>
+      <div class="row2">
+        <label>ユーザー名<input id="ghOwner" type="text" autocomplete="off" spellcheck="false"></label>
+        <label>リポジトリ<input id="ghRepo" type="text" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <label>保管庫の場所（リポジトリの中）<input id="ghRoot" type="text" autocomplete="off" spellcheck="false" placeholder="Obsidian"></label>
+      <label>トークン<input id="ghToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnGithub">GitHub につなぐ</button>
+        <span class="muted" id="ghInfo"></span>
+      </div>
+      <p class="muted"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">トークンを新しく作る</a>
+        ときは、Repository access を「Only select repositories → pomera-data」、Permissions の Contents を「Read and write」にする。</p>
     </section>
 
     <section id="secMs">

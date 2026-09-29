@@ -59,17 +59,26 @@ Obsidian のプラグイン（Dataview など）の表示、グラフ表示。
 サインインは Microsoft の仕様で 1 日で切れるが、Microsoft 側にログインが残っていれば、次に開いたとき画面を出さずに自動で通り直す。
 それでも通らないときだけ、上に「サインイン」の帯が出る。
 
-## つなぎ方は 2 通り
+## つなぎ方は 3 通り
 
-| | OneDrive につなぐ | PC のフォルダを直接開く |
-| --- | --- | --- |
-| 使える端末 | スマホ・タブレット・PC | PC の Chrome／Edge だけ |
-| 準備 | Microsoft Entra でアプリ登録（1 回）→ サインイン | ⚙ →「PC のフォルダを選ぶ」で `C:\Users\A.H\OneDrive\Obsidian` を選ぶだけ |
-| 仕組み | Microsoft Graph で OneDrive を直接読み書き | File System Access API でフォルダを直接読み書き（pomenote＝pomera-tab と同じ方式）。PC の OneDrive が雲へ上げる |
-| 保管庫 | `config.js` の `VAULT`（`C:\Users\A.H\OneDrive\Obsidian` ＝ OneDrive 上の `Obsidian`）を開く | OneDrive フォルダそのものを選んでも、中の `Obsidian` を使う |
+| | GitHub（pomenote と同じ） | PC のフォルダを直接開く | OneDrive（Microsoft） |
+| --- | --- | --- | --- |
+| 使える端末 | スマホ・タブレット・PC | PC の Chrome／Edge だけ | スマホ・タブレット・PC |
+| 準備 | pomenote のトークンを入れるだけ | `C:\Users\A.H\OneDrive\Obsidian` を選ぶだけ | Microsoft Entra でアプリ登録 → サインイン |
+| 読み書きする所 | 非公開リポジトリ `aji-daze/pomera-data` の `Obsidian/` | PC のフォルダそのもの | OneDrive の `Obsidian` |
+| Obsidian に届くまで | PC の同期（pomera_sync）が動いたとき | すぐ（PC の OneDrive が雲へ上げる） | すぐ |
+| 画像 | 出ない（リポジトリは .md/.txt だけ） | 出る | 出る |
 
-PC のフォルダ方式では、ブラウザを開き直すと「フォルダを使う許可」を聞き直される（ブラウザの決まり）。
-上に出る帯の「許可する」を押せば続きから使える。Obsidian の窓と行き来すると、戻ったときに Obsidian 側の変更を読み直す。
+何も選んでいない端末は GitHub から始まる。ホームの「GitHub につなぐ」→ トークンを入れる → 「GitHub につなぐ」で使える。
+
+- **GitHub**：pomenote のタブレット側と同じく、リポジトリのファイルを GitHub の API で直接読み書きする。
+  保存のたびに「update: Obsidian/…md (notes)」というコミットになる（pomenote は `(tablet)`）。
+  PC の同期スクリプトが OneDrive の Obsidian とそろえる。保存の前に版（blob sha）を見比べ、
+  PC の同期やポメラで先に書き換わっていれば競合として止め、「両方残す」などを選ばせる。
+  トークンは fine-grained で、pomera-data だけに「Contents: Read and write」。端末の中でパスワードで暗号化して置く。
+- **PC のフォルダ**：File System Access API（pomera-tab の localfs.js と同じ方式）。OneDrive フォルダそのものを選んでも、中の `Obsidian` を使う。
+  ブラウザを開き直すと「フォルダを使う許可」を聞き直されるので、上の帯の「許可する」を押す。
+- **OneDrive**：Microsoft Graph で OneDrive を直接読み書きする。アプリ登録が要る（下の「初回の準備」）。
 
 ## 非公開の仕組み（パスワード）
 
@@ -132,7 +141,8 @@ notes/
   js/auth.js       サインイン（認可コード + PKCE、秘密鍵なし）
   js/graph.js      OneDrive の読み書き（eTag による競合検出）
   js/localfs.js    PC のフォルダの読み書き（File System Access API）
-  js/backend.js    OneDrive ／ PC のフォルダの切り替え
+  js/github.js     GitHub の非公開リポジトリの読み書き（pomenote と同じ）
+  js/backend.js    GitHub ／ PC のフォルダ ／ OneDrive の切り替え
   js/vault.js      保管庫の目録と [[リンク]] の探し方（Obsidian と同じ規則）
   js/render.js     Markdown の表示（Obsidian の書き方を拾う）
   js/reader.js     文字の見え方・目次・マーカー

@@ -13,7 +13,7 @@ import * as V from './vault.js';
 import * as R from './render.js';
 import * as RD from './reader.js';
 import { createEditor } from '../vendor/editor.js';
-import { VAULT } from '../config.js';
+import { VAULT, GITHUB } from '../config.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -76,6 +76,7 @@ function needSignIn() {
 
 function fail(e) {
   if (e instanceof G.NeedSignIn) return needSignIn();
+  if (e instanceof G.BadToken) return needToken(e);
   if (e instanceof G.NeedPermission) return needPermission();
   console.error(e);
   toast(navigator.onLine ? e.message : '電波がありません');
@@ -165,9 +166,24 @@ $('tree').addEventListener('toggle', (e) => {
 // いまのつなぎ方で読み書きできる状態か
 async function ready() {
   if (G.isFolder()) return G.folder.connect(false);
+  if (G.isGithub()) return G.github.configured();
   return vault !== null && (await Auth.signedIn());
 }
-const configured = async () => (G.isFolder() ? !!(await G.folder.saved()) : vault !== null && !!(await Auth.clientId()));
+const configured = async () => (G.isFolder() ? !!(await G.folder.saved())
+  : G.isGithub() ? G.github.configured()
+  : vault !== null && !!(await Auth.clientId()));
+
+// GitHub のトークンが無い・切れた・権限が足りない
+function needToken(e) {
+  banner(esc((e && e.message) || 'GitHub のトークンが必要です') + '。<button class="btn small primary">トークンを入れる</button>', () => openSettings('secGithub'));
+  status('要トークン', 'warn');
+}
+
+// 端末に置いた GitHub の設定（トークンは暗号化して控えてある）を読み込む
+async function loadGithub() {
+  const g = (await DB.setting('github')) || {};
+  G.github.configure({ ...GITHUB, ...g, token: (await DB.setting('ghToken')) || '' });
+}
 
 // フォルダの許可が切れている（ブラウザを開き直した）ときの案内。許可はボタンを押した直後にしか出せない
 function needPermission() {
@@ -198,6 +214,8 @@ async function loadTree() {
   } catch (e) {
     renderTree();
     if (e instanceof G.NeedPermission) needPermission();
+    else if (e instanceof G.BadToken) needToken(e);
+    else if (e instanceof G.NotFound && G.isGithub()) toast('GitHub のリポジトリが見つかりません（名前・トークンの権限を確認）');
     else if (e instanceof G.NotFound) toast('保管庫のフォルダが見つかりません：' + V.showVault(vault) + '。設定の「OneDrive から選ぶ」で選び直してください');
     else fail(e);
   }
@@ -249,14 +267,14 @@ async function fullSearch(q) {
     hits.set(f.path, { path: f.path, snip });
   }
   const local = files.length;
-  showResults([...hits.values()], local < V.notes().length ? '本文は端末に控えたノートから探しています。' + (G.isFolder() ? 'フォルダも探しています…' : 'OneDrive にも問い合わせ中…') : '');
+  showResults([...hits.values()], local < V.notes().length ? '本文は端末に控えたノートから探しています。' + (G.isFolder() ? 'フォルダも探しています…' : G.isGithub() ? 'GitHub も探しています…' : 'OneDrive にも問い合わせ中…') : '');
 
   // 控えていないノートもあるので OneDrive の検索にも聞く（索引の反映は少し遅れる）
   if ((!navigator.onLine && !G.isFolder()) || local >= V.notes().length) return;
   try {
     const ids = new Set(await G.search(q));
     if (seq !== searchSeq) return;
-    for (const it of V.notes()) if (ids.has(it.id) && !hits.has(it.path)) hits.set(it.path, { path: it.path, snip: '<i>' + (G.isFolder() ? 'フォルダの本文で見つかった' : 'OneDrive の検索で見つかった') + '</i>' });
+    for (const it of V.notes()) if (ids.has(it.id) && !hits.has(it.path)) hits.set(it.path, { path: it.path, snip: '<i>' + (G.isFolder() ? 'フォルダの本文で見つかった' : G.isGithub() ? 'GitHub の本文で見つかった' : 'OneDrive の検索で見つかった') + '</i>' });
     showResults([...hits.values()]);
   } catch (e) {
     if (seq === searchSeq) showResults([...hits.values()], 'OneDrive の検索には失敗しました');
@@ -339,8 +357,9 @@ async function showHome() {
       (G.folder.supported()
         ? '<p><b>この PC なら</b>、OneDrive の Obsidian フォルダ（C:\\Users\\A.H\\OneDrive\\Obsidian）を選ぶだけで使えます。サインインは要りません。</p>' +
           '<button class="btn primary" data-act="pickFolder">フォルダを選ぶ</button> '
-        : '<p>右上の ⚙ から Microsoft アカウントでサインインしてください。保管庫（C:\\Users\\A.H\\OneDrive\\Obsidian）には自動でつなぎます。</p>') +
-      '<button class="btn" data-act="settings">' + (G.folder.supported() ? 'OneDrive にサインインして使う' : '設定を開く') + '</button></div>';
+        : '<p>pomenote と同じ <b>GitHub（pomera-data）</b>につなぐと、PC の Obsidian（C:\\Users\\A.H\\OneDrive\\Obsidian）と中身がそろいます。pomenote で使っているトークンをそのまま入れてください。</p>') +
+      '<button class="btn' + (G.folder.supported() ? '' : ' primary') + '" data-act="github">GitHub につなぐ（pomenote と同じ）</button> ' +
+      '<button class="btn" data-act="settings">OneDrive にサインインして使う</button></div>';
   }
   if (drafts.length) {
     h += '<div class="card"><h2>OneDrive にまだ送っていない変更</h2>' + drafts.map((d) =>
@@ -429,7 +448,7 @@ async function openNote(path, heading) {
   try {
     const r = await G.readText(item.id);
     if (cur !== note) return;
-    V.upsert({ ...item, eTag: r.eTag, mtime: r.item.mtime });
+    V.upsert({ ...item, eTag: r.eTag, mtime: r.item.mtime || item.mtime });
     if (note.dirty) {
       // 書きかけがある。OneDrive 側の版が控えと違えば、送るときに競合として扱われる
       schedulePush(0);
@@ -607,7 +626,7 @@ async function push(note) {
     try {
       const res = await G.writeText(item.id, snap, note.baseETag);
       note.baseETag = res.eTag;
-      V.upsert({ ...item, eTag: res.eTag, mtime: res.mtime, size: res.size });
+      V.upsert({ ...item, eTag: res.eTag, mtime: res.mtime || new Date().toISOString(), size: res.size });
       await DB.put('files', { path: note.path, text: snap, eTag: res.eTag, at: Date.now() });
       if (note.text === snap) {
         note.dirty = false;
@@ -645,7 +664,7 @@ async function pushDrafts() {
     if (!it || d.conflict) continue;
     try {
       const res = await G.writeText(it.id, d.text, d.baseETag);
-      V.upsert({ ...it, eTag: res.eTag });
+      V.upsert({ ...it, eTag: res.eTag, mtime: res.mtime || new Date().toISOString() });
       await DB.put('files', { path: d.path, text: d.text, eTag: res.eTag, at: Date.now() });
       await DB.del('drafts', d.path);
     } catch (e) {
@@ -722,6 +741,7 @@ document.addEventListener('click', (e) => {
   e.preventDefault();
   if (a.dataset.act === 'settings') return openSettings();
   if (a.dataset.act === 'pickFolder') return pickFolder();
+  if (a.dataset.act === 'github') return openSettings('secGithub');
   if (a.dataset.act === 'create') return createNote(a.dataset.path);
   if (a.dataset.tag) {
     $('q').value = '#' + a.dataset.tag;
@@ -1017,7 +1037,7 @@ $('formNew').addEventListener('submit', async (e) => {
 
 // ---------------------------------------------------------------- 設定
 
-async function openSettings() {
+async function openSettings(focus) {
   $('redirectUri').textContent = Auth.redirectUri();
   $('setClient').value = await Auth.clientId();
   $('setTenant').value = (await DB.setting('tenant')) || 'common';
@@ -1028,6 +1048,7 @@ async function openSettings() {
   await refreshLockState();
   await refreshModeState();
   $('dlgSettings').showModal();
+  if (typeof focus === 'string' && $(focus)) $(focus).scrollIntoView({ block: 'start' });
 }
 
 async function refreshLockState() {
@@ -1102,18 +1123,51 @@ async function pickFolder() {
 
 async function refreshModeState() {
   const folder = G.isFolder();
+  const github = G.isGithub();
   const name = await G.folder.folderName();
   $('modeState').innerHTML = folder
     ? 'いまは <b>PC のフォルダ</b>「' + esc(name || '（未選択）') + '」を直接読み書きしています。'
-    : 'いまは <b>OneDrive</b>（Microsoft でサインイン）につないでいます。';
+    : github
+      ? 'いまは <b>GitHub</b>「' + esc(G.github.label()) + '」につないでいます（pomenote と同じ）。' + (G.github.configured() ? '' : '<b>トークンがまだです。</b>')
+      : 'いまは <b>OneDrive</b>（Microsoft でサインイン）につないでいます。';
   $('btnPickFolder').hidden = !G.folder.supported();
   $('btnPickFolder').textContent = folder ? '別のフォルダを選ぶ' : 'PC のフォルダを選ぶ';
-  $('btnUseOneDrive').hidden = !folder;
+  $('btnUseOneDrive').hidden = G.getMode() === 'onedrive';
   $('folderHint').hidden = !G.folder.supported();
-  $('secMs').hidden = folder;
-  $('secVault').hidden = folder;
+  $('secMs').hidden = G.getMode() !== 'onedrive';
+  $('secVault').hidden = G.getMode() !== 'onedrive';
   $('secOffline').hidden = folder; // PC の中なので電波に関係なく読める
+  const g = (await DB.setting('github')) || {};
+  $('ghOwner').value = g.owner || GITHUB.owner;
+  $('ghRepo').value = g.repo || GITHUB.repo;
+  $('ghRoot').value = g.root ?? GITHUB.root;
+  $('ghToken').value = '';
+  $('ghToken').placeholder = (await DB.setting('ghToken')) ? '入れてあります（変えるときだけ入れる）' : 'github_pat_…';
 }
+
+// GitHub につなぐ：トークンを確かめてから切り替える
+$('btnGithub').addEventListener('click', async () => {
+  const g = { owner: $('ghOwner').value.trim(), repo: $('ghRepo').value.trim(), root: V.normVault($('ghRoot').value) || '', branch: GITHUB.branch };
+  const token = $('ghToken').value.trim() || (await DB.setting('ghToken')) || '';
+  const info = $('ghInfo');
+  if (!g.owner || !g.repo || !token) { info.textContent = 'ユーザー名・リポジトリ・トークンを入れてください'; return; }
+  info.textContent = '確かめています…';
+  G.github.configure({ ...g, token });
+  try {
+    const r = await G.github.test();
+    if (!r.ok) { info.textContent = r.warn; return; }
+    await DB.setting('github', g);
+    await DB.setting('ghToken', token);
+    info.textContent = r.warn || 'つながりました';
+    $('dlgSettings').close();
+    toast('GitHub「' + G.github.label() + '」につなぎました');
+    banner('');
+    await switchMode('github');
+  } catch (e) {
+    info.textContent = e.message;
+    await loadGithub(); // 失敗したら元の設定に戻す
+  }
+});
 $('btnPickFolder').addEventListener('click', pickFolder);
 $('btnUseOneDrive').addEventListener('click', async () => { $('dlgSettings').close(); await switchMode('onedrive'); });
 
@@ -1157,6 +1211,7 @@ $('btnSaveSettings').addEventListener('click', async () => {
 $('btnSignIn').addEventListener('click', async () => {
   await storeSettings();
   if (!(await Auth.clientId())) { toast('先にクライアント ID を入れてください'); return; }
+  await DB.setting('mode', 'onedrive'); // サインインしたら OneDrive につなぐ方にする
   Auth.signIn().catch((e) => toast(e.message));
 });
 $('btnSignOut').addEventListener('click', async () => {
@@ -1296,7 +1351,7 @@ function recheck() {
   // 戻ってきた。PC 側（Obsidian）で書き換えられているかもしれないので確かめる
   if (!L.unlocked() || Date.now() - lastCheck < 1500) return;
   lastCheck = Date.now();
-  if (Date.now() - lastTreeAt > (G.isFolder() ? 60 * 1000 : 5 * 60 * 1000)) refreshTree();
+  if (Date.now() - lastTreeAt > (G.isFolder() ? 60 * 1000 : G.isGithub() ? 2 * 60 * 1000 : 5 * 60 * 1000)) refreshTree();
   if (cur && !cur.dirty && cur.loaded && V.get(cur.path)) {
     const note = cur;
     G.meta(V.get(note.path).id).then(async (m) => {
@@ -1306,7 +1361,7 @@ function recheck() {
       Object.assign(note, { text: r.text, baseETag: r.eTag });
       await DB.put('files', { path: note.path, text: r.text, eTag: r.eTag, at: Date.now() });
       show(note, '', true);
-      toast(G.isFolder() ? 'Obsidian 側の変更を読み込みました' : 'OneDrive の新しい版を読み込みました');
+      toast(G.isFolder() ? 'Obsidian 側の変更を読み込みました' : G.isGithub() ? 'ほかの端末での変更を読み込みました' : 'OneDrive の新しい版を読み込みました');
     }).catch(() => {});
   }
 }
@@ -1394,7 +1449,9 @@ async function start() {
   const saved = await DB.setting('vault');
   vault = saved !== undefined ? saved : V.normVault(VAULT);
   G.setVault(vault);
-  G.setMode((await DB.setting('mode')) || 'onedrive');
+  // 何も選んでいない端末は GitHub（pomenote と同じ）から始める
+  G.setMode((await DB.setting('mode')) || 'github');
+  await loadGithub();
   const tree = await DB.setting('tree');
   if (tree) V.load(tree);
   renderTree();
@@ -1402,6 +1459,11 @@ async function start() {
 
   route();
 
+  // GitHub：トークンがあればそのまま読む
+  if (G.isGithub()) {
+    if (G.github.configured()) refreshTree();
+    return;
+  }
   // PC のフォルダにつなぐとき：サインインは要らない。許可が残っていればそのまま読む
   if (G.isFolder()) {
     if (await G.folder.connect(false)) refreshTree();

@@ -400,3 +400,6 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 }
 .side-foot .btn + .btn { margin-left: 6px; }
 .side-foot span { flex: 1; }
+
+.dlg .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.dlg section a { color: var(--link); }

@@ -8,3 +8,7 @@ export const CLIENT_ID = '';
 //  ・PC のフォルダを直接開くとき：OneDrive フォルダそのものを選んでも、中のこのフォルダを使う
 // OneDrive の一番上（C:\Users\A.H\OneDrive）を書くと、中から .obsidian のあるフォルダを自動で探す。
 export const VAULT = 'C:\\Users\\A.H\\OneDrive\\Obsidian';
+
+// GitHub につなぐとき（pomenote と同じ非公開リポジトリ）。トークンは秘密なのでここには書かず、各端末の設定画面で入れる。
+// root：リポジトリの中の保管庫の場所（リポジトリの一番上 ＝ OneDrive の一番上）。
+export const GITHUB = { owner: 'aji-daze', repo: 'pomera-data', branch: 'main', root: 'Obsidian' };
