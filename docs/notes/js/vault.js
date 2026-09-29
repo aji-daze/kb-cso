@@ -102,3 +102,21 @@ export function tree() {
   });
   return fin(root);
 }
+
+// 保管庫の場所の入力を、OneDrive の一番上からのパスにする。
+//   'C:\\Users\\A.H\\OneDrive\\ドキュメント\\Obsidian' → 'Documents/Obsidian'
+//   'C:\\Users\\A.H\\OneDrive' や '/' → ''（一番上）
+//   空 → null（まだ決まっていない）
+// エクスプローラーは一部のフォルダ名を日本語で見せるが、OneDrive 上の本当の名前は英語なので戻す。
+const JA = { 'ドキュメント': 'Documents', 'デスクトップ': 'Desktop', 'ピクチャ': 'Pictures', '画像': 'Pictures', 'ミュージック': 'Music', 'ビデオ': 'Videos' };
+export function normVault(input) {
+  let s = String(input == null ? '' : input).trim().replace(/^["']|["']$/g, '').trim();
+  if (!s) return null;
+  s = s.replace(/\\/g, '/');
+  const m = /(?:^|\/)onedrive(?: - [^/]+)?(?:\/|$)/i.exec(s);
+  if (m) s = s.slice(m.index + m[0].length);
+  else if (/^[a-z]:\//i.test(s)) s = s.replace(/^[a-z]:\//i, ''); // OneDrive の外のパス。そのまま相対にする
+  s = s.split('/').filter(Boolean).map((seg, i) => (i === 0 && JA[seg]) || seg).join('/');
+  return s;
+}
+export const showVault = (v) => (v === null || v === undefined ? '' : v === '' ? '/' : v);

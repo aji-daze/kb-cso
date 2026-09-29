@@ -126,7 +126,38 @@
   <form method="dialog" class="dlg">
     <h2>設定</h2>
 
-    <section>
+    <section id="secMode">
+      <h3>つなぎ方</h3>
+      <p id="modeState"></p>
+      <p class="muted" id="folderHint">この PC（Chrome／Edge）なら、<b>C:\Users\A.H\OneDrive\Obsidian</b> を直接開けます。
+        Microsoft のサインインもアプリ登録も要りません（pomenote と同じ方式）。OneDrive フォルダそのものを選んでも、中の Obsidian を使います。
+        スマホ・タブレットは OneDrive につなぐ方で使います。</p>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnPickFolder">PC のフォルダを選ぶ</button>
+        <button type="button" class="btn" id="btnUseOneDrive">OneDrive（Microsoft）につなぐ方にする</button>
+      </div>
+    </section>
+
+    <section id="secGithub">
+      <h3>GitHub につなぐ（pomenote と同じ）</h3>
+      <p class="muted">pomenote（ポメラタブ）と同じ非公開リポジトリを読み書きする。PC の同期（pomera_sync）が OneDrive の Obsidian とそろえるので、
+        ここで書いたものは PC の Obsidian にも届く。スマホ・タブレット向け。トークンは pomenote で使っているものをそのまま使える
+        （fine-grained、pomera-data の <b>Contents: Read and write</b>）。トークンはこの端末の中でパスワードで暗号化して置く。</p>
+      <div class="row2">
+        <label>ユーザー名<input id="ghOwner" type="text" autocomplete="off" spellcheck="false"></label>
+        <label>リポジトリ<input id="ghRepo" type="text" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <label>保管庫の場所（リポジトリの中）<input id="ghRoot" type="text" autocomplete="off" spellcheck="false" placeholder="Obsidian"></label>
+      <label>トークン<input id="ghToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnGithub">GitHub につなぐ</button>
+        <span class="muted" id="ghInfo"></span>
+      </div>
+      <p class="muted"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">トークンを新しく作る</a>
+        ときは、Repository access を「Only select repositories → pomera-data」、Permissions の Contents を「Read and write」にする。</p>
+    </section>
+
+    <section id="secMs">
       <h3>1. Microsoft アカウント</h3>
       <details id="setupHelp">
         <summary>初回だけ：アプリの登録手順</summary>
@@ -153,10 +184,14 @@
       </div>
     </section>
 
-    <section>
+    <section id="secVault">
       <h3>2. 保管庫のフォルダ</h3>
-      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault"></label>
-      <div class="row"><button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button></div>
+      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault　または　C:\Users\A.H\OneDrive\…"></label>
+      <p class="muted">PC のエクスプローラーでコピーしたパス（C:\Users\…\OneDrive\…）をそのまま貼ってもよい。「/」は OneDrive の一番上。</p>
+      <div class="row">
+        <button type="button" class="btn" id="btnFind">保管庫を自動で探す</button>
+        <button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button>
+      </div>
       <div class="picker" id="picker" hidden></div>
     </section>
 
@@ -179,7 +214,7 @@
       </div>
     </section>
 
-    <section>
+    <section id="secOffline">
       <h3>3. 電波がないとき用</h3>
       <p class="muted">全ノートの本文をこの端末に控えておくと、電波がなくても読めて、本文検索も速くなる。変わったものだけ取り直す。</p>
       <div class="row">
