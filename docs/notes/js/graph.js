@@ -140,3 +140,23 @@ export async function search(q) {
   const j = await call("/me/drive/root/search(q='" + encodeURIComponent(q.replace(/'/g, "''")) + "')?$top=100&$select=id,name");
   return (j.value || []).map((it) => it.id);
 }
+
+// OneDrive の中から Obsidian の保管庫（.obsidian を持つフォルダ）を探す。
+// 浅いところから順に、最大 depth 段・max 回まで問い合わせる。返すのは OneDrive の一番上からのパスの配列。
+export async function findVaults(from = '', depth = 3, max = 120) {
+  const found = [];
+  let level = [from];
+  let calls = 0;
+  for (let d = 0; d <= depth && level.length; d++) {
+    const next = [];
+    for (const path of level) {
+      if (calls++ >= max) return found;
+      let kids;
+      try { kids = await children(path); } catch (e) { if (e instanceof NeedSignIn) throw e; continue; }
+      if (kids.some((k) => k.isFolder && k.name === '.obsidian')) { found.push(path); continue; } // 保管庫の中はそれ以上探さない
+      for (const k of kids) if (k.isFolder && !k.name.startsWith('.')) next.push(path ? path + '/' + k.name : k.name);
+    }
+    level = next;
+  }
+  return found;
+}

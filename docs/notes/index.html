@@ -155,8 +155,12 @@
 
     <section>
       <h3>2. 保管庫のフォルダ</h3>
-      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault"></label>
-      <div class="row"><button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button></div>
+      <label>OneDrive の中のパス<input id="setVault" type="text" autocomplete="off" spellcheck="false" placeholder="例: Documents/Obsidian/MyVault　または　C:\Users\A.H\OneDrive\…"></label>
+      <p class="muted">PC のエクスプローラーでコピーしたパス（C:\Users\…\OneDrive\…）をそのまま貼ってもよい。「/」は OneDrive の一番上。</p>
+      <div class="row">
+        <button type="button" class="btn" id="btnFind">保管庫を自動で探す</button>
+        <button type="button" class="btn" id="btnPick">OneDrive から選ぶ</button>
+      </div>
       <div class="picker" id="picker" hidden></div>
     </section>
 

@@ -13,11 +13,13 @@ import * as V from './vault.js';
 import * as R from './render.js';
 import * as RD from './reader.js';
 import { createEditor } from '../vendor/editor.js';
+import { VAULT } from '../config.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let vault = '';          // OneDrive の一番上からの保管庫のパス
+let vault = null;        // OneDrive の一番上からの保管庫のパス。'' は一番上、null はまだ決まっていない
+const full = (rel) => (vault ? vault + '/' : '') + rel;
 let cur = null;          // いま開いているノート { path, text, baseETag, dirty, mode, conflict }
 let lastTreeAt = 0;
 let pushTimer = 0;
@@ -143,7 +145,7 @@ function renderTree() {
     }
     return h;
   };
-  $('tree').innerHTML = node(t, 0) || '<p class="muted pad">' + (vault ? 'ノートがありません' : '保管庫がまだ選ばれていません') + '</p>';
+  $('tree').innerHTML = node(t, 0) || '<p class="muted pad">' + (vault !== null ? 'ノートがありません' : '保管庫がまだ選ばれていません') + '</p>';
   $('tree').scrollTop = y;
   const on = $('tree').querySelector('.file.on');
   if (on) {
@@ -166,7 +168,7 @@ function refreshTree() {
   return treeJob;
 }
 async function loadTree() {
-  if (!vault || !(await Auth.signedIn())) return;
+  if (vault === null || !(await Auth.signedIn())) return;
   $('treeInfo').textContent = '読み込み中…';
   try {
     const list = await G.walk(vault, (n) => { $('treeInfo').textContent = '読み込み中… ' + n; });
@@ -179,7 +181,7 @@ async function loadTree() {
     pushDrafts();
   } catch (e) {
     renderTree();
-    if (e instanceof G.NotFound) toast('保管庫のフォルダが見つかりません：' + vault);
+    if (e instanceof G.NotFound) toast('保管庫のフォルダが見つかりません：' + V.showVault(vault) + '。設定の「OneDrive から選ぶ」で選び直してください');
     else fail(e);
   }
 }
@@ -315,7 +317,7 @@ async function showHome() {
 
   const drafts = await DB.all('drafts');
   let h = '';
-  if (!vault || !(await Auth.clientId())) {
+  if (vault === null || !(await Auth.clientId())) {
     h += '<div class="card"><h2>はじめに</h2><p>右上の ⚙ から、Microsoft アカウントでサインインして、Obsidian の保管庫のフォルダを選んでください。</p>' +
       '<button class="btn primary" data-act="settings">設定を開く</button></div>';
   }
@@ -681,7 +683,7 @@ $('cfBoth').addEventListener('click', async () => {
   const dir = V.dirName(note.path);
   const rel = (dir ? dir + '/' : '') + V.title(note.path) + ' (競合 ' + stamp() + ').md';
   try {
-    const it = await G.createText(vault + '/' + rel, note.text);
+    const it = await G.createText(full(rel), note.text);
     V.upsert({ ...it, path: rel });
     await DB.put('files', { path: rel, text: note.text, eTag: it.eTag, at: Date.now() });
     await saveTree();
@@ -951,10 +953,10 @@ let shared = '';
 let sharedTitle = '';   // ほかのアプリから「共有」で受け取った文字。次に作るノートの中身にする
 
 async function doCreate(path) {
-  if (!vault) return openSettings();
+  if (vault === null) return openSettings();
   const body = shared;
   try {
-    const it = await G.createText(vault + '/' + path, body);
+    const it = await G.createText(full(path), body);
     shared = '';
     V.upsert({ ...it, path });
     await DB.put('files', { path, text: body, eTag: it.eTag, at: Date.now() });
@@ -997,7 +999,7 @@ async function openSettings() {
   $('redirectUri').textContent = Auth.redirectUri();
   $('setClient').value = await Auth.clientId();
   $('setTenant').value = (await DB.setting('tenant')) || 'common';
-  $('setVault').value = vault;
+  $('setVault').value = V.showVault(vault);
   $('setupHelp').open = !$('setClient').value;
   $('picker').hidden = true;
   await refreshSignState();
@@ -1053,16 +1055,18 @@ async function refreshSignState() {
   $('btnSignIn').hidden = on;
   $('btnSignOut').hidden = !on;
   $('btnPick').disabled = !on;
+  $('btnFind').disabled = !on;
   $('btnPrefetch').disabled = !on;
 }
 
 async function storeSettings() {
   await DB.setting('clientId', $('setClient').value.trim() || null);
   await DB.setting('tenant', $('setTenant').value);
-  const v = $('setVault').value.trim().replace(/^\/+|\/+$/g, '');
+  const v = V.normVault($('setVault').value);
   if (v !== vault) {
     vault = v;
     await DB.setting('vault', v);
+    await DB.setting('vaultResolved', true); // 自分で決めた場所は、自動で探し直さない
     V.load([]);
     await DB.setting('tree', null);
     renderTree();
@@ -1109,13 +1113,55 @@ async function pick(path) {
       if (!b) return;
       if (b.dataset.up) pick(V.dirName(path));
       else if (b.dataset.dir) pick(b.dataset.dir);
-      else if (b.dataset.here) { $('setVault').value = path; box.hidden = true; }
+      else if (b.dataset.here) { $('setVault').value = V.showVault(path); box.hidden = true; }
     };
   } catch (e) {
     box.innerHTML = '<p class="err">' + esc(e.message) + '</p>';
   }
 }
-$('btnPick').addEventListener('click', () => pick($('setVault').value.trim().replace(/^\/+|\/+$/g, '')).catch(fail));
+$('btnPick').addEventListener('click', () => pick(V.normVault($('setVault').value) || '').catch(fail));
+
+// OneDrive の中から Obsidian の保管庫を探して並べる
+async function findAndOffer(from) {
+  const box = $('picker');
+  box.hidden = false;
+  box.innerHTML = '<p class="muted">Obsidian の保管庫を探しています…（フォルダが多いと少しかかる）</p>';
+  const found = await G.findVaults(from || '');
+  if (!found.length) {
+    box.innerHTML = '<p>' + esc(V.showVault(from || '')) + ' の中に Obsidian の保管庫（.obsidian フォルダ）が見つかりませんでした。「OneDrive から選ぶ」で直接選んでください。</p>';
+    return found;
+  }
+  box.innerHTML = '<div class="picker-head"><b>見つかった保管庫</b></div>' +
+    found.map((f) => '<button type="button" class="pick-row" data-vault="' + esc(f) + '">📓 ' + esc(V.showVault(f)) + '</button>').join('');
+  box.onclick = (e) => {
+    const b = e.target.closest('button[data-vault]');
+    if (!b) return;
+    $('setVault').value = V.showVault(b.dataset.vault);
+    box.hidden = true;
+  };
+  return found;
+}
+$('btnFind').addEventListener('click', () => findAndOffer(V.normVault($('setVault').value) || '').catch(fail));
+
+// 保管庫が「OneDrive の一番上」のときは、その中の本当の保管庫を探してつなぎ直す（最初の 1 回）
+async function resolveRootVault() {
+  if (vault !== '' || (await DB.setting('vaultResolved'))) return;
+  const top = await G.children('');
+  if (top.some((k) => k.isFolder && k.name === '.obsidian')) { await DB.setting('vaultResolved', true); return; }
+  const found = await G.findVaults('');
+  await DB.setting('vaultResolved', true);
+  if (found.length === 1) {
+    vault = found[0];
+    await DB.setting('vault', vault);
+    toast('保管庫「' + V.showVault(vault) + '」につなぎました（⚙ で変えられます）');
+  } else if (found.length > 1) {
+    await openSettings();
+    await findAndOffer('');
+    toast('保管庫が ' + found.length + ' つ見つかりました。使うものを選んで「保存して閉じる」');
+  } else {
+    toast('Obsidian の保管庫が見つからないので、OneDrive の一番上を表示します（⚙ で変えられます）');
+  }
+}
 
 // 全ノートの本文を端末に控える。版（eTag）が同じものは取り直さない。
 $('btnPrefetch').addEventListener('click', async () => {
@@ -1266,7 +1312,8 @@ async function start() {
   if (back && !back.ok && !back.silent) toast('サインインできませんでした：' + back.message);
   receiveShare();
 
-  vault = (await DB.setting('vault')) || '';
+  const saved = await DB.setting('vault');
+  vault = saved !== undefined ? saved : V.normVault(VAULT);
   const tree = await DB.setting('tree');
   if (tree) V.load(tree);
   renderTree();
@@ -1275,8 +1322,8 @@ async function start() {
   route();
 
   const signed = await Auth.signedIn();
-  if (!signed || !vault) {
-    if (back && back.ok && !vault) openSettings();
+  if (!signed || vault === null) {
+    if (back && back.ok && vault === null) openSettings();
     return;
   }
   // 一覧を取り直す前に更新用トークンが生きているか確かめる。切れていれば案内だけ出す
@@ -1288,6 +1335,7 @@ async function start() {
       return needSignIn();
     }
   } catch { return; } // 電波がない。控えで動く
+  try { await resolveRootVault(); } catch (e) { fail(e); }
   refreshTree();
 }
 
