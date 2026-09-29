@@ -304,7 +304,7 @@ addEventListener('resize',function(){var p=ed.querySelectorAll('.t,.cw');for(var
 function nid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function get(id){try{return JSON.parse(LS.getItem(P+id))}catch(e){return null}}
 // 書き込みは必ず setM / rmM を通す。変更したメモの ID を送信待ち（memo.q）に残し、
-// オフラインの間もたまっていく。Google ドライブ同期（sync.js）がこれを見て送る。
+// オフラインの間もたまっていく。GitHub 同期（sync.js）がこれを見て送る。
 var Q='memo.q';
 function getQ(){var q=null;try{q=JSON.parse(LS.getItem(Q))}catch(e){}q=q||{};q.dirty=q.dirty||{};q.del=q.del||{};return q}
 function mark(id,gone){var q=getQ();if(gone){q.del[id]=1;delete q.dirty[id]}else{q.dirty[id]=1;delete q.del[id]}LS.setItem(Q,JSON.stringify(q));if(window.MemoSync)MemoSync.kick()}
@@ -486,14 +486,14 @@ if('launchQueue' in window)launchQueue.setConsumer(function(p){
   });
 });
 
-// ---- Google ドライブ同期 ----
+// ---- GitHub 同期 ----
 // 同期の処理は sync.js にある。設定済みのときだけ、描画が終わってから読む（起動の速さに影響させない）。
 window.MEMO={
   P:P,get:get,all:all,nid:nid,getQ:getQ,setM:setM,save:save,toast:toast,fmt:fmt,sy:$('sy'),
-  putRaw:function(id,m){LS.setItem(P+id,JSON.stringify(m))},     // ドライブから取り込んだ分（送信待ちにしない）
+  putRaw:function(id,m){LS.setItem(P+id,JSON.stringify(m))},     // GitHub から取り込んだ分（送信待ちにしない）
   rmRaw:function(id){LS.removeItem(P+id)},
   unq:function(id,kind){var q=getQ();delete q[kind][id];LS.setItem(Q,JSON.stringify(q))},
-  // ドライブ側の変更を画面に反映する。開いているメモは、こちらで書きかけでなければ読み直す
+  // GitHub 側の変更を画面に反映する。開いているメモは、こちらで書きかけでなければ読み直す
   remote:function(id){
     if(id===cur&&getText()===saved){var m=get(id);if(!m){cur=null;curU=0;load('')}else{curU=m.u;load(m.t)}status()}
     if(dr.className)render();
@@ -506,9 +506,7 @@ function loadSync(cb){
 }
 $('bY').onclick=function(){loadSync(function(){MemoSync.panel()})};
 $('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
-if(LS.getItem('memo.s')||/[#&](access_token|error)=/.test(location.hash)){
-  if(location.hash)loadSync();else addEventListener('load',function(){setTimeout(loadSync,300)});
-}
+if(LS.getItem('memo.s'))addEventListener('load',function(){setTimeout(loadSync,300)});
 
 // Service Worker は描画が終わってから。起動の邪魔をしない。
 if('serviceWorker' in navigator)addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});

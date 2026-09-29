@@ -1,129 +1,71 @@
-// Google ドライブ同期。設定したときだけ index.html が読み込む。
+// GitHub 同期。設定したときだけ index.html が読み込む。
 //
-// 正本は端末（localStorage）。ドライブは「マイドライブ / MEMO」に1件1ファイルの .md で置く。
+// 正本は端末（localStorage）。GitHub の非公開リポジトリに memos/<ID>.md として1件1ファイルで置く。
 // 書くたびに index.html が送信待ち（memo.q）に ID を残すので、オフラインの間はそこにたまり、
-// つながったらまとめて送る。権限は drive.file（このアプリが作ったファイルだけ）。
+// つながったらまとめて送る。
 //
-// ログインは Google の画面へ移って戻ってくる方式（ポップアップを使わない）。
-// ホーム画面に追加した iPhone のアプリでもポップアップは戻ってこないことがあるため。
-// サーバーを持たないので許可は1時間で切れる。切れたらバーの「再ログイン」を押す。
-// 書くことと端末への保存は、ログインが切れていても止まらない。
+// 鍵は GitHub の fine-grained personal access token。対象をこのリポジトリだけ、権限を
+// Contents の読み書きだけに絞ってもらう。公開リポジトリは指定されても使わない。
 (function () {
   'use strict';
   var M = window.MEMO, LS = localStorage;
-  var API = 'https://www.googleapis.com/drive/v3/';
-  var UP = 'https://www.googleapis.com/upload/drive/v3/files';
-  var SCOPE = 'https://www.googleapis.com/auth/drive.file';
-  var FOLDER = 'application/vnd.google-apps.folder';
-  var SK = 'memo.s', TK = 'memo.tok', STK = 'memo.st';
+  var API = 'https://api.github.com/repos/';
+  var DIR = 'memos/';
+  var SK = 'memo.s', TK = 'memo.ghtok';
 
-  // S = { cid: クライアントID, folder: MEMO フォルダの ID, map: { メモID: { f: ファイルID, v: 最後に揃えたときの版 } }, last: 最終同期 }
+  // S = { repo: 'owner/name', map: { メモID: { v: 最後に揃えたときの blob sha } }, last: 最終同期 }
   function loadS() { try { return JSON.parse(LS.getItem(SK)); } catch (e) { return null; } }
   var S = loadS();
   function saveS() { if (S) LS.setItem(SK, JSON.stringify(S)); }
-  function tok() { try { var t = JSON.parse(LS.getItem(TK)); return t && t.exp > Date.now() ? t.t : null; } catch (e) { return null; } }
+  function tok() { return LS.getItem(TK) || ''; }
 
-  var running = false, again = false, kT = 0, err = '';
+  var running = false, again = false, kT = 0, err = '', bad = false;
 
-  // ---- ログイン（Google の画面から戻ってきたとき） ----
-  (function () {
-    var h = location.hash;
-    if (!/[#&](access_token|error)=/.test(h)) return;
-    var p = new URLSearchParams(h.slice(1)), st = LS.getItem(STK);
-    history.replaceState(null, '', location.pathname + location.search);
-    LS.removeItem(STK);
-    if (!st || p.get('state') !== st) { M.toast('ログインの応答を確かめられませんでした。もう一度試してください'); return; }
-    if (p.get('error')) { M.toast(p.get('error') === 'access_denied' ? 'ログインを取り消しました' : 'ログインできませんでした: ' + p.get('error')); return; }
-    LS.setItem(TK, JSON.stringify({ t: p.get('access_token'), exp: Date.now() + (Number(p.get('expires_in') || 3600) - 60) * 1000 }));
-    M.toast('Google ドライブにつながりました');
-  })();
-
-  function login() {
-    if (!S || !S.cid) { panel(); return; }
-    M.save();
-    var st = Math.random().toString(36).slice(2) + Date.now().toString(36);
-    LS.setItem(STK, st);
-    var u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    u.searchParams.set('client_id', S.cid);
-    u.searchParams.set('redirect_uri', redirect());
-    u.searchParams.set('response_type', 'token');
-    u.searchParams.set('scope', SCOPE);
-    u.searchParams.set('include_granted_scopes', 'true');
-    u.searchParams.set('state', st);
-    if (S.hint) u.searchParams.set('login_hint', S.hint);
-    location.assign(u.toString());
-  }
-  function redirect() { return location.origin + location.pathname; }
-
-  // ---- ドライブ API ----
+  // ---- GitHub API ----
   function E(msg, status) { var e = new Error(msg); e.status = status; return e; }
-  function req(url, opt) {
-    var t = tok();
-    if (!t) return Promise.reject(E('auth', 401));
+  function gh(path, opt, repo) {
     opt = opt || {};
-    opt.headers = Object.assign({ Authorization: 'Bearer ' + t }, opt.headers || {});
-    return fetch(url, opt).then(function (r) {
-      if (r.status === 401) { LS.removeItem(TK); throw E('auth', 401); }
-      if (!r.ok) return r.text().then(function (b) { throw E('Drive ' + r.status + ' ' + b.slice(0, 200), r.status); });
-      return r;
+    opt.headers = Object.assign({ Authorization: 'Bearer ' + tok(), Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, opt.headers || {});
+    opt.cache = 'no-store';
+    return fetch(API + (repo || S.repo) + path, opt).then(function (r) {
+      if (r.status === 401) { bad = true; throw E('トークンが無効です（期限切れか、取り消された）', 401); }
+      if (!r.ok) return r.text().then(function (b) { var m = ''; try { m = JSON.parse(b).message; } catch (e) { m = b.slice(0, 120); } throw E('GitHub ' + r.status + ' ' + m, r.status); });
+      return r.status === 204 ? null : r.json();
     });
   }
-  function json(url, opt) { return req(url, opt).then(function (r) { return r.json(); }); }
-  function qs(o) { return Object.keys(o).map(function (k) { return k + '=' + encodeURIComponent(o[k]); }).join('&'); }
-
-  // メモ本文と情報を1回で送る（multipart）
-  function upload(fileId, meta, text) {
-    var b = 'memo' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    var body = '--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) +
-      '\r\n--' + b + '\r\nContent-Type: text/markdown; charset=UTF-8\r\n\r\n' + text + '\r\n--' + b + '--';
-    var url = UP + (fileId ? '/' + fileId : '') + '?uploadType=multipart&fields=id,version';
-    return json(url, { method: fileId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body: body });
+  // UTF-8 と base64
+  function bytes(t) { return new TextEncoder().encode(t); }
+  function b64(t) { var b = bytes(t), s = ''; for (var i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
+  function unb64(x) { var s = atob(x.replace(/\s/g, '')), b = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return new TextDecoder().decode(b); }
+  // git の blob sha を手元で計算する。中身が同じなら送らない・競合と見なさないために使う
+  function gitSha(t) {
+    var body = bytes(t), head = bytes('blob ' + body.length + '\0'), all = new Uint8Array(head.length + body.length);
+    all.set(head); all.set(body, head.length);
+    return crypto.subtle.digest('SHA-1', all).then(function (h) { return Array.prototype.map.call(new Uint8Array(h), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); });
   }
-
-  // ドライブ上のファイル名。1行目を題名にする（記号とファイル名に使えない文字は除く）
-  function fname(t) {
-    var l = t.replace(/<\/?u>/g, '').split('\n').map(function (x) { return x.replace(/^```.*$/, '').trim(); }).filter(Boolean)[0] || 'memo';
-    return l.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 40).trim() + '.md';
+  function title(t) {
+    return (t.replace(/<\/?u>/g, '').split('\n').map(function (x) { return x.replace(/^```.*$/, '').trim(); }).filter(Boolean)[0] || 'memo').slice(0, 60);
   }
-
-  function ensureFolder() {
-    var p = S.folder
-      ? json(API + 'files/' + S.folder + '?fields=id,trashed').then(function (f) { return f.trashed ? null : f.id; }, function (e) { if (e.status === 404) return null; throw e; })
-      : Promise.resolve(null);
-    return p.then(function (id) {
-      if (id) return id;
-      // フォルダが無い（初回、またはドライブで消された）: 作り直して全件を送り直す
-      if (S.folder) { S.map = {}; M.all().forEach(function (m) { markDirty(m.id); }); }
-      var q = "name='MEMO' and mimeType='" + FOLDER + "' and trashed=false and 'root' in parents";
-      return json(API + 'files?' + qs({ q: q, fields: 'files(id)', spaces: 'drive' })).then(function (r) {
-        if (r.files && r.files.length) return r.files[0].id;
-        return json(API + 'files?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'MEMO', mimeType: FOLDER }) }).then(function (f) { return f.id; });
-      });
-    }).then(function (id) { S.folder = id; saveS(); });
-  }
+  // メモの ID は作成時刻（36進）+ 乱数4文字。そこから作成日時を戻す
+  function born(id) { var n = parseInt(id.slice(0, -4), 36); return n > 1.5e12 && n < 4.1e12 ? n : Date.now(); }
+  function path(id) { return '/contents/' + DIR + encodeURIComponent(id) + '.md'; }
 
   function listRemote() {
-    var out = [];
-    function page(tokn) {
-      var o = { q: "'" + S.folder + "' in parents and trashed=false", fields: 'nextPageToken,files(id,version,modifiedTime,appProperties)', pageSize: 1000, spaces: 'drive' };
-      if (tokn) o.pageToken = tokn;
-      return json(API + 'files?' + qs(o)).then(function (r) {
-        out = out.concat(r.files || []);
-        return r.nextPageToken ? page(r.nextPageToken) : out;
-      });
-    }
-    return page();
+    return gh('/git/trees/HEAD?recursive=1').then(function (r) {
+      return (r.tree || []).filter(function (x) { return x.type === 'blob' && x.path.indexOf(DIR) === 0 && /\.md$/.test(x.path) && x.path.indexOf('/', DIR.length) < 0; })
+        .map(function (x) { return { id: decodeURIComponent(x.path.slice(DIR.length, -3)), sha: x.sha }; });
+    }, function (e) { if (e.status === 409) return []; throw e; });   // 409 = まだ空のリポジトリ
   }
 
   function markDirty(id) { var q = M.getQ(); q.dirty[id] = 1; LS.setItem('memo.q', JSON.stringify(q)); }
 
-  // ---- 同期本体: 先にドライブの変更を取り込み、次にたまった変更を送る ----
+  // ---- 同期本体: 先に GitHub の変更を取り込み、次にたまった変更を送る ----
   function run() {
     clearTimeout(kT);
-    if (!S || !S.cid) return Promise.resolve();
+    if (!S || !S.repo) return Promise.resolve();
     if (running) { again = true; return Promise.resolve(); }
-    if (!navigator.onLine || !tok()) { ui(); return Promise.resolve(); }
-    // 複数のタブで同時に走らせない（同じメモが二重に作られるのを防ぐ）
+    if (!navigator.onLine || !tok() || bad) { ui(); return Promise.resolve(); }
+    // 複数のタブで同時に走らせない
     if (navigator.locks) return navigator.locks.request('memo-sync', { ifAvailable: true }, function (l) { return l ? body() : null; });
     return body();
   }
@@ -132,67 +74,70 @@
     running = true; ui();
     M.save();   // 書きかけを先に保存して送信待ちに入れる（取り込みで上書きしないため）
     var changed = [], conflicts = 0, now = Date.now();
-    return ensureFolder().then(listRemote).then(function (files) {
-      var q = M.getQ(), seen = {}, byFile = {};
-      Object.keys(S.map).forEach(function (id) { byFile[S.map[id].f] = id; });
-      // 取り込み（1件ずつ順番に）
+    return listRemote().then(function (files) {
+      var q = M.getQ(), seen = {};
       return files.reduce(function (p, f) {
         return p.then(function () {
-          var id = (f.appProperties && f.appProperties.memoId) || byFile[f.id];
-          if (!id) return;
-          seen[id] = 1;
+          var id = f.id; seen[id] = 1;
           var e = S.map[id];
-          if (e && e.f !== f.id) return;                 // 同じメモの二重ファイル。手元が指している方を正とする
-          if (e && e.v === f.version) return;            // 変わっていない
+          if (e && e.v === f.sha) return;               // 変わっていない
           if (q.del[id]) return;                         // 手元で消した。送る段で消す
-          return req(API + 'files/' + f.id + '?alt=media').then(function (r) { return r.text(); }).then(function (text) {
-            var local = M.get(id), ru = Date.parse(f.modifiedTime) || now;
-            if (q.dirty[id] && local) {
-              // 両方で変わった: 手元の版はそのまま送る。ドライブの版は別のメモとして残す
-              if (local.t !== text) { M.setM(M.nid(), { t: '（競合: 別の端末の版）\n' + text, c: now, u: ru }); conflicts++; }
-            } else if (!local || local.t !== text) {
-              M.putRaw(id, { t: text, c: Number(f.appProperties && f.appProperties.c) || ru, u: ru });
-              changed.push(id);
-            }
-            S.map[id] = { f: f.id, v: f.version };
+          var local = M.get(id);
+          return (local ? gitSha(local.t) : Promise.resolve('')).then(function (ls) {
+            if (ls === f.sha) { S.map[id] = { v: f.sha }; return; }   // 中身は同じ
+            return gh('/git/blobs/' + f.sha).then(function (b) {
+              var text = unb64(b.content);
+              if (q.dirty[id] && local) {
+                // 両方で変わった: 手元の版はそのまま送る。GitHub の版は別のメモとして残す
+                M.setM(M.nid(), { t: '（競合: 別の端末の版）\n' + text, c: now, u: now }); conflicts++;
+              } else {
+                M.putRaw(id, { t: text, c: local ? local.c : born(id), u: now });
+                changed.push(id);
+              }
+              S.map[id] = { v: f.sha };
+            });
           });
         });
       }, Promise.resolve()).then(function () {
-        // ドライブで消された（ゴミ箱に入れられた）メモ
+        // GitHub で消されたメモ
         Object.keys(S.map).forEach(function (id) {
           if (seen[id]) return;
           if (!q.dirty[id] && !q.del[id] && M.get(id)) { M.rmRaw(id); changed.push(id); }
-          delete S.map[id];                               // 手元で書き換えていれば、送る段で新しいファイルとして作り直す
+          delete S.map[id];                               // 手元で書き換えていれば、送る段で作り直す
         });
         saveS();
       });
     }).then(function () {
-      // 送信（削除 → 更新・作成）
       var q = M.getQ();
-      var dels = Object.keys(q.del), dirty = Object.keys(q.dirty);
-      var p = dels.reduce(function (p, id) {
+      var p = Object.keys(q.del).reduce(function (p, id) {
         return p.then(function () {
           var e = S.map[id];
-          var go = e ? req(API + 'files/' + e.f, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) })
-            .catch(function (x) { if (x.status !== 404) throw x; }) : Promise.resolve();
-          return go.then(function () { delete S.map[id]; saveS(); M.unq(id, 'del'); });
+          if (!e) { M.unq(id, 'del'); return; }
+          return gh(path(id), { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: '削除', sha: e.v }) })
+            .then(function () { delete S.map[id]; saveS(); M.unq(id, 'del'); }, function (x) {
+              if (x.status === 404) { delete S.map[id]; saveS(); M.unq(id, 'del'); return; }
+              if (x.status === 409 || x.status === 422) { again = true; return; }   // 取り込んだ後に向こうで変わった。次の回に
+              throw x;
+            });
         });
       }, Promise.resolve());
-      return dirty.reduce(function (p, id) {
+      return Object.keys(q.dirty).reduce(function (p, id) {
         return p.then(function () {
           var m = M.get(id);
           if (!m) { M.unq(id, 'dirty'); return; }
           var e = S.map[id];
-          var meta = { name: fname(m.t), modifiedTime: new Date(m.u).toISOString(), appProperties: { memoId: id, c: String(m.c) } };
-          var put = e ? upload(e.f, meta, m.t).catch(function (x) { if (x.status === 404) return null; throw x; }) : Promise.resolve(null);
-          return put.then(function (r) {
-            if (r) return r;
-            meta.parents = [S.folder]; meta.mimeType = 'text/markdown';
-            return upload(null, meta, m.t);
-          }).then(function (r) {
-            S.map[id] = { f: r.id, v: r.version }; saveS();
-            var m2 = M.get(id);
-            if (!m2 || m2.u === m.u) M.unq(id, 'dirty');   // 送っている間に書き足されたら、次の回にもう一度送る
+          return gitSha(m.t).then(function (sha) {
+            if (e && e.v === sha) { M.unq(id, 'dirty'); return; }   // 変わっていない
+            var b = { message: title(m.t), content: b64(m.t) };
+            if (e) b.sha = e.v;
+            return gh(path(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(function (r) {
+              S.map[id] = { v: r.content.sha }; saveS();
+              var m2 = M.get(id);
+              if (!m2 || m2.u === m.u) M.unq(id, 'dirty');   // 送っている間に書き足されたら、次の回にもう一度送る
+            }, function (x) {
+              if (x.status === 409 || x.status === 422) { again = true; return; }   // 向こうが先に変わった。次の回に取り込んで競合として扱う
+              throw x;
+            });
           });
         });
       }, p);
@@ -201,10 +146,10 @@
       changed.forEach(M.remote);
       if (conflicts) M.toast('別の端末と同時に書き換えたメモが' + conflicts + '件あり、両方を残しました');
     }, function (x) {
-      err = x.status === 401 ? '' : (x.message || String(x));
+      err = x.message || String(x);
     }).then(function () {
       running = false; ui(); refresh();
-      if (again) { again = false; kT = setTimeout(run, 500); }
+      if (again) { again = false; kT = setTimeout(run, 800); }
     });
   }
 
@@ -212,14 +157,13 @@
   function pending() { var q = M.getQ(); return Object.keys(q.dirty).length + Object.keys(q.del).length; }
   function ui() {
     var sy = M.sy;
-    if (!S || !S.cid) { sy.hidden = true; return; }
+    if (!S || !S.repo) { sy.hidden = true; return; }
     var n = pending(), tail = n ? ' · 未送信' + n : '';
     sy.hidden = false;
-    sy.textContent = running ? '同期中' : !tok() ? '再ログイン' + tail : !navigator.onLine ? 'オフライン' + tail : err ? '同期エラー' : n ? '未送信' + n : '同期済';
+    sy.textContent = running ? '同期中' : (bad || !tok()) ? 'トークン無効' + tail : !navigator.onLine ? 'オフライン' + tail : err ? '同期エラー' + tail : n ? '未送信' + n : '同期済';
     sy.title = err || (S.last ? '最終同期 ' + M.fmt(S.last) : '');
   }
 
-  // 設定画面
   var pv = null;
   function panel() {
     if (!pv) {
@@ -229,28 +173,24 @@
         '#syp .hd{display:flex;align-items:center;justify-content:space-between;height:52px}#syp .hd b{font-weight:400;letter-spacing:.08em}' +
         '#syp .hd button{width:44px;height:44px;margin-right:-12px;color:var(--sub);font-size:20px}' +
         '#syp p{font-size:14px;color:var(--sub);margin:14px 0;line-height:1.8}#syp p b{color:var(--fg);font-weight:400}' +
-        '#syp input{width:100%;padding:6px 0;border:0;border-bottom:1px solid var(--faint);background:none;color:inherit;font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;outline:0;border-radius:0}' +
-        '#syp input:focus{border-color:var(--sub)}#syp code{font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg);word-break:break-all}' +
-        '#syp .bt{display:flex;flex-wrap:wrap;gap:8px 28px;margin-top:24px}#syp .bt button,#syp .bt a{font-size:13px;letter-spacing:.08em;color:var(--fg);text-decoration:underline;text-underline-offset:4px}' +
-        '#syp .bt .dim{color:var(--sub)}#syp p a{color:var(--fg);text-underline-offset:4px}#syp ol{font-size:13px;color:var(--sub);padding-left:1.4em;line-height:1.9}';
+        '#syp label{display:block;font-size:12px;letter-spacing:.08em;color:var(--sub);margin-top:22px}' +
+        '#syp input{width:100%;padding:6px 0;border:0;border-bottom:1px solid var(--faint);background:none;color:inherit;font:15px/1.6 ui-monospace,Menlo,Consolas,monospace;outline:0;border-radius:0}' +
+        '#syp input:focus{border-color:var(--sub)}#syp code{font:12px ui-monospace,Menlo,Consolas,monospace;color:var(--fg)}' +
+        '#syp a{color:var(--fg);text-underline-offset:4px}' +
+        '#syp .bt{display:flex;flex-wrap:wrap;gap:8px 28px;margin-top:28px}#syp .bt button{font-size:13px;letter-spacing:.08em;color:var(--fg);text-decoration:underline;text-underline-offset:4px}' +
+        '#syp .bt .dim{color:var(--sub)}#syp ol{font-size:13px;color:var(--sub);padding-left:1.4em;line-height:1.9;margin-top:10px}';
       document.head.appendChild(st);
       pv = document.createElement('div'); pv.id = 'syp';
-      pv.innerHTML = '<div class="in"><div class="hd"><b>Google ドライブ同期</b><button aria-label="閉じる">×</button></div><div class="bd"></div></div>';
+      pv.innerHTML = '<div class="in"><div class="hd"><b>GitHub 同期</b><button aria-label="閉じる">×</button></div><div class="bd"></div></div>';
       document.body.appendChild(pv);
       pv.querySelector('.hd button').onclick = function () { pv.className = ''; };
       pv.addEventListener('click', function (e) {
         var a = e.target.getAttribute && e.target.getAttribute('data-a');
-        if (a === 'connect') {
-          var v = pv.querySelector('input').value.trim();
-          if (!/^\d+-[\w-]+\.apps\.googleusercontent\.com$/.test(v)) { M.toast('クライアント ID の形が違います（…apps.googleusercontent.com）'); return; }
-          S = { cid: v, map: {}, last: 0 }; saveS();
-          M.all().forEach(function (m) { markDirty(m.id); });   // 手元のメモを全部送る
-          login();
-        } else if (a === 'login') login();
-        else if (a === 'sync') { run(); }
+        if (a === 'connect') connect();
+        else if (a === 'sync') { bad = false; run(); }
+        else if (a === 'retoken') { S.editTok = true; refresh(); }
         else if (a === 'off') {
-          if (!confirm('同期をやめますか？ 端末のメモとドライブのファイルはどちらも残ります。')) return;
-          var t = tok(); if (t) fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST' }).catch(function () {});
+          if (!confirm('同期をやめますか？ 端末のメモも GitHub のファイルも残ります。')) return;
           LS.removeItem(SK); LS.removeItem(TK); S = null; ui(); refresh();
         }
       });
@@ -258,55 +198,54 @@
     pv.className = 'on';
     refresh();
   }
-  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+  // 接続: リポジトリが非公開で、トークンで読めることを確かめてから始める
+  function connect() {
+    var repo = (pv.querySelector('#gr') ? pv.querySelector('#gr').value : S.repo).trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
+    var t = pv.querySelector('#gt').value.trim();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { M.toast('リポジトリは「持ち主/名前」の形で書きます'); return; }
+    if (!t) { M.toast('トークンを貼ってください'); return; }
+    var old = tok(); LS.setItem(TK, t); bad = false;
+    gh('', null, repo).then(function (r) {
+      if (!r.private) { LS.setItem(TK, old); if (!old) LS.removeItem(TK); M.toast('公開リポジトリです。メモが誰でも読めてしまうので使いません'); return; }
+      var first = !S || S.repo !== repo;
+      if (first) { S = { repo: repo, map: {}, last: 0 }; M.all().forEach(function (m) { markDirty(m.id); }); }   // 手元のメモを全部送る
+      delete S.editTok; saveS(); err = '';
+      M.toast('GitHub につながりました'); ui(); refresh(); run();
+    }, function (x) {
+      if (old) LS.setItem(TK, old); else LS.removeItem(TK);
+      M.toast(x.status === 404 ? 'リポジトリが見つかりません（名前か、トークンの対象リポジトリを確認）' : x.message);
+    });
+  }
+
+  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
   function refresh() {
     if (!pv || !pv.className) return;
-    var bd = pv.querySelector('.bd'), h = '';
-    if (!S || !S.cid) {
-      h = '<p>メモを Google ドライブの「MEMO」フォルダに、1件1ファイルの .md で保存して、別の端末と揃えます。' +
+    var bd = pv.querySelector('.bd');
+    if (!S || !S.repo || S.editTok) {
+      var editing = S && S.repo;
+      bd.innerHTML = (editing ? '' :
+        '<p>メモを自分の<b>非公開リポジトリ</b>に、1件1ファイルの .md で保存して、別の端末と揃えます。' +
         'オフラインの間の変更は端末にためておき、つながったときにまとめて送ります。</p>' +
-        '<p>OAuth クライアント ID</p><input spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="000000000000-xxxx.apps.googleusercontent.com">' +
-        '<p>read / music で使っているものと同じ ID でかまいません。Google Cloud のその ID の設定で、次の2つを済ませておきます。</p>' +
-        '<ol><li>「承認済みのリダイレクト URI」に <code>' + esc(redirect()) + '</code> を追加</li>' +
-        '<li>OAuth 同意画面の「データアクセス」に <code>' + SCOPE + '</code> を追加し、公開ステータスを「本番環境」にする（「テスト」のままだと7日ごとに承認し直しになる）</li></ol>' +
+        '<ol><li><a href="https://github.com/new" target="_blank" rel="noopener">新しいリポジトリ</a>を <b>Private</b> で作る（名前は例えば <code>memo</code>）</li>' +
+        '<li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">トークンを作る</a>（Fine-grained）<br>' +
+        'Repository access: <b>Only select repositories</b> → そのリポジトリだけ<br>' +
+        'Permissions → Repository → <b>Contents: Read and write</b>（ほかは No access のまま）<br>' +
+        'Expiration: 好みで（切れたらここで貼り直す）</li>' +
+        '<li>下に貼って「つなぐ」。端末ごとに1回</li></ol>' +
+        '<label for="gr">リポジトリ</label><input id="gr" spellcheck="false" autocomplete="off" autocapitalize="off" value="aji-daze/memo">') +
+        '<label for="gt">トークン</label><input id="gt" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="github_pat_…">' +
+        '<p>トークンはこの端末のブラウザにだけ保存します。対象を1つのリポジトリの中身だけに絞っておけば、漏れても他には触れません。</p>' +
         '<div class="bt"><button data-a="connect">つなぐ</button></div>';
-      bd.innerHTML = h;
-      detectCid().then(function (id) { var i = pv.querySelector('input'); if (id && i && !i.value) i.value = id; });
       return;
     }
     var n = pending();
-    h = '<p>保存先 <b>マイドライブ / MEMO</b>' + (S.folder ? '　<a href="https://drive.google.com/drive/folders/' + esc(S.folder) + '" target="_blank" rel="noopener">開く</a>' : '') + '</p>' +
+    bd.innerHTML = '<p>保存先 <b>' + esc(S.repo) + '</b> / memos　<a href="https://github.com/' + esc(S.repo) + '/tree/HEAD/memos" target="_blank" rel="noopener">開く</a></p>' +
       '<p>状態 <b>' + esc(M.sy.textContent) + '</b></p>' +
       '<p>最終同期 <b>' + (S.last ? M.fmt(S.last) : 'まだ') + '</b>　未送信 <b>' + n + '件</b></p>' +
       (err ? '<p>' + esc(err) + '</p>' : '') +
-      (tok() ? '' : '<p>Google の許可は1時間で切れます。切れても書くことと端末への保存は続けられ、変更は未送信としてたまります。「ログイン」で再開します。</p>') +
-      '<div class="bt">' + (tok() ? '<button data-a="sync">今すぐ同期</button>' : '<button data-a="login">ログイン</button>') +
+      '<div class="bt"><button data-a="sync">今すぐ同期</button><button data-a="retoken">トークンを貼り直す</button>' +
       '<button class="dim" data-a="off">同期をやめる</button></div>';
-    bd.innerHTML = h;
-  }
-
-  // read / music に設定済みのクライアント ID があれば借りる（同じサイトなので読める）
-  function detectCid() {
-    if (!window.indexedDB || !indexedDB.databases) return Promise.resolve('');
-    function get(name, pick) {
-      return new Promise(function (ok) {
-        var r = indexedDB.open(name);
-        r.onerror = function () { ok(''); };
-        r.onsuccess = function () {
-          var db = r.result;
-          try {
-            var g = db.transaction('settings').objectStore('settings').get('driveClientId');
-            g.onsuccess = function () { db.close(); ok(pick(g.result) || ''); };
-            g.onerror = function () { db.close(); ok(''); };
-          } catch (e) { db.close(); ok(''); }
-        };
-      });
-    }
-    return indexedDB.databases().then(function (list) {
-      var names = list.map(function (d) { return d.name; });   // 無い DB を open すると空の DB ができてしまうので、あるものだけ開く
-      var p = names.indexOf('shiori') >= 0 ? get('shiori', function (x) { return x && x.v; }) : Promise.resolve('');
-      return p.then(function (id) { return id || (names.indexOf('kbmusic') >= 0 ? get('kbmusic', function (x) { return typeof x === 'string' ? x : ''; }) : ''); });
-    }).catch(function () { return ''; });
   }
 
   // ---- いつ同期するか ----
@@ -316,10 +255,7 @@
   document.addEventListener('visibilitychange', function () { if (!document.hidden && S && Date.now() - (S.last || 0) > 20000) run(); });
   setInterval(function () { if (!document.hidden && S && Date.now() - (S.last || 0) > 60000) run(); }, 30000);
 
-  window.MemoSync = {
-    kick: kick, run: run, panel: panel,
-    tap: function () { if (S && S.cid && !tok()) login(); else panel(); }
-  };
+  window.MemoSync = { kick: kick, run: run, panel: panel, tap: panel };
   ui();
   setTimeout(run, 500);
 })();
