@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "MEMO",
-  "short_name": "MEMO",
+  "name": "wataamemo",
+  "short_name": "wataamemo",
   "description": "開いた瞬間に書ける、最小のメモ",
   "start_url": "./",
   "scope": "./",

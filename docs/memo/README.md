@@ -1,4 +1,4 @@
-# MEMO — 開いた瞬間に書けるメモ
+# wataamemo — 開いた瞬間に書けるメモ
 
 公開先: `https://aji-daze.github.io/kb-cso/memo/`
 
@@ -100,7 +100,7 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
    - Repository access: **Only select repositories** → 1 のリポジトリだけ
    - Permissions → Repository permissions → **Contents: Read and write**（ほかは No access のまま）
    - Expiration: 好みで（切れたら貼り直すだけ）
-3. 各端末で MEMO を開き、一覧 → 同期 → リポジトリ名とトークンを貼って「つなぐ」
+3. 各端末で wataamemo を開き、一覧 → 同期 → リポジトリ名とトークンを貼って「つなぐ」
 
 トークンはその端末のブラウザ（localStorage）にだけ保存する。対象を1つのリポジトリの中身だけに絞っておけば、
 万一漏れても他のリポジトリやアカウントには触れない。
@@ -112,9 +112,9 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
 
 | 機能 | 対応 | 内容 |
 | --- | --- | --- |
-| 共有メニュー | Android（Chrome） | 他のアプリの「共有」から MEMO を選ぶと、その文字・URL が新しいメモになる |
+| 共有メニュー | Android（Chrome） | 他のアプリの「共有」から wataamemo を選ぶと、その文字・URL が新しいメモになる |
 | アイコン長押し | Android / PC（Chrome, Edge） | 「新しいメモ」「メモの一覧」 |
-| ファイルを開く | PC（Chrome, Edge） | `.txt` / `.md` を「MEMO で開く」と1件ずつメモとして取り込む |
+| ファイルを開く | PC（Chrome, Edge） | `.txt` / `.md` を「wataamemo で開く」と1件ずつメモとして取り込む |
 | 二重起動しない | Chrome, Edge | 共有やショートカットで開いても、開いている窓を使い回す |
 | 保存領域の保護 | Chrome, Safari | 最初の保存時に、容量整理でメモを消さないようブラウザに頼む |
 | キーボード | iPhone / iPad | 入力欄に触れても拡大しない。キーボードの分だけ画面を縮めて本文を隠さない |
