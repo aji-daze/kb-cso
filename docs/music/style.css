@@ -178,10 +178,15 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
   scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
+/* 画面に収まらないタブがあるとき、端を薄くして「横に続きがある」ことを示す */
+.tabs.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.tabs.fade-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+.tabs.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .tabs button {
   color: var(--sub);
   font-size: 13.5px;
   padding: 6px 12px;
+  min-height: 38px;
   border-radius: 10px;
   white-space: nowrap;
   transition: background .12s ease, color .12s ease;
@@ -203,7 +208,7 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
 .row .s { font-size: 12.5px; color: var(--sub); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row.playing .t { color: var(--acc); }
 .row .num { width: 22px; text-align: right; color: var(--sub); font-size: 12.5px; flex: none; }
-.row .icon { width: 36px; height: 36px; color: var(--sub); }
+.row .icon { width: 40px; height: 40px; color: var(--sub); }
 
 .thumb {
   width: 44px; height: 44px; border-radius: var(--r-sm); flex: none;
@@ -513,7 +518,7 @@ body.select-mode .row .chk { display: flex; }
 /* アクセント選択ダイアログのグリッド */
 .acc-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px 4px; padding: 6px 16px 16px; }
 .acc-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.acc-opt .dot { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: var(--on-acc); }
+.acc-opt .dot { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--on-acc); }
 .acc-opt .dot svg { width: 18px; height: 18px; }
 .acc-opt .label { font-size: 10.5px; color: var(--sub); }
 .acc-opt.sel .label { color: var(--tx); font-weight: 600; }

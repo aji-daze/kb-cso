@@ -35,7 +35,11 @@ function buildAudioFrames(seconds, trackNo) {
 }
 
 function textFrame(id, value) {
-  const body = Buffer.concat([Buffer.from([0x00]), Buffer.from(String(value), 'latin1')]); // encoding 0 = ISO-8859-1
+  // ASCII だけなら ISO-8859-1（encoding 0）、日本語などを含むなら UTF-16 BOM 付き（encoding 1）で書く
+  const str = String(value);
+  const body = /^[\x00-\x7f]*$/.test(str)
+    ? Buffer.concat([Buffer.from([0x00]), Buffer.from(str, 'latin1')])
+    : Buffer.concat([Buffer.from([0x01, 0xff, 0xfe]), Buffer.from(str, 'utf16le')]);
   const head = Buffer.alloc(10);
   head.write(id, 0, 4, 'ascii');
   head.writeUInt32BE(body.length, 4); // ID3v2.3 はふつうの32bit（syncsafeではない）

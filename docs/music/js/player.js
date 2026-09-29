@@ -143,6 +143,7 @@ export function sleepState() {
 export function cancelSleep() {
   if (sleepTimer) clearTimeout(sleepTimer);
   sleepTimer = null;
+  stopFade(true); // フェードの途中で取り消されたら、音量を戻して止めない
   sleepAtTrackEnd = false;
   emit('sleep');
 }
@@ -171,20 +172,36 @@ export function consumeTrackEndSleep() {
   return true;
 }
 
+// フェードは setInterval で刻む。requestAnimationFrame は画面が消えている間まったく動かないので、
+// 寝る前にかけたタイマーが永遠に止まらない、ということが起きていた。
+// 途中で cancelSleep() されたら音量を戻して中止する。
+let fadeTimer = null;
+let fadeStartVol = 1;
+function stopFade(restore) {
+  if (!fadeTimer) return;
+  clearInterval(fadeTimer);
+  fadeTimer = null;
+  if (restore) audio.volume = fadeStartVol;
+}
 export function fadeOutAndPause(ms = 4000) {
-  const start = audio.volume;
-  const t0 = performance.now();
-  const step = () => {
-    const p = (performance.now() - t0) / ms;
+  stopFade(true);
+  // 画面が消えているとタイマーは間引かれて段階的なフェードにならないので、そのまま止める
+  if (document.visibilityState !== 'visible') {
+    pauseWith('スリープタイマー');
+    return;
+  }
+  fadeStartVol = audio.volume;
+  const t0 = Date.now();
+  fadeTimer = setInterval(() => {
+    const p = (Date.now() - t0) / ms;
     if (p >= 1) {
+      stopFade(false);
       pauseWith('スリープタイマー');
-      audio.volume = start;
+      audio.volume = fadeStartVol;
       return;
     }
-    audio.volume = start * (1 - p);
-    requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
+    audio.volume = fadeStartVol * (1 - p);
+  }, 50);
 }
 
 // ---------- イヤホンが外れたときの保護 ----------

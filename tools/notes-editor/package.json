@@ -1,0 +1,17 @@
+{
+  "name": "notes-editor",
+  "private": true,
+  "description": "docs/notes の編集欄（CodeMirror 6）を1ファイルにまとめる。npm install && npm run build",
+  "scripts": {
+    "build": "esbuild src/editor.js --bundle --format=esm --minify --legal-comments=eof --outfile=../../docs/notes/vendor/editor.js"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@lezer/highlight": "^1.2.0",
+    "esbuild": "^0.25.0"
+  }
+}
