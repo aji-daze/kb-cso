@@ -17,8 +17,8 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      // 共有の一時置き場（SHARE_CACHE）は版が変わっても消さない
-      .then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== SHARE_CACHE).map((k) => caches.delete(k))))
+      // 共有の一時置き場（SHARE_CACHE）は版が変わっても消さない。同じドメインの他のアプリのキャッシュも消さない
+      .then((ks) => Promise.all(ks.filter((k) => k.startsWith('pocha-') && k !== VERSION && k !== SHARE_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

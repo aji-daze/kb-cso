@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="wataamemo">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0e0e0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)">
+<meta name="description" content="開いた瞬間に書ける、最小のメモ">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>wataamemo</title>
+<!-- 速さのために CSS も JS もこのファイルに直書きする。外部ファイル・フォント・ライブラリは読まない。 -->
+<style>
+:root{--bg:#0e0e0e;--fg:#d8d8d4;--sub:#5c5c5a;--faint:#2a2a29;--code:#171716;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#fafaf8;--fg:#222;--sub:#a3a3a0;--faint:#ececea;--code:#f1f1ee;color-scheme:light}}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:17px/1.85 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;letter-spacing:.02em;
+  display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+::selection{background:var(--faint)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;display:block}
+.bar{display:flex;align-items:center;height:52px;padding:0 max(11px,calc((100% - 660px)/2 - 13px));flex:none;transition:opacity .6s}
+.bar button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);transition:color .2s}
+.bar button:hover,.bar button:active{color:var(--fg)}
+body.w .bar{opacity:0;transition:opacity 1.2s}
+#sy{height:44px;padding:0 8px;font-size:11px;letter-spacing:.08em;color:var(--sub);white-space:nowrap}
+#sy[hidden]{display:none}
+#st{flex:1;text-align:center;font-size:11px;letter-spacing:.12em;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+/* 本文。文字は透明な textarea で受け、真下の pre に同じ文字を飾り付きで描く（下線など）。 */
+#ed{flex:1;overflow:auto;padding:8px 0 45vh;cursor:text;--gx:max(24px,calc((100% - 660px)/2))}
+.t,.cw{position:relative}
+.t pre,.t textarea{display:block;width:100%;margin:0;padding:0 var(--gx);border:0;font:inherit;letter-spacing:inherit;white-space:pre-wrap;overflow-wrap:break-word;tab-size:4}
+.t pre{min-height:1.85em;pointer-events:none}
+.t textarea,.cw textarea{position:absolute;inset:0;height:100%;resize:none;outline:0;background:transparent;overflow:hidden}
+.t textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--fg)}
+.t textarea::selection{background:rgba(128,128,128,.28)}
+.t .m{color:var(--sub)}
+.t u{text-decoration:underline 1px;text-underline-offset:.32em}
+/* コードブロック。中身は普通に見える textarea。pre は高さを決めるためだけにある。 */
+.c{margin:10px calc(var(--gx) - 16px);padding:6px 16px 12px;background:var(--code)}
+.ch{display:flex;align-items:center;height:26px;font-size:11px;letter-spacing:.08em;color:var(--sub)}
+.lg{flex:1;min-width:0;padding:0;border:0;outline:0;background:none;color:inherit;font:inherit;letter-spacing:inherit}
+.lg::placeholder{color:var(--sub);opacity:.7}
+.cp{color:var(--sub);font-size:11px;letter-spacing:.08em}
+.cp:hover{color:var(--fg)}
+.cw pre,.cw textarea{display:block;width:100%;margin:0;padding:0;border:0;font:13.5px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:0;
+  white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4;color:var(--fg)}
+.cw pre{visibility:hidden;min-height:1.7em}
+#dr{position:fixed;inset:0;z-index:9;visibility:hidden;background:var(--bg);opacity:0;transition:opacity .18s,visibility 0s .18s}
+#dr.on{visibility:visible;opacity:1;transition:opacity .18s}
+#pn{height:100%;max-width:660px;margin:0 auto;display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top) max(24px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px,env(safe-area-inset-left))}
+.top{display:flex;align-items:center;gap:8px;height:52px;flex:none;margin-top:16px}
+#q{flex:1;min-width:0;padding:6px 0;border:0;border-bottom:1px solid var(--faint);background:none;color:inherit;font:inherit;letter-spacing:inherit;outline:0;border-radius:0;-webkit-appearance:none}
+#q:focus{border-color:var(--sub)}
+#q::placeholder{color:var(--sub)}
+#q::-webkit-search-cancel-button{display:none}
+#bX{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);margin-right:-12px}
+#bX:hover{color:var(--fg)}
+#ls{flex:1;overflow:auto;list-style:none;padding:24px 0;scrollbar-width:none}
+#ls li{padding:12px 0;cursor:pointer;color:var(--sub);transition:color .15s}
+#ls li:hover{color:var(--fg)}
+#ls b{display:block;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls small{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls .none{cursor:default;font-size:13px}
+.ft{display:flex;gap:24px;padding:16px 0 24px;font-size:12px;letter-spacing:.08em}
+.ft button{color:var(--sub)}
+.ft button:hover{color:var(--fg)}
+/* スマホのキーボードの真上に出る補助バー */
+#kb{display:none;flex:none;align-items:center;height:44px;padding:0 max(11px,calc((100% - 660px)/2 - 13px));border-top:1px solid var(--faint)}
+body.k #kb{display:flex}
+#kb button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub)}
+#kb button:active{color:var(--fg)}
+#kb .sp{flex:1}
+#kb #kD{width:auto;padding:0 12px;font-size:13px;letter-spacing:.08em}
+@media (pointer:coarse){#bU,#bC{display:none}}
+#to{position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:12px;letter-spacing:.08em;color:var(--sub);
+  display:none;z-index:10;gap:16px;white-space:nowrap}
+#to.on{display:flex}
+#to button{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 16h9"/></svg></button>
+  <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
+  <div id="st"></div>
+  <button id="sy" hidden></button>
+  <button id="bU" title="下線 (Ctrl/⌘+U)" aria-label="下線"><svg viewBox="0 0 24 24"><path d="M8 5v6a4 4 0 008 0V5M7 19h10"/></svg></button>
+  <button id="bC" title="コードブロック (Alt+C)" aria-label="コードブロック"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg></button>
+  <button id="bS" title="共有・コピー" aria-label="共有・コピー"><svg viewBox="0 0 24 24"><path d="M12 15V5M8 9l4-4 4 4M6 14v5h12v-5"/></svg></button>
+  <button id="bD" title="このメモを削除" aria-label="削除"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+</div>
+<div id="ed"><div class="t"><pre aria-hidden="true"> </pre><textarea rows="1" autofocus spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div></div>
+<div id="kb">
+  <button id="kU" aria-label="下線"><svg viewBox="0 0 24 24"><path d="M8 5v6a4 4 0 008 0V5M7 19h10"/></svg></button>
+  <button id="kC" aria-label="コードブロック"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg></button>
+  <button id="kT" aria-label="字下げ"><svg viewBox="0 0 24 24"><path d="M5 12h12M13 8l4 4-4 4M20 6v12"/></svg></button>
+  <span class="sp"></span>
+  <button id="kD">完了</button>
+</div>
+<div id="dr"><div id="pn">
+  <div class="top"><input id="q" type="search" placeholder="検索" autocomplete="off"><button id="bX" title="閉じる (Esc)" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button></div>
+  <ul id="ls"></ul>
+  <div class="ft">
+    <button id="bE">書き出し</button>
+    <button id="bI">読み込み</button>
+    <button id="bY">同期</button>
+  </div>
+</div></div>
+<div id="to"><span id="tm"></span><button id="tu" hidden>元に戻す</button></div>
+<script>
+// 起動時にやるのは「空の入力欄にカーソルを置く」ことだけ。
+// 保存データは1件ずつ別キー（memo:<id>）にあるので、一覧を開くまで読まない。
+(function(){
+'use strict';
+var P='memo:',LS=localStorage,$=function(i){return document.getElementById(i)};
+var ed=$('ed'),st=$('st'),dr=$('dr'),q=$('q'),ls=$('ls'),to=$('to');
+var cur=null,curU=0,saved='',timer=0,toT=0,undo=null,lastTa=ed.querySelector('textarea');
+
+lastTa.focus();
+
+// iPhone/iPad: 16px 未満の入力欄に触れると画面が拡大されるのを止め、キーボードの分だけ画面を縮める
+var iOS=/iP(hone|od|ad)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+if(iOS){
+  var vp=document.querySelector('meta[name=viewport]');vp.content+=',maximum-scale=1';
+  if(window.visualViewport){
+    var vv=visualViewport,fitVV=function(){if(vv.scale<1.01){document.documentElement.style.height=vv.height+'px';scrollTo(0,0)}};
+    vv.addEventListener('resize',fitVV);vv.addEventListener('scroll',fitVV);
+  }
+}
+
+// ---- エディタ ----
+// 本文は「文章ブロック(.t)」と「コードブロック(.c)」の並び。必ず 文章, コード, 文章, … の順で、両端は文章。
+// 保存は素のテキスト。コードは ``` で囲み、下線は <u>…</u> で書く（Markdown でもそのまま下線になる）。
+var FENCE=/^(?:```|｀｀｀)([^`｀\s]*)\s*$/,CLOSE=/^(?:```|｀｀｀)\s*$/;
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function paint(b){
+  var v=b.lastChild.value;
+  if(b.className==='t'){
+    b.firstChild.innerHTML=esc(v).replace(/&lt;u>([\s\S]*?)&lt;\/u>/g,'<span class="m">&lt;u></span><u>$1</u><span class="m">&lt;/u></span>')+' ';
+  }else b.firstChild.textContent=v+' ';
+  b.lastChild.scrollTop=0;
+}
+function ta(){var x=document.createElement('textarea');x.rows=1;x.spellcheck=false;x.setAttribute('autocomplete','off');x.setAttribute('autocapitalize','off');return x}
+function mkT(v){
+  var d=document.createElement('div'),p=document.createElement('pre'),x=ta();
+  d.className='t';p.setAttribute('aria-hidden','true');x.value=v;d.appendChild(p);d.appendChild(x);paint(d);return d;
+}
+function mkC(lang,v){
+  var c=document.createElement('div'),h=document.createElement('div'),w=document.createElement('div'),p=document.createElement('pre'),x=ta();
+  c.className='c';h.className='ch';w.className='cw';
+  h.innerHTML='<input class="lg" placeholder="code" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="言語"><button class="cp" tabindex="-1">コピー</button>';
+  h.firstChild.value=lang||'';p.setAttribute('aria-hidden','true');x.value=v;
+  w.appendChild(p);w.appendChild(x);c.appendChild(h);c.appendChild(w);paint(w);return c;
+}
+function blk(x){return x.closest('.t,.c')}                       // textarea → ブロック
+function area(b){return b.querySelector('textarea')}
+function wrapOf(x){return x.parentNode}                          // textarea → paint 対象
+function getText(){
+  var a=[],b=ed.children;
+  for(var i=0;i<b.length;i++){
+    var v=area(b[i]).value;
+    if(b[i].className==='t'){if(v!=='')a.push(v)}
+    else a.push('```'+b[i].querySelector('.lg').value.trim()+'\n'+v+'\n```');
+  }
+  return a.join('\n');
+}
+function parse(t){
+  var L=t.split('\n'),out=[],buf=[],i=0;
+  while(i<L.length){
+    var m=L[i].match(FENCE);
+    if(!m){buf.push(L[i++]);continue}
+    var code=[];i++;
+    while(i<L.length&&!CLOSE.test(L[i]))code.push(L[i++]);
+    i++;
+    out.push(mkT(buf.join('\n')),mkC(m[1],code.join('\n')));buf=[];
+  }
+  out.push(mkT(buf.join('\n')));
+  return out;
+}
+function setText(t){
+  ed.textContent='';
+  parse(t).forEach(function(b){ed.appendChild(b)});
+  lastTa=area(ed.firstChild);
+}
+function put(x,pos){x.focus();var n=pos==='end'?x.value.length:pos||0;x.setSelectionRange(n,n);lastTa=x}
+// 文字を入れる。execCommand なら元に戻す(Ctrl+Z)が効く。
+function ins(x,s){
+  x.focus();
+  if(!document.execCommand('insertText',false,s)){x.setRangeText(s,x.selectionStart,x.selectionEnd,'end');x.dispatchEvent(new Event('input',{bubbles:true}))}
+}
+function changed(){later();status();quiet()}
+
+// 文章ブロックを「前の文章 / コード / 後ろの文章」に割る
+function split(b,before,lang,code,after){
+  var c=mkC(lang,code),t2=mkT(after);
+  area(b).value=before;paint(b);
+  b.after(c,t2);return c;
+}
+// ``` の行のあとで改行された・貼り付けられたらコードブロックにする
+function fence(b){
+  var L=area(b).value.split('\n'),first=null;
+  for(var i=0;i<L.length-1;i++){
+    var m=L[i].match(FENCE);if(!m)continue;
+    var j=i+1;while(j<L.length&&!CLOSE.test(L[j]))j++;
+    var code=j<L.length?L.slice(i+1,j):[L[i+1]],rest=j<L.length?L.slice(j+1):L.slice(i+2);
+    var c=split(b,L.slice(0,i).join('\n'),m[1],code.join('\n'),rest.join('\n'));
+    if(!first)first=c;
+    b=c.nextSibling;L=area(b).value.split('\n');i=-1;
+  }
+  return first;
+}
+function codeBlock(){
+  var x=lastTa,b=blk(x);
+  if(b.className!=='t'){toast('すでにコードブロックの中です');return}
+  var v=x.value,s=x.selectionStart,e=x.selectionEnd;
+  if(v.slice(s-3,s)==='<u>'&&v.slice(e,e+4)==='</u>'){v=v.slice(0,s-3)+v.slice(s,e)+v.slice(e+4);s-=3;e-=3}   // 下線の中身だけを選んだときは記号ごと外す
+  var c=split(b,v.slice(0,s).replace(/\n$/,''),'',v.slice(s,e),v.slice(e).replace(/^\n/,''));
+  put(area(c),'end');changed();
+}
+function underline(){
+  var x=lastTa;if(blk(x).className!=='t')return;
+  var v=x.value,s=x.selectionStart,e=x.selectionEnd,sel=v.slice(s,e);
+  x.focus();
+  if(v.slice(s-3,s)==='<u>'&&v.slice(e,e+4)==='</u>'){x.setSelectionRange(s-3,e+4);ins(x,sel);x.setSelectionRange(s-3,e-3)}
+  else if(/^<u>[\s\S]*<\/u>$/.test(sel)){ins(x,sel.slice(3,-4));x.setSelectionRange(s,e-7)}
+  else{ins(x,'<u>'+sel+'</u>');x.setSelectionRange(s+3,s+3+sel.length)}
+}
+// コードブロックを消して、前後の文章をつなぐ
+function unblock(c){
+  var p=c.previousSibling,n=c.nextSibling,a=area(p).value,z=area(n).value;
+  area(p).value=a&&z?a+'\n'+z:a+z;paint(p);c.remove();n.remove();put(area(p),a.length);changed();
+}
+
+ed.addEventListener('input',function(e){
+  var x=e.target;if(x.tagName!=='TEXTAREA'){changed();return}
+  var b=blk(x);
+  if(b.className==='t'&&!e.isComposing&&/(```|｀｀｀)/.test(x.value)){var c=fence(b);if(c){put(area(c),'end')}}
+  paint(wrapOf(x));changed();
+});
+ed.addEventListener('focusin',function(e){if(e.target.tagName==='TEXTAREA')lastTa=e.target});
+ed.addEventListener('keydown',function(e){
+  var x=e.target;
+  if(x.classList.contains('lg')){if(e.key==='Enter'){e.preventDefault();put(area(blk(x)),0)}return}
+  if(x.tagName!=='TEXTAREA'||e.isComposing||e.keyCode===229)return;
+  var b=blk(x),v=x.value,s=x.selectionStart,en=x.selectionEnd,none=s===en,mod=e.ctrlKey||e.metaKey;
+  var prev=b.previousSibling,next=b.nextSibling;
+  // Tab でフォーカスを逃がさず字下げを入れる
+  if(e.key==='Tab'&&!e.shiftKey&&!mod&&!e.altKey){e.preventDefault();ins(x,'\t');return}
+  if(e.shiftKey||mod||e.altKey)return;
+  // ブロックの端では隣のブロックへ移る
+  if((e.key==='ArrowUp'||e.key==='ArrowLeft')&&none&&s===0&&prev){e.preventDefault();put(area(prev),'end');return}
+  if((e.key==='ArrowDown'||e.key==='ArrowRight')&&none&&s===v.length&&next){e.preventDefault();put(area(next),0);return}
+  if(e.key==='Backspace'&&back0(x)||e.key==='Enter'&&enter(x))e.preventDefault();
+});
+// スマホの仮想キーボードは keydown が keyCode 229 で届くことが多いので、beforeinput でも同じ処理をする
+ed.addEventListener('beforeinput',function(e){
+  var x=e.target;if(x.tagName!=='TEXTAREA'||e.isComposing)return;
+  var t=e.inputType;
+  if(t==='deleteContentBackward'&&back0(x)||(t==='insertLineBreak'||t==='insertParagraph')&&enter(x))e.preventDefault();
+});
+// 先頭で Backspace: コードブロックが空なら消す。それ以外は前のブロックへ移る
+function back0(x){
+  var b=blk(x),prev=b.previousSibling;
+  if(x.selectionStart!==0||x.selectionEnd!==0)return false;
+  if(b.className==='c'){x.value?put(area(prev),'end'):unblock(b);return true}
+  if(prev){put(area(prev),'end');return true}
+  return false;
+}
+// コードブロックの中の改行: 字下げを引き継ぐ。最後の行に ``` と打って改行したらブロックを出る
+function enter(x){
+  var b=blk(x);if(b.className!=='c')return false;
+  var v=x.value,s=x.selectionStart,ls0=v.lastIndexOf('\n',s-1)+1,line=v.slice(ls0,s);
+  if(CLOSE.test(line)&&s===v.length&&x.selectionEnd===s){x.setSelectionRange(ls0>0?ls0-1:0,s);ins(x,'');put(area(b.nextSibling),0);return true}
+  ins(x,'\n'+line.match(/^[ \t]*/)[0]);
+  return true;
+}
+ed.addEventListener('click',function(e){
+  var cp=e.target.closest('.cp');
+  if(cp){var v=area(blk(cp)).value;if(navigator.clipboard)navigator.clipboard.writeText(v).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')});return}
+  // ブロックの間や下の余白を押したら、いちばん近いブロックにカーソルを置く
+  if(e.target===ed){
+    var b=ed.children;
+    for(var i=0;i<b.length;i++){var r=b[i].getBoundingClientRect();if(e.clientY<r.top){i?put(area(b[i-1]),'end'):put(area(b[i]),0);return}if(e.clientY<=r.bottom){put(area(b[i]),'end');return}}
+    put(area(ed.lastChild),'end');
+  }
+});
+// スマホではキーボードの上に補助バーを出す
+var coarse=matchMedia('(pointer:coarse)');
+function kbOn(e){if(e.target.tagName==='TEXTAREA'&&coarse.matches)document.body.classList.add('k')}
+ed.addEventListener('focusin',kbOn);
+ed.addEventListener('touchstart',kbOn,{passive:true});   // 起動時から入力欄にフォーカスがあるときは focusin が来ない
+ed.addEventListener('focusout',function(){setTimeout(function(){if(!ed.contains(document.activeElement))document.body.classList.remove('k')},0)});
+addEventListener('resize',function(){var p=ed.querySelectorAll('.t,.cw');for(var i=0;i<p.length;i++)p[i].lastChild.scrollTop=0});
+
+// ---- 保存と一覧 ----
+function nid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function get(id){try{return JSON.parse(LS.getItem(P+id))}catch(e){return null}}
+// 書き込みは必ず setM / rmM を通す。変更したメモの ID を送信待ち（memo.q）に残し、
+// オフラインの間もたまっていく。GitHub 同期（sync.js）がこれを見て送る。
+var Q='memo.q';
+function getQ(){var q=null;try{q=JSON.parse(LS.getItem(Q))}catch(e){}q=q||{};q.dirty=q.dirty||{};q.del=q.del||{};return q}
+function mark(id,gone){var q=getQ();if(gone){q.del[id]=1;delete q.dirty[id]}else{q.dirty[id]=1;delete q.del[id]}LS.setItem(Q,JSON.stringify(q));if(window.MemoSync)MemoSync.kick()}
+function setM(id,m){LS.setItem(P+id,JSON.stringify(m));mark(id)}
+function rmM(id){LS.removeItem(P+id);mark(id,1)}
+function all(){
+  var a=[];
+  for(var i=0;i<LS.length;i++){var k=LS.key(i);if(k&&k.indexOf(P)===0){var m=get(k.slice(P.length));if(m&&typeof m.t==='string'){m.id=k.slice(P.length);a.push(m)}}}
+  return a.sort(function(x,y){return y.u-x.u});
+}
+function fmt(ms){
+  var d=new Date(ms),n=new Date(),p=function(v){return(v<10?'0':'')+v};
+  var hm=p(d.getHours())+':'+p(d.getMinutes());
+  if(d.toDateString()===n.toDateString())return hm;
+  return(d.getFullYear()===n.getFullYear()?'':d.getFullYear()+'/')+(d.getMonth()+1)+'/'+d.getDate()+' '+hm;
+}
+function status(){
+  var n=getText().length;
+  st.textContent=(n?n+'字':'')+(cur&&curU?(n?' · ':'')+fmt(curU):'');
+}
+
+// 保存。中身が空になったメモは消す（空メモを溜めない）。
+function save(){
+  clearTimeout(timer);timer=0;
+  var t=getText();
+  if(t===saved)return;
+  if(!t.trim()){if(cur)rmM(cur);cur=null;saved=t;status();return}
+  var now=Date.now(),old=cur&&get(cur);
+  if(!cur)cur=nid();
+  try{setM(cur,{t:t,c:old?old.c:now,u:now});saved=t;curU=now;keep()}
+  catch(e){toast('保存できません（容量不足）。書き出してから古いメモを消してください')}
+  status();
+}
+function later(){clearTimeout(timer);timer=setTimeout(save,250)}
+// ブラウザの容量整理でメモが消されないよう、保存領域の保護を一度だけ頼む（Firefox は確認画面が出るので除く）
+var kept=false;
+function keep(){
+  if(kept||!navigator.storage||!navigator.storage.persist||/Firefox/.test(navigator.userAgent))return;
+  kept=true;navigator.storage.persisted().then(function(p){if(!p)navigator.storage.persist()}).catch(function(){});
+}
+
+function load(t){setText(t);saved=getText()}
+function open(id){
+  save();
+  var m=id&&get(id);
+  cur=m?id:null;curU=m?m.u:0;load(m?m.t:'');
+  ed.scrollTop=0;status();close();put(area(ed.firstChild),0);
+}
+
+function toast(msg,fn){
+  $('tm').textContent=msg;$('tu').hidden=!fn;undo=fn||null;to.className='on';
+  clearTimeout(toT);toT=setTimeout(function(){to.className='';undo=null},fn?5000:2500);
+}
+
+// 一覧
+function render(){
+  var w=q.value.trim().toLowerCase(),a=all(),h='',n=0;
+  for(var i=0;i<a.length;i++){
+    var t=a[i].t;if(w&&t.toLowerCase().indexOf(w)<0)continue;
+    var lines=t.replace(/<\/?u>/g,'').replace(/^```.*$/gm,'').trim().split('\n'),head=lines[0].slice(0,80),rest=lines.slice(1).join(' ').trim().slice(0,80);
+    h+='<li data-id="'+a[i].id+'"'+(a[i].id===cur?' class="cur"':'')+'><b></b><small></small></li>';
+    a[i]._h=head;a[i]._r=fmt(a[i].u)+(rest?'　'+rest:'');n++;
+  }
+  ls.innerHTML=n?h:'<li class="none">'+(w?'見つかりません':'メモはまだありません')+'</li>';
+  // 本文は textContent で入れる（HTML として解釈させない）
+  var li=ls.children,j=0;
+  for(i=0;i<a.length&&j<li.length;i++){if('_h' in a[i]){li[j].firstChild.textContent=a[i]._h;li[j].lastChild.textContent=a[i]._r;j++}}
+}
+function openList(){save();wake();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
+function close(){dr.className=''}
+function back(){close();lastTa.focus()}
+
+// 書いている間はバーを消して文字だけにする。手が止まるかマウスが動けば戻す。
+var wT=0,mx=-1,my=-1,B=document.body;
+function quiet(){B.classList.add('w');clearTimeout(wT);wT=setTimeout(wake,1500)}
+function wake(){clearTimeout(wT);B.classList.remove('w')}
+addEventListener('mousemove',function(e){if(Math.abs(e.screenX-mx)+Math.abs(e.screenY-my)>4&&mx>=0)wake();mx=e.screenX;my=e.screenY});
+// 下線・コードのボタンを押しても入力欄のフォーカスと選択範囲を失わない
+['bU','bC','kU','kC','kT'].forEach(function(i){$(i).onmousedown=$(i).onpointerdown=function(e){e.preventDefault()}});
+$('kU').onclick=underline;
+$('kC').onclick=codeBlock;
+$('kT').onclick=function(){ins(lastTa,'\t')};
+$('kD').onclick=function(){lastTa.blur();document.body.classList.remove('k')};
+$('bU').onclick=underline;
+$('bC').onclick=codeBlock;
+$('bL').onclick=openList;
+$('bX').onclick=back;
+$('bN').onclick=function(){open(null)};
+$('bD').onclick=function(){
+  save();
+  if(!cur){load('');curU=0;put(area(ed.firstChild),0);status();return}
+  var id=cur,m=get(id);rmM(id);open(null);
+  toast('削除しました',function(){setM(id,m);open(id)});
+};
+$('tu').onclick=function(){if(undo)undo();to.className='';undo=null};
+$('bS').onclick=function(){
+  var t=getText();if(!t)return;
+  if(navigator.share&&matchMedia('(pointer:coarse)').matches){navigator.share({text:t}).catch(function(){})}
+  else if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')})}
+};
+dr.onclick=function(e){if(e.target===dr)close()};
+q.oninput=render;
+q.onkeydown=function(e){if(e.key==='Enter'&&!e.isComposing){e.preventDefault();var f=ls.querySelector('li[data-id]');if(f)open(f.getAttribute('data-id'))}};
+ls.onclick=function(e){var li=e.target.closest('li[data-id]');if(li)open(li.getAttribute('data-id'))};
+
+$('bE').onclick=function(){
+  var a=all().map(function(m){return{id:m.id,t:m.t,c:m.c,u:m.u}});
+  var b=new Blob([JSON.stringify({app:'memo',v:1,memos:a},null,1)],{type:'application/json'});
+  var x=document.createElement('a'),d=new Date();
+  x.href=URL.createObjectURL(b);x.download='memo-'+d.getFullYear()+(d.getMonth()+101+'').slice(1)+(d.getDate()+100+'').slice(1)+'.json';
+  x.click();setTimeout(function(){URL.revokeObjectURL(x.href)},1000);
+};
+$('bI').onclick=function(){
+  var f=document.createElement('input');f.type='file';f.accept='.json,.txt,.md,application/json,text/plain';
+  f.onchange=function(){
+    var file=f.files[0];if(!file)return;
+    file.text().then(function(s){
+      save();
+      var n=0,now=Date.now();
+      try{
+        var d=JSON.parse(s),a=Array.isArray(d)?d:d&&d.memos;
+        if(!Array.isArray(a)){toast('このファイルは読み込めません');return}
+        a.forEach(function(m){
+          if(!m||typeof m.t!=='string'||!m.t.trim())return;
+          var id=m.id||nid(),ex=get(id);
+          if(ex&&ex.u>=(m.u||0))return; // 手元の方が新しければ上書きしない
+          setM(id,{t:m.t,c:m.c||now,u:m.u||now});n++;
+          if(id===cur){curU=m.u||now;load(m.t)}
+        });
+      }catch(e){
+        if(!s.trim())return;
+        if(/^\s*[\[{]/.test(s)){toast('このファイルは読み込めません');return}
+        setM(nid(),{t:s,c:now,u:now});n=1; // 普通のテキストは1件のメモとして取り込む
+      }
+      render();toast(n+'件読み込みました');
+    });
+  };
+  f.click();
+};
+
+document.addEventListener('keydown',function(e){
+  var mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();
+  if(mod&&k==='k'){e.preventDefault();dr.className?back():openList()}
+  else if(mod&&k==='s'){e.preventDefault();save();toast('保存しました')}
+  else if(mod&&!e.shiftKey&&!e.altKey&&k==='u'){e.preventDefault();if(!dr.className)underline()}
+  else if(e.altKey&&(k==='n'||e.code==='KeyN')){e.preventDefault();open(null)}
+  else if(e.altKey&&(k==='c'||e.code==='KeyC')&&!dr.className){e.preventDefault();codeBlock()}
+  else if(k==='escape'&&dr.className)back();
+});
+
+// 閉じる・裏に回る瞬間に必ず書き込む
+addEventListener('pagehide',save);
+document.addEventListener('visibilitychange',function(){if(document.hidden)save()});
+// 別タブで同じメモが書き換わったら、こちらが未編集のときだけ追従する
+addEventListener('storage',function(e){
+  if(!cur||e.key!==P+cur||getText()!==saved)return;
+  var m=get(cur);if(!m){cur=null;curU=0;load('')}else{curU=m.u;load(m.t)}status();
+});
+
+// ---- OS からの呼び出し ----
+// 他のアプリの「共有」から来た文字を新しいメモにする。?list はアイコン長押しの「一覧」。
+(function(){
+  if(!location.search)return;
+  var u=new URLSearchParams(location.search),t=(u.get('text')||'').trim(),ti=(u.get('title')||'').trim(),url=(u.get('url')||'').trim(),a=[];
+  if(ti&&t.indexOf(ti)!==0)a.push(ti);
+  if(t)a.push(t);
+  if(url&&t.indexOf(url)<0)a.push(url);
+  history.replaceState(null,'',location.pathname);
+  if(a.length){load(a.join('\n'));saved='';save();put(area(ed.lastChild),'end');toast('共有から追加しました')}
+  else if(u.has('list'))openList();
+})();
+// インストール後、.txt / .md を「このアプリで開く」と1件ずつメモとして取り込む
+if('launchQueue' in window)launchQueue.setConsumer(function(p){
+  if(!p.files||!p.files.length)return;
+  Promise.all(p.files.map(function(h){return h.getFile().then(function(f){return f.text()})})).then(function(ts){
+    save();var last=null,now=Date.now();
+    ts.forEach(function(t){if(t.trim()){last=nid();setM(last,{t:t,c:now,u:now})}});
+    if(last)open(last);
+  });
+});
+
+// ---- GitHub 同期 ----
+// 同期の処理は sync.js にある。設定済みのときだけ、描画が終わってから読む（起動の速さに影響させない）。
+window.MEMO={
+  P:P,get:get,all:all,nid:nid,getQ:getQ,setM:setM,save:save,toast:toast,fmt:fmt,sy:$('sy'),
+  putRaw:function(id,m){LS.setItem(P+id,JSON.stringify(m))},     // GitHub から取り込んだ分（送信待ちにしない）
+  rmRaw:function(id){LS.removeItem(P+id)},
+  unq:function(id,kind){var q=getQ();delete q[kind][id];LS.setItem(Q,JSON.stringify(q))},
+  // GitHub 側の変更を画面に反映する。開いているメモは、こちらで書きかけでなければ読み直す
+  remote:function(id){
+    if(id===cur&&getText()===saved){var m=get(id);if(!m){cur=null;curU=0;load('')}else{curU=m.u;load(m.t)}status()}
+    if(dr.className)render();
+  }
+};
+function loadSync(cb){
+  if(window.MemoSync){if(cb)cb();return}
+  var x=document.createElement('script');x.src='sync.js';x.onload=function(){if(cb)cb()};
+  x.onerror=function(){toast('同期の部品を読み込めませんでした（オフライン？）')};document.head.appendChild(x);
+}
+$('bY').onclick=function(){loadSync(function(){MemoSync.panel()})};
+$('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
+if(LS.getItem('memo.s'))addEventListener('load',function(){setTimeout(loadSync,300)});
+
+// Service Worker は描画が終わってから。起動の邪魔をしない。
+if('serviceWorker' in navigator)addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
+})();
+</script>
+</body>
+</html>
