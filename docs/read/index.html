@@ -42,6 +42,7 @@ try {
 <main id="main">
   <section class="view" id="v-now"></section>
   <section class="view" id="v-shelf" hidden></section>
+  <section class="view" id="v-docs" hidden></section>
   <section class="view" id="v-notes" hidden></section>
   <section class="view" id="v-log" hidden></section>
 </main>
@@ -51,6 +52,8 @@ try {
     <svg viewBox="0 0 24 24"><path d="M4 5h11a3 3 0 0 1 3 3v11M4 5v11a3 3 0 0 0 3 3h11"/></svg>ホーム</button>
   <button data-view="shelf">
     <svg viewBox="0 0 24 24"><path d="M5 4h4v16H5zM11 4h3v16h-3zM16.5 5l3.5 14.5-3 .5L13.5 5.5z"/></svg>棚</button>
+  <button data-view="docs">
+    <svg viewBox="0 0 24 24"><path d="M5 3h14v18H5zM8.5 8h7M8.5 12h7M8.5 16h4"/></svg>文書</button>
   <button data-view="notes">
     <svg viewBox="0 0 24 24"><path d="M6 4h9l4 4v12H6zM15 4v4h4M9 12h7M9 16h5"/></svg>抜き書き</button>
   <button data-view="log">
@@ -93,6 +96,20 @@ try {
     <span id="r-chap"></span>
     <span id="r-left"></span>
   </div>
+</div>
+
+<!-- ================= 文書を読む画面 =================
+     本ではない Markdown を、横書きの1枚の紙としてスクロールで読む。 -->
+<div id="doc" hidden data-paper="sepia" data-fam="serif">
+  <header class="dtop">
+    <button class="dbtn" id="d-close" aria-label="戻る">‹</button>
+    <b id="d-title"></b>
+    <button class="dbtn" id="d-toc">目次</button>
+    <button class="dbtn" id="d-look" aria-label="見え方">Aa</button>
+  </header>
+  <div class="dline"><i id="d-bar"></i></div>
+  <div id="d-scroll"><article id="d-body" class="mdv"></article></div>
+  <div id="d-sel" hidden><button id="d-note">抜き書きにする</button></div>
 </div>
 
 <input type="file" id="pick" hidden multiple accept=".epub,.md,.markdown,.txt,.text,.zip,application/epub+zip,application/zip,text/plain,text/markdown">

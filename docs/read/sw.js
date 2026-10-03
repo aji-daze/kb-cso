@@ -1,11 +1,12 @@
 // アプリ本体のキャッシュ。本の中身は扱わない（IndexedDB にある）。
 // 画面を直したら VERSION を上げる。上げ忘れると古い画面が残る。
-const VERSION = 'pocha-v1.14.0';
+const VERSION = 'pocha-v1.15.0';
 const SHARE_CACHE = 'pocha-share';   // Android の共有シートから受け取ったファイルの一時置き場
 const ASSETS = [
   './', './index.html', './style.css', './manifest.json',
   './js/app.js', './js/db.js', './js/zip.js', './js/md.js', './js/epub.js',
-  './js/aozora.js', './js/quotes.js', './js/font.js', './js/drive.js', './js/onedrive.js', './js/folder.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js',
+  './js/aozora.js', './js/quotes.js', './js/font.js', './js/drive.js', './js/onedrive.js', './js/folder.js', './js/paper.js', './js/pager.js', './js/notes.js', './js/stats.js', './js/mdview.js',
+  './vendor/marked.js', './vendor/purify.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/character.png', './art/bear.png', './art/bear.webp',
   './icons/apple-touch-icon.png', './icons/icon-maskable-512.png',
 ];

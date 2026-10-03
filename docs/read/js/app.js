@@ -10,6 +10,7 @@ import * as Drive from './drive.js';
 import * as OneDrive from './onedrive.js';
 import * as Folder from './folder.js';
 import { Pager } from './pager.js';
+import * as MdView from './mdview.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
@@ -30,8 +31,19 @@ const SHELF_TABS = { all: '本棚', reading: '読んでいる', done: '読んだ
 const MOVE = { reading: '読んでいるへ', done: '読んだへ', stack: '外す' };
 const MOVE_LONG = { reading: '「読んでいる」に入れる', done: '読み終えた（「読んだ」へ）', stack: '「読んでいる」「読んだ」から外す（本棚に戻す）' };
 
+// 本ではない Markdown（覚え書き・調べもの・分析メモなど）は「文書」として別に並べ、
+// 横書きのまま1枚の紙のようにスクロールして読む。この長さ以上の Markdown は
+// 小説などの本とみなして棚に入れる。どちらも後から移せる。
+const DOC_MAX = 50000;
+const isDoc = (b) => b.shelf === 'doc';
+const DOC_SORTS = { opened: '最近開いた順', added: '入れた順', title: '名前の順', folder: 'フォルダごと' };
+
 const S = {
   view: 'now',
+  docSort: 'opened',    // 文書の並べ替え
+  docQ: '',             // 文書の絞り込みの文字
+  docs: [],             // 文書（books ストアのうち shelf: 'doc'）
+  all: [],              // 本と文書の両方
   shelfTab: 'all',
   shelfSort: 'added',   // 棚の並べ替え
   shelfAuthor: null,    // 作家で絞る（null なら全部）
@@ -62,7 +74,7 @@ function toast(msg) {
 // 逆に history.back() を呼ばない（もう戻り終えたあとに届くイベントなので、
 // ここで back() すると無限ループ・二重処理になる）。
 function pushSheetHistory() {
-  const want = R.open ? 'reader-sheet' : 'sheet';
+  const want = (R.open || D.open) ? 'reader-sheet' : 'sheet';
   const st = history.state;
   if (st && st.layer === want) history.replaceState({ layer: want }, '');
   else history.pushState({ layer: want }, '');
@@ -176,6 +188,35 @@ async function addBook(meta, chapters, status = 'stack') {
   return book;
 }
 
+// 文書は元の Markdown をそのまま持つ（描くたびに組む。本のような章分けはしない）。
+async function addDoc(meta, text) {
+  const doc = {
+    id: DB.uid('d'),
+    title: meta.title || '(無題)',
+    author: '',
+    kind: 'md',
+    shelf: 'doc',
+    source: meta.source || '',
+    status: 'stack',
+    added: Date.now(),
+    finished: 0,
+    chars: text.length,
+    snip: MdView.snippet(text),
+    cover: null,
+    manual: null,
+  };
+  await DB.put('books', doc);
+  await DB.put('files', { id: doc.id, md: text });
+  await loadBooks();
+  return doc;
+}
+
+// 「本 3冊・文書 2件を入れました」
+function putLabel(n, nd) {
+  const nb = n - nd;
+  return [nb ? '本' + nb + '冊' : '', nd ? '文書' + nd + '件' : ''].filter(Boolean).join('・') + 'を入れました';
+}
+
 export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const isBookName = (n) => BOOK_EXT.test(n || '');
 
@@ -220,6 +261,7 @@ async function importBlob(filename, blob, source, status = 'stack') {
     }, txtToChapters(a.body, title), status);
   }
 
+  if (isMd && text.length < DOC_MAX) return addDoc({ title: name, source: source || filename }, text);
   const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
   return addBook({
     title: name, kind: isMd ? 'md' : 'txt',
@@ -243,14 +285,14 @@ async function mirrorToFolder(files) {
 }
 
 async function importFiles(files) {
-  let n = 0, err = 0, first = '';
+  let n = 0, nd = 0, err = 0, first = '';
   const ok = [];
   for (const f of files) {
-    try { await importBlob(f.name, f); ok.push(f); n++; }
+    try { const r = await importBlob(f.name, f); ok.push(f); n++; if (r && isDoc(r)) nd++; }
     catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
   }
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
-  if (n) toast(n + '冊を本棚に入れました' +
+  if (n) toast(putLabel(n, nd) +
     (copied ? '／' + copied + '件をフォルダにも保存' : '') +
     (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
@@ -325,7 +367,9 @@ async function addSample() {
 
 // ================================================================ 棚
 async function loadBooks() {
-  S.books = (await DB.all('books')).sort((a, b) => (b.added || 0) - (a.added || 0));
+  S.all = (await DB.all('books')).sort((a, b) => (b.added || 0) - (a.added || 0));
+  S.books = S.all.filter((b) => !isDoc(b));
+  S.docs = S.all.filter(isDoc);
   return S.books;
 }
 
@@ -861,7 +905,7 @@ function addSheet() {
       '<span>本の入ったフォルダごと。OneDrive の同期フォルダでよい' +
       (Folder.supported() ? '。一度選ぶと覚える' : '（この端末では毎回選び直し）') + '</span></span></button>' +
     '<button class="item" id="a-file"><span class="mark">·</span><span><b>ファイルを選ぶ</b>' +
-      '<span>EPUB・Markdown・テキスト・青空文庫の zip</span></span></button>' +
+      '<span>EPUB・Markdown・テキスト・青空文庫の zip。Markdown は「文書」に入る（長いものは本）</span></span></button>' +
     '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫</b>' +
       '<span>目録から探して落とす</span></span></button>' +
     '<button class="item" id="a-more"><span class="mark">⋯</span><span><b>その他</b>' +
@@ -947,6 +991,9 @@ async function bookSheet(id) {
     (b.manual
       ? '<button class="item" id="b-manual"><span class="mark">✎</span><span><b>進みを書き込む</b></span></button>'
       : '<button class="item" id="b-open"><span class="mark">▶</span><span><b>' + (m.pct ? '続きから読む' : '読む') + '</b></span></button>') +
+    (b.kind === 'md' && !b.manual
+      ? '<button class="item" id="b-todoc"><span class="mark">▤</span><span><b>文書に移す</b>' +
+        '<span>横書きのまま、1枚の紙のようにスクロールして読む</span></span></button>' : '') +
     Object.entries(MOVE_LONG).filter(([k]) => k !== b.status).map(([k, v]) =>
       '<button class="item" data-st="' + k + '"><span class="mark">·</span><span><b>' + v + '</b></span></button>').join('') +
     '<button class="item" id="b-del"><span class="mark">✕</span><span><b style="color:var(--danger)">棚から消す</b>' +
@@ -956,6 +1003,14 @@ async function bookSheet(id) {
       // そのまま読書画面に差し替える（pushReaderHistory 側で見ている）。
       if ($('#b-open', el)) $('#b-open', el).onclick = () => { dismissSheetDOM(); openBook(id); };
       if ($('#b-manual', el)) $('#b-manual', el).onclick = () => manualSheet(b);
+      if ($('#b-todoc', el)) $('#b-todoc', el).onclick = async () => {
+        const f = await DB.get('files', b.id);
+        b.shelf = 'doc';
+        b.snip = f && f.md != null ? MdView.snippet(f.md)
+          : plain(((f && f.chapters) || []).map((c) => c.html).join(' ')).replace(/\s+/g, ' ').trim().slice(0, 90);
+        await putBookSafe(b); await loadBooks(); closeSheet(); render();
+        toast('「文書」に移しました');
+      };
       $$('[data-st]', el).forEach((x) => {
         x.onclick = async () => {
           b.status = x.dataset.st;
@@ -1271,7 +1326,7 @@ async function folderList(handle) {
   try { found = await Folder.scan(handle, (n) => { const b = $('#f-body', el); if (b) b.textContent = n + '件みつかりました…'; }); }
   catch (e) { const b = $('#f-body', el); if (b) b.innerHTML = '<b style="color:var(--danger)">読めませんでした。</b><br>' + esc(e.message); return; }
 
-  const have = new Set(S.books.map((b) => b.source));
+  const have = new Set(S.all.map((b) => b.source));
   const seen = await Folder.meta();
   const isNew = (f) => !have.has(folderSource(f.path));
   // 取り込み済みでも、PC 側で書き換えられていれば入れ直せるようにする
@@ -1324,7 +1379,7 @@ async function folderList(handle) {
 }
 
 async function folderGet(items, msg, handle, replace) {
-  let n = 0, err = 0, first = '';
+  let n = 0, nd = 0, err = 0, first = '';
   const done = [];
   for (const f of items) {
     if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
@@ -1333,14 +1388,14 @@ async function folderGet(items, msg, handle, replace) {
       const src = folderSource(f.path);
       // 入れ直しのときは古いほうを先に片づける（抜き書きは残す）
       if (replace) {
-        const olds = S.books.filter((b) => b.source === src);
+        const olds = S.all.filter((b) => b.source === src);
         for (const b of olds) {
           await DB.del('files', b.id); await DB.del('marks', b.id); await DB.del('books', b.id);
         }
         if (olds.length) await loadBooks();
       }
-      await importBlob(f.name, file, src);
-      done.push(f); n++;
+      const r = await importBlob(f.name, file, src);
+      done.push(f); n++; if (r && isDoc(r)) nd++;
     } catch (e) {
       console.warn(f.path, e); err++;
       if (!first) first = (e && e.message) || String(e);
@@ -1348,9 +1403,9 @@ async function folderGet(items, msg, handle, replace) {
   }
   if (done.length) await Folder.remember(done);
   if (msg) msg.textContent = n
-    ? n + '冊を棚に入れました' + (err ? '（' + err + '件は読めませんでした：' + first.slice(0, 40) + '）' : '')
+    ? putLabel(n, nd) + (err ? '（' + err + '件は読めませんでした：' + first.slice(0, 40) + '）' : '')
     : '取り込めませんでした：' + first.slice(0, 60);
-  toast(n ? n + '冊を棚に入れました' : '取り込めませんでした');
+  toast(n ? putLabel(n, nd) : '取り込めませんでした');
   render();
   if (handle) folderList(handle);
 }
@@ -1450,17 +1505,17 @@ async function cloudBrowse(prov, stack) {
 }
 
 async function cloudGet(prov, items, msg) {
-  let n = 0, err = 0;
+  let n = 0, nd = 0, err = 0;
   for (const x of items) {
     if (msg) msg.textContent = '落としています… ' + (n + err + 1) + ' / ' + items.length + '：' + x.name;
     try {
       const blob = await prov.download(x);
-      await importBlob(x.name, blob, prov.label + ':' + x.name);
-      n++;
+      const r = await importBlob(x.name, blob, prov.label + ':' + x.name);
+      n++; if (r && isDoc(r)) nd++;
     } catch (e) { console.warn(e); err++; }
   }
-  if (msg) msg.textContent = n + '冊を棚に入れました' + (err ? '（' + err + '件は取れませんでした）' : '');
-  toast(n ? n + '冊を棚に入れました' : '取り込めませんでした');
+  if (msg) msg.textContent = putLabel(n, nd) + (err ? '（' + err + '件は取れませんでした）' : '');
+  toast(n ? putLabel(n, nd) : '取り込めませんでした');
   render();
 }
 
@@ -2047,20 +2102,347 @@ async function minchoPanel(box) {
   };
 }
 
+// ================================================================ 文書
+// 本ではない Markdown の置き場。表紙は出さず、題名と書き出しの一覧にする。
+// 開くと横書きの1枚の紙（#doc）。ページはめくらず、スクロールで読む。
+
+// 置き場所の名前（フォルダから入れたものはそのフォルダ、クラウドからはその名前）
+function docFolder(d) {
+  const src = d.source || '';
+  if (src.startsWith('folder:')) return src.slice(7).split('/').slice(0, -1).join(' / ');
+  const m = /^([^:/\\]{2,20}):/.exec(src);
+  return m ? m[1] : '';
+}
+const docMin = (d) => Math.max(1, Math.round((d.chars || 0) / 600));
+const docWhen = (t) => { const d = new Date(t || 0); return (d.getMonth() + 1) + '/' + d.getDate(); };
+const byName = (a, b) => a.title.localeCompare(b.title, 'ja', { numeric: true });
+
+function sortDocs(list, mk) {
+  const seen = (d) => { const m = mk.get(d.id); return Math.max((m && m.updated) || 0, d.opened || 0) || d.added || 0; };
+  const out = list.slice();
+  if (S.docSort === 'title') return out.sort(byName);
+  if (S.docSort === 'added') return out.sort((a, b) => (b.added || 0) - (a.added || 0));
+  if (S.docSort === 'folder') return out.sort((a, b) => docFolder(a).localeCompare(docFolder(b), 'ja') || byName(a, b));
+  return out.sort((a, b) => seen(b) - seen(a));
+}
+
+async function renderDocs() {
+  const el = $('#v-docs');
+  el.innerHTML =
+    (S.docs.length
+      ? '<label class="dsearch"><input type="search" id="d-q" placeholder="題名・フォルダ・書き出しで絞る" autocomplete="off" value="' + esc(S.docQ) + '"></label>' +
+        '<div class="bar"><button class="tag" id="d-sort">' + DOC_SORTS[S.docSort] + ' ▾</button><span class="cnt" id="d-cnt"></span></div>'
+      : '') +
+    '<div id="d-list"></div>' +
+    '<div class="actions" style="margin-top:20px"><button class="btn primary" id="d-add">＋ 文書を入れる</button></div>';
+  if ($('#d-q', el)) $('#d-q', el).oninput = (e) => { S.docQ = e.target.value; drawDocList(); };
+  if ($('#d-sort', el)) $('#d-sort', el).onclick = docSortSheet;
+  $('#d-add', el).onclick = addSheet;
+  await drawDocList();
+}
+
+// 絞り込みの文字を打つたびに、一覧だけ描き直す（入力欄は描き直さないので打ち続けられる）
+async function drawDocList() {
+  const box = $('#d-list');
+  if (!box) return;
+  const mk = await allMarks();
+  const q = S.docQ.trim().toLowerCase();
+  const hit = q ? S.docs.filter((d) => (d.title + ' ' + docFolder(d) + ' ' + (d.snip || '')).toLowerCase().includes(q)) : S.docs;
+  const list = sortDocs(hit, mk);
+  if ($('#d-cnt')) $('#d-cnt').textContent = list.length + '件';
+  if (!S.docs.length) {
+    box.innerHTML = '<div class="empty"><b>文書はまだありません</b>Markdown（.md）を入れると、本ではなく文書としてここに並びます。' +
+      '覚え書き・調べもの・分析のメモ向け。長いもの（5万字以上）は本として棚に入ります。</div>';
+    return;
+  }
+  if (!list.length) { box.innerHTML = '<div class="empty"><b>見つかりません</b>絞り込みの文字を変えてください。</div>'; return; }
+  const row = (d) => {
+    const m = mk.get(d.id);
+    const p = m && m.y ? Math.round(m.y * 100) : 0;
+    const meta = [S.docSort === 'folder' ? '' : docFolder(d), (d.chars || 0).toLocaleString() + '字', '約' + docMin(d) + '分',
+      p >= 98 ? '読了' : (p ? p + '%まで' : ''), docWhen(Math.max((m && m.updated) || 0, d.opened || 0) || d.added)].filter(Boolean);
+    return '<div class="drow" data-id="' + d.id + '">' +
+      '<button class="dmain"><b>' + esc(d.title) + '</b>' +
+        (d.snip ? '<span class="dsn">' + esc(d.snip) + '</span>' : '') +
+        '<span class="dmeta">' + esc(meta.join(' · ')) + '</span>' +
+        (p ? '<span class="prog"><i style="width:' + Math.min(100, p) + '%"></i></span>' : '') +
+      '</button>' +
+      '<button class="dmore" aria-label="この文書の操作">⋯</button></div>';
+  };
+  let html = '';
+  if (S.docSort === 'folder') {
+    let cur = null;
+    for (const d of list) {
+      const f = docFolder(d);
+      if (f !== cur) { html += '<div class="ghead">' + esc(f || 'フォルダなし') + '</div>'; cur = f; }
+      html += row(d);
+    }
+  } else html = list.map(row).join('');
+  box.innerHTML = html;
+  $$('.drow', box).forEach((r) => {
+    $('.dmain', r).onclick = () => openDoc(r.dataset.id);
+    $('.dmore', r).onclick = () => docSheet(r.dataset.id);
+  });
+}
+
+function docSortSheet() {
+  sheet('<h3>並べ替え</h3>' + Object.entries(DOC_SORTS).map(([k, v]) =>
+    '<button class="item" data-s="' + k + '"><span class="mark">' + (S.docSort === k ? '✓' : '·') + '</span><span><b>' + v + '</b></span></button>').join(''),
+    (el) => {
+      $$('[data-s]', el).forEach((x) => {
+        x.onclick = () => { S.docSort = x.dataset.s; remember(); closeSheet(); renderDocs(); };
+      });
+    });
+}
+
+async function docSheet(id) {
+  const d = S.docs.find((x) => x.id === id);
+  if (!d) return;
+  const ns = await Notes.ofBook(id);
+  sheet('<h3>' + esc(d.title) + '</h3>' +
+    '<p style="color:var(--sub);font-size:12.5px;margin:0 0 12px">' +
+      esc([docFolder(d), (d.chars || 0).toLocaleString() + '字', ns.length ? '抜き書き ' + ns.length + '件' : ''].filter(Boolean).join(' · ')) + '</p>' +
+    '<button class="item" id="ds-open"><span class="mark">▶</span><span><b>読む</b></span></button>' +
+    '<button class="item" id="ds-book"><span class="mark">▥</span><span><b>本として棚に移す</b>' +
+      '<span>小説などはこちら。ページをめくって読む</span></span></button>' +
+    '<button class="item" id="ds-del"><span class="mark">✕</span><span><b style="color:var(--danger)">消す</b>' +
+      '<span>この文書と、その抜き書きが消えます</span></span></button>',
+    (el) => {
+      $('#ds-open', el).onclick = () => { dismissSheetDOM(); openDoc(id); };
+      $('#ds-book', el).onclick = async () => {
+        const f = (await DB.get('files', id)) || { id };
+        if (!f.chapters) { f.chapters = mdToChapters(f.md || '', d.title); await DB.put('files', f); }
+        const counts = chapChars(f.chapters);
+        Object.assign(d, { chapChars: counts, chars: counts.reduce((a, c) => a + c, 0), mood: 'memo', vertical: false, status: 'stack', paraFix: 1 });
+        delete d.shelf;
+        await DB.del('marks', id);   // スクロールの位置は、ページの位置としては使えない
+        await putBookSafe(d); await loadBooks(); closeSheet(); render();
+        toast('本として棚に移しました');
+      };
+      $('#ds-del', el).onclick = async () => {
+        if (!(await confirmSheet('「' + d.title + '」を消しますか', '本文も、この文書の抜き書きも消えます。元に戻せません。', '消す', true))) return;
+        for (const n of ns) await Notes.remove(n.id);
+        await DB.del('files', id); await DB.del('marks', id); await DB.del('books', id);
+        await loadBooks(); render(); toast('消しました');
+      };
+    });
+}
+
+// ---- 文書を読む画面 -------------------------------------------------
+const D = { open: false, doc: null, saveT: null, sel: '' };
+function docEls() {
+  return { root: $('#doc'), body: $('#d-body'), scroll: $('#d-scroll'), bar: $('#d-bar'), title: $('#d-title'), sel: $('#d-sel') };
+}
+
+// 見え方は端末ごと（スマホは大きめ、PC は小さめ、のように分けたいので localStorage）
+const DOC_LOOK = { paper: 'sepia', fs: 17, fam: 'serif' };
+function docLook() {
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem('pocha.doc') || 'null'); } catch {}
+  return Object.assign({}, DOC_LOOK, v || {});
+}
+function applyDocLook(l) {
+  const e = docEls();
+  e.root.dataset.paper = l.paper;
+  e.root.dataset.fam = l.fam;
+  e.root.style.setProperty('--dfs', l.fs + 'px');
+  if (D.open) Paper.tint(getComputedStyle($('.dtop', e.root)).backgroundColor);
+}
+
+async function openDoc(id, opt = {}) {
+  const d = S.docs.find((x) => x.id === id);
+  if (!d) return;
+  const file = await DB.get('files', id);
+  if (!file) { toast('本文が見つかりません'); return; }
+  if (D.open) saveDocPos();          // 文書の中のリンクから別の文書へ
+  const e = docEls();
+  e.body.innerHTML = file.md != null ? MdView.render(file.md)
+    : MdView.sanitize((file.chapters || []).map((c) => c.html).join(''));
+  MdView.decorate(e.body);
+  e.title.textContent = d.title;
+  e.sel.hidden = true; D.sel = '';
+  const first = !D.open;
+  D.open = true; D.doc = d;
+  e.root.hidden = false;
+  applyDocLook(docLook());
+  if (first) pushReaderHistory();
+  const m = await markOf(id);
+  requestAnimationFrame(() => {
+    const max = Math.max(0, e.scroll.scrollHeight - e.scroll.clientHeight);
+    const h = opt.heading ? MdView.headings(e.body).find((x) => x.text.includes(opt.heading)) : null;
+    e.scroll.scrollTop = h ? $('#' + h.id, e.body).offsetTop - 8 : (m.y || 0) * max;
+    paintDocBar();
+  });
+  d.opened = Date.now();
+  await putBookSafe(d);
+}
+
+function paintDocBar() {
+  const e = docEls();
+  const max = e.scroll.scrollHeight - e.scroll.clientHeight;
+  e.bar.style.width = (max > 0 ? Math.min(100, e.scroll.scrollTop / max * 100) : 100) + '%';
+}
+
+function saveDocPos() {
+  const e = docEls();
+  if (!D.doc) return;
+  const max = e.scroll.scrollHeight - e.scroll.clientHeight;
+  const y = max > 0 ? Math.min(1, e.scroll.scrollTop / max) : 1;
+  clearTimeout(D.saveT);
+  return DB.put('marks', { id: D.doc.id, ch: 0, off: 0, pct: y, y, lastLine: '', updated: Date.now() });
+}
+
+// DOM・状態を片づけるだけ。history には触らない（popstate から呼ぶ用）。
+function closeDocUI() {
+  if (!D.open) return;
+  saveDocPos();
+  const e = docEls();
+  e.root.hidden = true;
+  e.body.innerHTML = '';
+  D.open = false; D.doc = null; D.sel = '';
+  applyChrome();
+  loadBooks().then(render);
+}
+// 「戻る」ボタン・Esc から。積んだ history をその場で1つ消費する。
+function closeDoc() {
+  if (!D.open) return;
+  const st0 = history.state;
+  closeDocUI();
+  if (st0 && (st0.layer === 'reader' || st0.layer === 'reader-sheet')) goBack();
+}
+
+function docTocSheet() {
+  const e = docEls();
+  const hs = MdView.headings(e.body);
+  sheet('<h3>目次</h3>' + (hs.length
+    ? hs.map((h) => '<button class="item toc-l' + Math.min(h.lv, 4) + '" data-h="' + h.id + '"><span class="mark">·</span><span><b>' + esc(h.text) + '</b></span></button>').join('')
+    : '<div class="empty">見出しがありません</div>'),
+    (el) => {
+      $$('[data-h]', el).forEach((x) => {
+        x.onclick = () => {
+          closeSheet();
+          const t = $('#' + x.dataset.h, e.body);
+          if (t) e.scroll.scrollTo({ top: t.offsetTop - 8, behavior: 'smooth' });
+        };
+      });
+    });
+}
+
+function docLookSheet() {
+  const l = docLook();
+  const seg = (key, opts) => '<div class="seg dlk" data-k="' + key + '">' + opts.map(([v, label]) =>
+    '<button data-v="' + v + '" aria-pressed="' + (String(l[key]) === String(v)) + '">' + label + '</button>').join('') + '</div>';
+  sheet('<h3>見え方</h3>' +
+    '<div class="h">紙</div>' + seg('paper', [['sepia', 'セピア'], ['white', '白'], ['dark', '黒'], ['app', 'アプリと同じ']]) +
+    '<div class="h">文字の大きさ</div>' + seg('fs', [[15, '小'], [17, '中'], [19, '大'], [22, '特大']]) +
+    '<div class="h">書体</div>' + seg('fam', [['serif', '明朝'], ['sans', 'ゴシック']]),
+    (el) => {
+      $$('.dlk button', el).forEach((b) => {
+        b.onclick = () => {
+          const key = b.parentElement.dataset.k;
+          const now = docLook();
+          now[key] = key === 'fs' ? +b.dataset.v : b.dataset.v;
+          try { localStorage.setItem('pocha.doc', JSON.stringify(now)); } catch {}
+          $$('button', b.parentElement).forEach((x) => x.setAttribute('aria-pressed', x === b));
+          // 文字の大きさを変えても、読んでいた所を保つ
+          const e = docEls();
+          const max0 = e.scroll.scrollHeight - e.scroll.clientHeight;
+          const y = max0 > 0 ? e.scroll.scrollTop / max0 : 0;
+          applyDocLook(now);
+          e.scroll.scrollTop = y * Math.max(0, e.scroll.scrollHeight - e.scroll.clientHeight);
+        };
+      });
+    });
+}
+
+// 見出しの下にある文を抜き書きしたとき、どの見出しの下かを控える
+function docHeadingOf(node) {
+  const body = docEls().body;
+  let n = node && node.nodeType === 3 ? node.parentElement : node;
+  while (n && n.parentElement !== body) n = n.parentElement;
+  for (; n; n = n.previousElementSibling) if (/^H[1-4]$/.test(n.tagName)) return n.textContent.trim();
+  return '';
+}
+
+function bindDocView() {
+  const e = docEls();
+  $('#d-close').onclick = closeDoc;
+  $('#d-toc').onclick = docTocSheet;
+  $('#d-look').onclick = docLookSheet;
+  e.scroll.addEventListener('scroll', () => {
+    paintDocBar();
+    clearTimeout(D.saveT);
+    D.saveT = setTimeout(saveDocPos, 600);
+  }, { passive: true });
+  // 文書の中のリンク。[[ノート]] は同じ名前の文書を開く。#見出し はその見出しへ
+  e.body.addEventListener('click', (ev) => {
+    const a = ev.target.closest('a[data-note]');
+    if (!a) return;
+    ev.preventDefault();
+    const name = a.dataset.note, head = a.dataset.heading;
+    if (!name) {
+      const h = MdView.headings(e.body).find((x) => x.text.includes(head));
+      if (h) e.scroll.scrollTo({ top: $('#' + h.id, e.body).offsetTop - 8, behavior: 'smooth' });
+      return;
+    }
+    const low = name.toLowerCase();
+    const hit = S.docs.find((d) => d.title.toLowerCase() === low) ||
+      S.docs.find((d) => (d.source || '').toLowerCase().endsWith('/' + low + '.md'));
+    if (hit) openDoc(hit.id, { heading: head });
+    else toast('「' + name + '」は文書にありません');
+  });
+  // 文字を選ぶと「抜き書きにする」を出す。押したときには選択が消えている端末があるので、選んだ時点で控える
+  document.addEventListener('selectionchange', () => {
+    if (!D.open) return;
+    const s = getSelection();
+    const t = s && !s.isCollapsed && e.body.contains(s.anchorNode) ? s.toString().trim() : '';
+    if (t) { D.sel = t; D.selHead = docHeadingOf(s.anchorNode); }
+    e.sel.hidden = !t;
+  });
+  const btn = $('#d-note');
+  btn.addEventListener('pointerdown', (ev) => ev.preventDefault());   // 押した瞬間に選択を消さない
+  btn.onclick = async () => {
+    if (!D.sel || !D.doc) return;
+    await Notes.add({ bookId: D.doc.id, bookTitle: D.doc.title, chapter: D.selHead || '', quote: D.sel });
+    getSelection().removeAllRanges();
+    e.sel.hidden = true; D.sel = '';
+    toast('抜き書きにしました');
+  };
+}
+
+// 前の版では Markdown も本として棚に入っていた。短いもの（文書向き）を一度だけ「文書」へ移す。
+// 見本（使い方の文章）と、紙・Kindle は動かさない。
+async function classifyDocs() {
+  if (await DB.setting('docsV1')) return 0;
+  let n = 0;
+  for (const b of S.books) {
+    if (b.kind !== 'md' || b.manual || b.author === '見本' || (b.chars || 0) >= DOC_MAX) continue;
+    const f = await DB.get('files', b.id);
+    b.shelf = 'doc';
+    b.snip = plain(((f && f.chapters) || []).map((c) => c.html).join(' ')).replace(/\s+/g, ' ').trim().slice(0, 90);
+    await putBookSafe(b);
+    n++;
+  }
+  await DB.setting('docsV1', true);
+  if (n) await loadBooks();
+  return n;
+}
+
 // ---------------------------------------------------------------- 画面切替
 // 下に引っ張って更新したときに、見ていた画面へ戻ってくるようにする。
 // 端末ごとの見た目の話なので localStorage に置く。読めない環境でも困らない。
-const VIEWS = ['now', 'shelf', 'notes', 'log'];
+const VIEWS = ['now', 'shelf', 'docs', 'notes', 'log'];
 function remember() {
-  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab + '/' + S.shelfSort); } catch {}
+  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab + '/' + S.shelfSort + '/' + S.docSort); } catch {}
 }
 function recallView() {
   let v = '';
   try { v = localStorage.getItem('pocha.view') || ''; } catch {}
-  const [view, tab, sort] = v.split('/');
+  const [view, tab, sort, dsort] = v.split('/');
   if (VIEWS.includes(view)) S.view = view;
   if (SHELF_TABS[tab]) S.shelfTab = tab;
   if (SORTS[sort]) S.shelfSort = sort;
+  if (DOC_SORTS[dsort]) S.docSort = dsort;
 }
 
 function render() {
@@ -2068,10 +2450,11 @@ function render() {
   $('#v-shelf').hidden = S.view !== 'shelf';
   $('#v-notes').hidden = S.view !== 'notes';
   $('#v-log').hidden = S.view !== 'log';
+  $('#v-docs').hidden = S.view !== 'docs';
   $('#btn-search').hidden = S.view !== 'shelf';
-  $('#top-title').textContent = { now: 'ぽちゃ文庫', shelf: '棚', notes: '抜き書き', log: '記録' }[S.view];
+  $('#top-title').textContent = { now: 'ぽちゃ文庫', shelf: '棚', docs: '文書', notes: '抜き書き', log: '記録' }[S.view];
   $$('#tabs button').forEach((b) => b.setAttribute('aria-current', b.dataset.view === S.view));
-  ({ now: renderNow, shelf: renderShelf, notes: renderNotes, log: renderLog })[S.view]();
+  ({ now: renderNow, shelf: renderShelf, docs: renderDocs, notes: renderNotes, log: renderLog })[S.view]();
 }
 
 function searchSheet() {
@@ -2104,10 +2487,12 @@ async function boot() {
   Font.install().catch(() => {});
   await Stats.load();
   await loadBooks();
+  await classifyDocs();
   await settleStatus();
   recallView();
   render();
 
+  bindDocView();
   $$('#tabs button').forEach((b) => {
     b.onclick = () => { S.view = b.dataset.view; remember(); render(); };
   });
@@ -2166,6 +2551,7 @@ async function boot() {
   document.addEventListener('selectionchange', onSelChange);
 
   document.addEventListener('keydown', (e) => {
+    if (D.open && e.key === 'Escape' && !sheetEl) { closeDoc(); return; }
     if (!R.open) return;
     if (e.key === 'Escape') { if (!$('#toc').hidden) { $('#toc').hidden = true; return; } if (!$('#rtop').hidden) { hideUI(); return; } closeReader(); }
     if (e.key === 'ArrowLeft') turn(S.paper.dir === 'v' ? 1 : -1);
@@ -2206,14 +2592,15 @@ async function boot() {
       // 今の戻しで消えている。開いている物に合わせて積み直す。
       selfBack--;
       if (sheetEl && layer !== 'sheet' && layer !== 'reader-sheet') {
-        history.pushState({ layer: R.open ? 'reader-sheet' : 'sheet' }, '');
-      } else if (!sheetEl && R.open && layer !== 'reader') {
+        history.pushState({ layer: (R.open || D.open) ? 'reader-sheet' : 'sheet' }, '');
+      } else if (!sheetEl && (R.open || D.open) && layer !== 'reader') {
         history.pushState({ layer: 'reader' }, '');
       }
       return;
     }
     if (sheetEl && layer !== 'sheet' && layer !== 'reader-sheet') dismissSheetDOM();
     if (R.open && layer !== 'reader' && layer !== 'reader-sheet') closeReaderUI();
+    if (D.open && layer !== 'reader' && layer !== 'reader-sheet') closeDocUI();
   });
 
   // OneDrive の認証から戻ってきていたら受け取って、開いていたシートを開き直す
