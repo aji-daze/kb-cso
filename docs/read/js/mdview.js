@@ -160,6 +160,12 @@ export function snippet(src, n = 90) {
 
 // 描いたあとの仕上げ。コールアウト、見出しの目印、外へのリンク。
 export function decorate(el) {
+  // 欧文の段落には lang="en" を付ける。両端揃えで語の間が空きすぎないよう、ハイフンで切れるようにするため
+  for (const p of el.querySelectorAll('p, li, td, blockquote')) {
+    const t = p.textContent;
+    const latin = (t.match(/[A-Za-z]/g) || []).length;
+    if (latin > 20 && latin > t.replace(/\s/g, '').length * 0.6) p.lang = 'en';
+  }
   let i = 0;
   for (const h of el.querySelectorAll('h1,h2,h3,h4,h5,h6')) h.id = 'dh-' + (i++);
 
@@ -212,4 +218,64 @@ function decodeSafe(s) { try { return decodeURIComponent(s); } catch { return s;
 // 目次用：見出しの一覧
 export function headings(el) {
   return [...el.querySelectorAll('h1,h2,h3,h4')].map((h) => ({ id: h.id, lv: +h.tagName[1], text: h.textContent.trim() }));
+}
+
+// 文書の日付。プロパティの date / created / updated のどれか（見出しの横に出す）
+export function docDate(src) {
+  const { props } = splitFrontmatter(String(src || '').replace(/\r\n?/g, '\n'));
+  for (const k of ['date', 'created', 'updated', '日付', '作成日']) {
+    const p = (props || []).find((x) => x.k.toLowerCase() === k);
+    const v = p && p.v[0] && p.v[0].replace(/^["']|["']$/g, '');
+    const m = v && /(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.exec(v);
+    if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  }
+  return '';
+}
+
+// ---- 蛍光ペン -------------------------------------------------------
+// 印は「文字列＋その直前の数十字」で覚える。文字の大きさや段組みを変えても、
+// 本文が同じなら同じ所に引き直せる。
+function textMap(root) {
+  const nodes = [], starts = [];
+  let full = '';
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) { nodes.push(n); starts.push(full.length); full += n.nodeValue; }
+  return { nodes, starts, full };
+}
+
+// 選んでいる範囲を、本文の中の位置（文字数）に直す
+export function rangeToHl(root, range) {
+  const pre = document.createRange();
+  pre.setStart(root, 0);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  const t = range.toString();
+  const { full } = textMap(root);
+  return { t, pre: full.slice(Math.max(0, start - 24), start) };
+}
+
+// 覚えた印を本文に引く。見つからない印（本文が書き換わった）は飛ばす。
+export function paintHl(root, list) {
+  for (const h of list || []) {
+    if (!h.t) continue;
+    const { nodes, starts, full } = textMap(root);
+    let at = full.indexOf(h.pre + h.t);
+    at = at >= 0 ? at + h.pre.length : full.indexOf(h.t);
+    if (at < 0) continue;
+    const end = at + h.t.length;
+    let tail = true;   // メモの印（✎）は最後の切れ端にだけ付ける
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i], s = starts[i], e = s + n.nodeValue.length;
+      if (e <= at || s >= end) continue;
+      const a = Math.max(at, s) - s, b = Math.min(end, e) - s;
+      if (!n.nodeValue.slice(a, b).trim()) continue;   // 改行だけの所には引かない
+      const r = document.createRange();
+      r.setStart(n, a); r.setEnd(n, b);
+      const m = document.createElement('mark');
+      m.className = 'hl hl-' + (h.c || 'y') + (h.memo && tail ? ' memo' : '');
+      tail = false;
+      m.dataset.hl = h.id;
+      r.surroundContents(m);
+    }
+  }
 }

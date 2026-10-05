@@ -100,7 +100,7 @@ try {
 
 <!-- ================= 文書を読む画面 =================
      本ではない Markdown を、横書きの1枚の紙としてスクロールで読む。 -->
-<div id="doc" hidden data-paper="sepia" data-fam="serif">
+<div id="doc" hidden data-paper="paper" data-fam="serif" data-mode="scroll">
   <header class="dtop">
     <button class="dbtn" id="d-close" aria-label="戻る">‹</button>
     <b id="d-title"></b>
@@ -108,8 +108,19 @@ try {
     <button class="dbtn" id="d-look" aria-label="見え方">Aa</button>
   </header>
   <div class="dline"><i id="d-bar"></i></div>
-  <div id="d-scroll"><article id="d-body" class="mdv"></article></div>
-  <div id="d-sel" hidden><button id="d-note">抜き書きにする</button></div>
+  <div id="d-scroll">
+    <div class="dsheet" id="d-sheet">
+      <div class="dmast"><span id="d-mtitle"></span><span id="d-mdate"></span></div>
+      <div class="dview" id="d-view"><article id="d-body" class="mdv"></article></div>
+      <div class="dfoot" id="d-foot"></div>
+    </div>
+  </div>
+  <div id="d-sel" hidden>
+    <button data-c="y" aria-label="黄色の蛍光ペン"><i class="sw sw-y"></i></button>
+    <button data-c="p" aria-label="桃色の蛍光ペン"><i class="sw sw-p"></i></button>
+    <button data-c="b" aria-label="青いペンで線"><i class="sw sw-b"></i></button>
+    <button id="d-note">抜き書き</button>
+  </div>
 </div>
 
 <input type="file" id="pick" hidden multiple accept=".epub,.md,.markdown,.txt,.text,.zip,application/epub+zip,application/zip,text/plain,text/markdown">

@@ -2160,7 +2160,7 @@ async function drawDocList() {
     const m = mk.get(d.id);
     const p = m && m.y ? Math.round(m.y * 100) : 0;
     const meta = [S.docSort === 'folder' ? '' : docFolder(d), (d.chars || 0).toLocaleString() + '字', '約' + docMin(d) + '分',
-      p >= 98 ? '読了' : (p ? p + '%まで' : ''), docWhen(Math.max((m && m.updated) || 0, d.opened || 0) || d.added)].filter(Boolean);
+      p >= 98 ? '読了' : (p ? p + '%まで' : ''), m && m.hl && m.hl.length ? '印' + m.hl.length : '', docWhen(Math.max((m && m.updated) || 0, d.opened || 0) || d.added)].filter(Boolean);
     return '<div class="drow" data-id="' + d.id + '">' +
       '<button class="dmain"><b>' + esc(d.title) + '</b>' +
         (d.snip ? '<span class="dsn">' + esc(d.snip) + '</span>' : '') +
@@ -2204,7 +2204,7 @@ async function docSheet(id) {
       esc([docFolder(d), (d.chars || 0).toLocaleString() + '字', ns.length ? '抜き書き ' + ns.length + '件' : ''].filter(Boolean).join(' · ')) + '</p>' +
     '<button class="item" id="ds-open"><span class="mark">▶</span><span><b>読む</b></span></button>' +
     '<button class="item" id="ds-book"><span class="mark">▥</span><span><b>本として棚に移す</b>' +
-      '<span>小説などはこちら。ページをめくって読む</span></span></button>' +
+      '<span>小説などはこちら。ページをめくって読む（引いた印は消える）</span></span></button>' +
     '<button class="item" id="ds-del"><span class="mark">✕</span><span><b style="color:var(--danger)">消す</b>' +
       '<span>この文書と、その抜き書きが消えます</span></span></button>',
     (el) => {
@@ -2229,24 +2229,96 @@ async function docSheet(id) {
 }
 
 // ---- 文書を読む画面 -------------------------------------------------
-const D = { open: false, doc: null, saveT: null, sel: '' };
+// 紙の文書のように読む。上に題名と日付の柱、本文は明朝（欧文は Times 系）の両端揃え。
+// 読み方は2つ：スクロール（1枚の長い紙）／めくる（ページ。幅があれば2段組み、下にページ番号）。
+// 選んだ文字に蛍光ペン（黄・桃）か青ペンの線を引ける。印にはメモを付けられる。
+const D = { open: false, doc: null, md: null, html: '', hl: [], saveT: null, sel: '', selHead: '', selHl: null, page: 0, pages: 1, step: 1, mode: 'scroll' };
 function docEls() {
-  return { root: $('#doc'), body: $('#d-body'), scroll: $('#d-scroll'), bar: $('#d-bar'), title: $('#d-title'), sel: $('#d-sel') };
+  return {
+    root: $('#doc'), body: $('#d-body'), scroll: $('#d-scroll'), view: $('#d-view'), bar: $('#d-bar'),
+    title: $('#d-title'), sel: $('#d-sel'), foot: $('#d-foot'), mtitle: $('#d-mtitle'), mdate: $('#d-mdate'),
+  };
 }
 
-// 見え方は端末ごと（スマホは大きめ、PC は小さめ、のように分けたいので localStorage）
-const DOC_LOOK = { paper: 'sepia', fs: 17, fam: 'serif' };
+// 見え方は端末ごと（localStorage）。読み方を選んでいなければ、幅のある画面（タブレット）はめくる、スマホはスクロール。
+const DOC_LOOK = { paper: 'paper', fs: 17, fam: 'serif', mode: '' };
 function docLook() {
   let v = null;
   try { v = JSON.parse(localStorage.getItem('pocha.doc') || 'null'); } catch {}
-  return Object.assign({}, DOC_LOOK, v || {});
+  const l = Object.assign({}, DOC_LOOK, v || {});
+  if (!l.mode) l.mode = innerWidth >= 700 ? 'page' : 'scroll';
+  return l;
 }
 function applyDocLook(l) {
   const e = docEls();
   e.root.dataset.paper = l.paper;
   e.root.dataset.fam = l.fam;
+  e.root.dataset.mode = D.mode = l.mode;
   e.root.style.setProperty('--dfs', l.fs + 'px');
-  if (D.open) Paper.tint(getComputedStyle($('.dtop', e.root)).backgroundColor);
+}
+function tintDoc() {
+  const e = docEls();
+  Paper.tint(getComputedStyle(D.mode === 'page' || e.root.dataset.chrome === 'off' ? e.scroll : $('.dtop', e.root)).backgroundColor);
+}
+
+// 本文を描いて、印を引く（印を足した・消したときもここから描き直す）
+function paintDoc() {
+  const e = docEls();
+  e.body.innerHTML = D.md != null ? MdView.render(D.md) : MdView.sanitize(D.html);
+  MdView.decorate(e.body);
+  MdView.paintHl(e.body, D.hl);
+}
+
+// 今どこまで読んだか（0〜1）
+function docRatio() {
+  const e = docEls();
+  if (D.mode === 'page') return D.pages > 1 ? D.page / (D.pages - 1) : 1;
+  const max = e.scroll.scrollHeight - e.scroll.clientHeight;
+  return max > 0 ? Math.min(1, e.scroll.scrollTop / max) : 1;
+}
+
+// めくるときのページ割り。CSS の段組みで横に流し、1ページぶん（幅＋段間）ずつ送る。
+function layoutDoc(ratio) {
+  const e = docEls(), b = e.body;
+  if (D.mode !== 'page') {
+    b.style.height = b.style.columnCount = b.style.columnGap = b.style.transform = '';
+    e.foot.textContent = '';
+    requestAnimationFrame(() => {
+      e.scroll.scrollTop = (ratio || 0) * Math.max(0, e.scroll.scrollHeight - e.scroll.clientHeight);
+      paintDocBar();
+    });
+    return;
+  }
+  const W = e.view.clientWidth, H = e.view.clientHeight;
+  const two = W >= 640;
+  const G = two ? 48 : 40;
+  b.style.height = H + 'px';
+  b.style.columnCount = two ? 2 : 1;
+  b.style.columnGap = G + 'px';
+  D.step = W + G;
+  D.pages = Math.max(1, Math.round((b.scrollWidth + G) / D.step));
+  goDocPage(Math.round((ratio || 0) * (D.pages - 1)), true);
+}
+
+function goDocPage(i, quiet) {
+  const e = docEls();
+  D.page = Math.max(0, Math.min(D.pages - 1, i));
+  e.body.style.transform = 'translateX(' + (-D.page * D.step) + 'px)';
+  e.foot.textContent = (D.page + 1) + ' / ' + D.pages;
+  paintDocBar();
+  if (!quiet) { clearTimeout(D.saveT); D.saveT = setTimeout(saveDocPos, 600); }
+}
+
+// 見出しなどの要素へ飛ぶ（どちらの読み方でも）
+function docJump(el) {
+  if (!el) return;
+  const e = docEls();
+  if (D.mode === 'page') {
+    const x = el.getBoundingClientRect().left - e.body.getBoundingClientRect().left;
+    goDocPage(Math.floor((x + 2) / D.step));
+  } else {
+    e.scroll.scrollTo({ top: el.getBoundingClientRect().top - e.scroll.getBoundingClientRect().top + e.scroll.scrollTop - 12, behavior: 'smooth' });
+  }
 }
 
 async function openDoc(id, opt = {}) {
@@ -2254,42 +2326,50 @@ async function openDoc(id, opt = {}) {
   if (!d) return;
   const file = await DB.get('files', id);
   if (!file) { toast('本文が見つかりません'); return; }
-  if (D.open) saveDocPos();          // 文書の中のリンクから別の文書へ
+  if (D.open) await saveDocPos();          // 文書の中のリンクから別の文書へ
   const e = docEls();
-  e.body.innerHTML = file.md != null ? MdView.render(file.md)
-    : MdView.sanitize((file.chapters || []).map((c) => c.html).join(''));
-  MdView.decorate(e.body);
-  e.title.textContent = d.title;
-  e.sel.hidden = true; D.sel = '';
+  const m = await markOf(id);
+  D.doc = d;
+  D.md = file.md != null ? file.md : null;
+  D.html = D.md == null ? (file.chapters || []).map((c) => c.html).join('') : '';
+  D.hl = Array.isArray(m.hl) ? m.hl : [];
+  e.title.textContent = e.mtitle.textContent = d.title;
+  const day = new Date(d.added || Date.now());
+  e.mdate.textContent = (D.md && MdView.docDate(D.md)) ||
+    day.getFullYear() + '-' + String(day.getMonth() + 1).padStart(2, '0') + '-' + String(day.getDate()).padStart(2, '0');
+  e.sel.hidden = true; D.sel = ''; D.selHl = null;
   const first = !D.open;
-  D.open = true; D.doc = d;
+  D.open = true;
   e.root.hidden = false;
   applyDocLook(docLook());
+  e.root.dataset.chrome = D.mode === 'page' ? 'off' : 'on';
+  paintDoc();
   if (first) pushReaderHistory();
-  const m = await markOf(id);
+  tintDoc();
+  // 書体の読み込みが後から終わると行の高さが変わるので、そのときは割り直す
+  if (document.fonts && document.fonts.status !== 'loaded') {
+    document.fonts.ready.then(() => { if (D.open && D.doc === d) layoutDoc(docRatio()); });
+  }
   requestAnimationFrame(() => {
-    const max = Math.max(0, e.scroll.scrollHeight - e.scroll.clientHeight);
-    const h = opt.heading ? MdView.headings(e.body).find((x) => x.text.includes(opt.heading)) : null;
-    e.scroll.scrollTop = h ? $('#' + h.id, e.body).offsetTop - 8 : (m.y || 0) * max;
-    paintDocBar();
+    layoutDoc(opt.heading ? 0 : (m.y || 0));
+    if (opt.heading) {
+      const h = MdView.headings(e.body).find((x) => x.text.includes(opt.heading));
+      if (h) requestAnimationFrame(() => docJump($('#' + h.id, e.body)));
+    }
   });
   d.opened = Date.now();
   await putBookSafe(d);
 }
 
 function paintDocBar() {
-  const e = docEls();
-  const max = e.scroll.scrollHeight - e.scroll.clientHeight;
-  e.bar.style.width = (max > 0 ? Math.min(100, e.scroll.scrollTop / max * 100) : 100) + '%';
+  docEls().bar.style.width = Math.round(docRatio() * 100) + '%';
 }
 
 function saveDocPos() {
-  const e = docEls();
   if (!D.doc) return;
-  const max = e.scroll.scrollHeight - e.scroll.clientHeight;
-  const y = max > 0 ? Math.min(1, e.scroll.scrollTop / max) : 1;
   clearTimeout(D.saveT);
-  return DB.put('marks', { id: D.doc.id, ch: 0, off: 0, pct: y, y, lastLine: '', updated: Date.now() });
+  const y = docRatio();
+  return DB.put('marks', { id: D.doc.id, ch: 0, off: 0, pct: y, y, hl: D.hl, lastLine: '', updated: Date.now() });
 }
 
 // DOM・状態を片づけるだけ。history には触らない（popstate から呼ぶ用）。
@@ -2299,7 +2379,8 @@ function closeDocUI() {
   const e = docEls();
   e.root.hidden = true;
   e.body.innerHTML = '';
-  D.open = false; D.doc = null; D.sel = '';
+  e.body.style.transform = '';
+  D.open = false; D.doc = null; D.sel = ''; D.hl = [];
   applyChrome();
   loadBooks().then(render);
 }
@@ -2314,17 +2395,16 @@ function closeDoc() {
 function docTocSheet() {
   const e = docEls();
   const hs = MdView.headings(e.body);
+  const marks = D.hl.length;
   sheet('<h3>目次</h3>' + (hs.length
     ? hs.map((h) => '<button class="item toc-l' + Math.min(h.lv, 4) + '" data-h="' + h.id + '"><span class="mark">·</span><span><b>' + esc(h.text) + '</b></span></button>').join('')
-    : '<div class="empty">見出しがありません</div>'),
+    : '<div class="empty">見出しがありません</div>') +
+    (marks ? '<div class="h">引いた印</div>' + D.hl.map((h) =>
+      '<button class="item" data-m="' + h.id + '"><span class="mark"><i class="sw sw-' + (h.c || 'y') + '"></i></span><span><b style="font-weight:400">' +
+      esc(h.t.slice(0, 60)) + (h.t.length > 60 ? '…' : '') + '</b>' + (h.memo ? '<span>✎ ' + esc(h.memo.slice(0, 50)) + '</span>' : '') + '</span></button>').join('') : ''),
     (el) => {
-      $$('[data-h]', el).forEach((x) => {
-        x.onclick = () => {
-          closeSheet();
-          const t = $('#' + x.dataset.h, e.body);
-          if (t) e.scroll.scrollTo({ top: t.offsetTop - 8, behavior: 'smooth' });
-        };
-      });
+      $$('[data-h]', el).forEach((x) => { x.onclick = () => { closeSheet(); docJump($('#' + x.dataset.h, e.body)); }; });
+      $$('[data-m]', el).forEach((x) => { x.onclick = () => { closeSheet(); docJump($('mark[data-hl="' + x.dataset.m + '"]', e.body)); }; });
     });
 }
 
@@ -2333,7 +2413,8 @@ function docLookSheet() {
   const seg = (key, opts) => '<div class="seg dlk" data-k="' + key + '">' + opts.map(([v, label]) =>
     '<button data-v="' + v + '" aria-pressed="' + (String(l[key]) === String(v)) + '">' + label + '</button>').join('') + '</div>';
   sheet('<h3>見え方</h3>' +
-    '<div class="h">紙</div>' + seg('paper', [['sepia', 'セピア'], ['white', '白'], ['dark', '黒'], ['app', 'アプリと同じ']]) +
+    '<div class="h">読み方</div>' + seg('mode', [['page', 'めくる'], ['scroll', 'スクロール']]) +
+    '<div class="h">紙</div>' + seg('paper', [['paper', '紙'], ['sepia', 'セピア'], ['dark', '黒'], ['app', 'アプリと同じ']]) +
     '<div class="h">文字の大きさ</div>' + seg('fs', [[15, '小'], [17, '中'], [19, '大'], [22, '特大']]) +
     '<div class="h">書体</div>' + seg('fam', [['serif', '明朝'], ['sans', 'ゴシック']]),
     (el) => {
@@ -2344,12 +2425,12 @@ function docLookSheet() {
           now[key] = key === 'fs' ? +b.dataset.v : b.dataset.v;
           try { localStorage.setItem('pocha.doc', JSON.stringify(now)); } catch {}
           $$('button', b.parentElement).forEach((x) => x.setAttribute('aria-pressed', x === b));
-          // 文字の大きさを変えても、読んでいた所を保つ
-          const e = docEls();
-          const max0 = e.scroll.scrollHeight - e.scroll.clientHeight;
-          const y = max0 > 0 ? e.scroll.scrollTop / max0 : 0;
+          // 読み方・文字の大きさを変えても、読んでいた所を保つ
+          const y = docRatio();
           applyDocLook(now);
-          e.scroll.scrollTop = y * Math.max(0, e.scroll.scrollHeight - e.scroll.clientHeight);
+          docEls().root.dataset.chrome = 'on';
+          tintDoc();
+          requestAnimationFrame(() => layoutDoc(y));
         };
       });
     });
@@ -2364,16 +2445,95 @@ function docHeadingOf(node) {
   return '';
 }
 
+// 印を足す・変える・消したあと。描き直して、今のページに戻す。
+async function refreshHl() {
+  const y = docRatio();
+  const page = D.page;
+  paintDoc();
+  if (D.mode === 'page') { layoutDoc(y); goDocPage(page, true); } else paintDocBar();
+  await saveDocPos();
+}
+
+function hlSheet(id) {
+  const h = D.hl.find((x) => x.id === id);
+  if (!h) return;
+  const sw = (c, label) => '<button data-c="' + c + '" aria-pressed="' + ((h.c || 'y') === c) + '"><i class="sw sw-' + c + '"></i> ' + label + '</button>';
+  sheet('<h3>引いた印</h3>' +
+    '<p class="hlq">' + esc(h.t.slice(0, 200)) + (h.t.length > 200 ? '…' : '') + '</p>' +
+    '<div class="seg hlc">' + sw('y', '黄') + sw('p', '桃') + sw('b', '青ペン') + '</div>' +
+    '<label class="field"><span>メモ（余白の書き込み）</span><textarea id="hl-memo" rows="3" placeholder="例：企画に使えるか？">' + esc(h.memo || '') + '</textarea></label>' +
+    '<div class="actions"><button class="btn" id="hl-note">抜き書きにする</button><button class="btn danger" id="hl-del">消す</button><button class="btn primary" id="hl-ok">閉じる</button></div>',
+    (el) => {
+      $$('.hlc button', el).forEach((b) => {
+        b.onclick = async () => {
+          h.c = b.dataset.c;
+          $$('.hlc button', el).forEach((x) => x.setAttribute('aria-pressed', x === b));
+          await refreshHl();
+        };
+      });
+      const keepMemo = async () => {
+        const v = $('#hl-memo', el).value.trim();
+        if (v === (h.memo || '')) return;
+        h.memo = v;
+        await refreshHl();
+      };
+      $('#hl-ok', el).onclick = async () => { await keepMemo(); closeSheet(); };
+      $('#hl-note', el).onclick = async () => {
+        await keepMemo();
+        const el0 = $('mark[data-hl="' + h.id + '"]', docEls().body);
+        await Notes.add({ bookId: D.doc.id, bookTitle: D.doc.title, chapter: el0 ? docHeadingOf(el0) : '', quote: h.t, note: h.memo || '' });
+        closeSheet(); toast('抜き書きにしました');
+      };
+      $('#hl-del', el).onclick = async () => {
+        D.hl = D.hl.filter((x) => x !== h);
+        closeSheet(); await refreshHl(); toast('印を消しました');
+      };
+    });
+}
+
 function bindDocView() {
   const e = docEls();
   $('#d-close').onclick = closeDoc;
   $('#d-toc').onclick = docTocSheet;
   $('#d-look').onclick = docLookSheet;
   e.scroll.addEventListener('scroll', () => {
+    if (D.mode === 'page') { if (e.scroll.scrollTop) e.scroll.scrollTop = 0; return; }
     paintDocBar();
     clearTimeout(D.saveT);
     D.saveT = setTimeout(saveDocPos, 600);
   }, { passive: true });
+
+  // めくる：左右の3分の1を押す／横に払う。真ん中で上の帯を出し入れ。
+  // 文字を選んでいる最中の押下は、選択を消すだけでページは送らない。
+  let down = null;
+  e.view.addEventListener('pointerdown', (ev) => {
+    const s = getSelection();
+    down = { x: ev.clientX, y: ev.clientY, sel: !!(s && !s.isCollapsed), t: Date.now() };
+  });
+  e.view.addEventListener('pointerup', (ev) => {
+    if (!down || D.mode !== 'page') return;
+    const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
+    if (!down.sel && Math.abs(dx) > 50 && Math.abs(dy) < 60 && Date.now() - down.t < 700) {
+      down.swiped = true;
+      goDocPage(D.page + (dx < 0 ? 1 : -1));
+    }
+  });
+  e.view.addEventListener('click', (ev) => {
+    const d0 = down; down = null;
+    if (!D.open || (d0 && (d0.sel || d0.swiped))) return;
+    const s = getSelection();
+    if (s && !s.isCollapsed) return;
+    if (ev.target.closest('a[data-note], a[href]')) return;
+    const m = ev.target.closest('mark.hl');
+    if (m) { hlSheet(m.dataset.hl); return; }
+    if (D.mode !== 'page') return;
+    const r = e.view.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width;
+    if (x < 1 / 3) goDocPage(D.page - 1);
+    else if (x > 2 / 3) goDocPage(D.page + 1);
+    else { e.root.dataset.chrome = e.root.dataset.chrome === 'off' ? 'on' : 'off'; tintDoc(); }
+  });
+
   // 文書の中のリンク。[[ノート]] は同じ名前の文書を開く。#見出し はその見出しへ
   e.body.addEventListener('click', (ev) => {
     const a = ev.target.closest('a[data-note]');
@@ -2382,7 +2542,7 @@ function bindDocView() {
     const name = a.dataset.note, head = a.dataset.heading;
     if (!name) {
       const h = MdView.headings(e.body).find((x) => x.text.includes(head));
-      if (h) e.scroll.scrollTo({ top: $('#' + h.id, e.body).offsetTop - 8, behavior: 'smooth' });
+      if (h) docJump($('#' + h.id, e.body));
       return;
     }
     const low = name.toLowerCase();
@@ -2391,23 +2551,51 @@ function bindDocView() {
     if (hit) openDoc(hit.id, { heading: head });
     else toast('「' + name + '」は文書にありません');
   });
-  // 文字を選ぶと「抜き書きにする」を出す。押したときには選択が消えている端末があるので、選んだ時点で控える
+
+  // 文字を選ぶと、蛍光ペンと抜き書きの帯を出す。押したときには選択が消えている端末があるので、選んだ時点で控える
   document.addEventListener('selectionchange', () => {
     if (!D.open) return;
     const s = getSelection();
-    const t = s && !s.isCollapsed && e.body.contains(s.anchorNode) ? s.toString().trim() : '';
-    if (t) { D.sel = t; D.selHead = docHeadingOf(s.anchorNode); }
+    const ok = s && !s.isCollapsed && s.rangeCount && e.body.contains(s.anchorNode) && e.body.contains(s.focusNode);
+    const t = ok ? s.toString().trim() : '';
+    if (t) {
+      D.sel = t;
+      D.selHead = docHeadingOf(s.anchorNode);
+      D.selHl = MdView.rangeToHl(e.body, s.getRangeAt(0));
+    }
     e.sel.hidden = !t;
   });
-  const btn = $('#d-note');
-  btn.addEventListener('pointerdown', (ev) => ev.preventDefault());   // 押した瞬間に選択を消さない
-  btn.onclick = async () => {
+  $$('button', e.sel).forEach((b) => b.addEventListener('pointerdown', (ev) => ev.preventDefault()));   // 押した瞬間に選択を消さない
+  $$('[data-c]', e.sel).forEach((b) => {
+    b.onclick = async () => {
+      if (!D.selHl || !D.selHl.t.trim()) return;
+      D.hl.push({ id: DB.uid('h'), t: D.selHl.t, pre: D.selHl.pre, c: b.dataset.c, at: Date.now() });
+      getSelection().removeAllRanges();
+      e.sel.hidden = true; D.sel = ''; D.selHl = null;
+      await refreshHl();
+    };
+  });
+  $('#d-note').onclick = async () => {
     if (!D.sel || !D.doc) return;
     await Notes.add({ bookId: D.doc.id, bookTitle: D.doc.title, chapter: D.selHead || '', quote: D.sel });
     getSelection().removeAllRanges();
     e.sel.hidden = true; D.sel = '';
     toast('抜き書きにしました');
   };
+
+  // 回転・幅の変化でページを割り直す
+  let rsT = null;
+  addEventListener('resize', () => {
+    if (!D.open) return;
+    clearTimeout(rsT);
+    const y = docRatio();
+    rsT = setTimeout(() => layoutDoc(y), 200);
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (!D.open || sheetEl || D.mode !== 'page') return;
+    if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') { ev.preventDefault(); goDocPage(D.page + 1); }
+    if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); goDocPage(D.page - 1); }
+  });
 }
 
 // 前の版では Markdown も本として棚に入っていた。短いもの（文書向き）を一度だけ「文書」へ移す。
