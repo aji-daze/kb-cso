@@ -141,7 +141,7 @@ export async function list(folderId) {
   let url = folderId
     ? GRAPH + '/me/drive/items/' + encodeURIComponent(folderId) + '/children'
     : GRAPH + '/me/drive/root/children';
-  url += '?$top=200&$select=id,name,size,folder,file,@microsoft.graph.downloadUrl';
+  url += '?$top=200&$select=id,name,size,folder,file,eTag,lastModifiedDateTime,@microsoft.graph.downloadUrl';
   const out = [];
   while (url) {
     const j = await api(url);
@@ -152,12 +152,27 @@ export async function list(folderId) {
         isFolder: !!it.folder,
         size: Number(it.size || 0),
         url: it['@microsoft.graph.downloadUrl'] || '',
+        etag: it.eTag || '',
+        mtime: it.lastModifiedDateTime || '',
       });
     }
     url = j['@odata.nextLink'] || '';
   }
   out.sort((a, b) => (b.isFolder - a.isFolder) || a.name.localeCompare(b.name, 'ja'));
   return out;
+}
+
+// 1件の今の版（開くときに、取り込んだときから書き換わっていないかを見る）。消えていれば null。
+export async function stat(id) {
+  try {
+    const it = await api(GRAPH + '/me/drive/items/' + encodeURIComponent(id) +
+      '?$select=id,name,size,eTag,lastModifiedDateTime,@microsoft.graph.downloadUrl');
+    return { id: it.id, name: it.name, size: Number(it.size || 0), etag: it.eTag || '',
+      mtime: it.lastModifiedDateTime || '', url: it['@microsoft.graph.downloadUrl'] || '' };
+  } catch (e) {
+    if (/ 404$/.test(e.message)) return null;
+    throw e;
+  }
 }
 
 export async function download(item) {

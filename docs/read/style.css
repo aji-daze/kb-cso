@@ -751,3 +751,30 @@ input, select, textarea { font-size: 16px; }
 .sheet .toc-l3 { padding-left: 28px; }
 .sheet .toc-l3 b, .sheet .toc-l4 b { font-weight: 400; }
 .sheet .toc-l4 { padding-left: 42px; }
+
+/* 引き継ぎの一行（初めて開いた本）。ページを送ると消える */
+#rnote {
+  position: absolute; left: 12px; right: 12px; top: calc(10px + var(--safe-t)); z-index: 8;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  background: var(--pg); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 4px; padding: 9px 12px; font-size: 12.5px; line-height: 1.6; box-shadow: 0 6px 18px rgba(0,0,0,.14);
+}
+#rnote[hidden] { display: none; }
+#rnote > span:first-child { flex: 1 1 14em; }
+#rnote .rn-a { display: flex; gap: 6px; }
+#rnote button {
+  font-size: 12px; padding: 5px 10px; border-radius: 3px; color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
+}
+
+/* 辞書 */
+.dict-w { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 10px; }
+.dict-w b { font-size: 22px; font-weight: 700; font-family: "Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif; }
+.dict-w span { font-size: 15px; color: var(--tx); }
+.dict-w small { font-size: 10.5px; color: var(--sub); margin-left: 6px; }
+.dict-r { font-size: 14px; color: var(--sub); line-height: 1.85; }
+.dict-t { white-space: pre-wrap; color: var(--tx); max-height: 46vh; overflow-y: auto; }
+.dict-src { margin-top: 8px; font-size: 11.5px; }
+.dict-l { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.dict-l a { text-decoration: none; }
+#d-sel #d-dict { padding: 0 12px; }

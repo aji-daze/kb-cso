@@ -11,6 +11,7 @@ import * as OneDrive from './onedrive.js';
 import * as Folder from './folder.js';
 import { Pager } from './pager.js';
 import * as MdView from './mdview.js';
+import * as Dict from './dict.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
@@ -163,9 +164,14 @@ function chapChars(chapters) { return (chapters || []).map((c) => plain(c.html).
 
 // 取り込んだ本は「本棚」に入るだけ（stack）。開いた時点で「読んでいる」に移る。
 // 紙・Kindle の登録は読んでいる本を書きとめるものなので、呼び出し側が reading を渡す。
+// 同じ取り込み元（同じ名前のファイル）の本がもうあれば、新しく作らずに中身だけ入れ替える。
+// 読んだ位置・印・抜き書き・ページ設定・状態はそのまま残る。
+const sameSource = (src) => (src ? S.all.find((b) => b.source === src) : null);
+
 async function addBook(meta, chapters, status = 'stack') {
   const counts = chapChars(chapters);
-  const book = {
+  const old = sameSource(meta.source);
+  const fresh = {
     id: DB.uid('b'),
     title: meta.title || '(無題)',
     author: meta.author || '',
@@ -181,16 +187,25 @@ async function addBook(meta, chapters, status = 'stack') {
     cover: meta.cover || null,
     paraFix: 1,                   // 段落を1行ずつ組む版で取り込んだ（前の版の本は起動時に直す）
     manual: meta.manual || null,
+    src: meta.ref || null,        // 取り込み元（OneDrive・フォルダ）。開くときに新しい版が無いか見る
   };
+  const book = old && !isDoc(old)
+    ? Object.assign({}, old, {
+      title: fresh.title, author: fresh.author || old.author, kind: fresh.kind, vertical: fresh.vertical,
+      chapChars: counts, chars: fresh.chars, cover: fresh.cover || old.cover, paraFix: 1,
+      src: fresh.src || old.src || null, refreshed: Date.now(),
+    })
+    : fresh;
   await DB.put('books', book);
   if (chapters) await DB.put('files', { id: book.id, chapters });
   await loadBooks();
-  return book;
+  return Object.assign({ _upd: book !== fresh }, book);
 }
 
 // 文書は元の Markdown をそのまま持つ（描くたびに組む。本のような章分けはしない）。
 async function addDoc(meta, text) {
-  const doc = {
+  const old = sameSource(meta.source);
+  const fresh = {
     id: DB.uid('d'),
     title: meta.title || '(無題)',
     author: '',
@@ -204,24 +219,29 @@ async function addDoc(meta, text) {
     snip: MdView.snippet(text),
     cover: null,
     manual: null,
+    src: meta.ref || null,
   };
+  const doc = old && isDoc(old)
+    ? Object.assign({}, old, { title: fresh.title, chars: fresh.chars, snip: fresh.snip, src: fresh.src || old.src || null, refreshed: Date.now() })
+    : fresh;
   await DB.put('books', doc);
   await DB.put('files', { id: doc.id, md: text });
   await loadBooks();
-  return doc;
+  return Object.assign({ _upd: doc !== fresh }, doc);
 }
 
 // 「本 3冊・文書 2件を入れました」
-function putLabel(n, nd) {
+function putLabel(n, nd, nu = 0) {
   const nb = n - nd;
-  return [nb ? '本' + nb + '冊' : '', nd ? '文書' + nd + '件' : ''].filter(Boolean).join('・') + 'を入れました';
+  return [nb ? '本' + nb + '冊' : '', nd ? '文書' + nd + '件' : ''].filter(Boolean).join('・') + 'を入れました' +
+    (nu ? '（うち' + nu + '件は同じ名前のものを新しい版に更新）' : '');
 }
 
 export const BOOK_EXT = /\.(epub|md|markdown|txt|text|zip)$/i;
 const isBookName = (n) => BOOK_EXT.test(n || '');
 
 // 取り込みの本体。ファイル選択・Google ドライブ・OneDrive のどれからでもここに来る。
-async function importBlob(filename, blob, source, status = 'stack') {
+async function importBlob(filename, blob, source, ref = null, status = 'stack') {
   const name = String(filename).replace(/\.[^.]+$/, '');
 
   // 青空文庫のテキストは zip で配られる（中身は Shift_JIS、ルビは ｜漢字《かんじ》）
@@ -235,7 +255,7 @@ async function importBlob(filename, blob, source, status = 'stack') {
     const a = splitAozora(text);
     const title = a.title || name;
     return addBook({
-      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, ref,
     }, txtToChapters(a.body, title), status);
   }
 
@@ -244,7 +264,7 @@ async function importBlob(filename, blob, source, status = 'stack') {
     const b = await readEpub(blob);
     return addBook({
       title: b.title || name, author: b.author, kind: 'epub',
-      vertical: b.vertical, cover: b.cover, source: source || filename,
+      vertical: b.vertical, cover: b.cover, source: source || filename, ref,
     }, b.chapters, status);
   }
   // 文字コードは中身から判別する。青空文庫のテキストは Shift_JIS なので、
@@ -257,15 +277,17 @@ async function importBlob(filename, blob, source, status = 'stack') {
     const a = splitAozora(text);
     const title = a.title || name;
     return addBook({
-      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename,
+      title, author: a.author, kind: 'aozora', vertical: true, source: source || filename, ref,
     }, txtToChapters(a.body, title), status);
   }
 
-  if (isMd && text.length < DOC_MAX) return addDoc({ title: name, source: source || filename }, text);
+  // 前に入れたものの入れ直しなら、置き場（文書／本）は前と同じにする
+  const prev = sameSource(source || filename);
+  if (isMd && (prev ? isDoc(prev) : text.length < DOC_MAX)) return addDoc({ title: name, source: source || filename, ref }, text);
   const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
   return addBook({
     title: name, kind: isMd ? 'md' : 'txt',
-    vertical: !isMd && /[《》｜]/.test(text), source: source || filename,
+    vertical: !isMd && /[《》｜]/.test(text), source: source || filename, ref,
   }, chs, status);
 }
 
@@ -285,14 +307,14 @@ async function mirrorToFolder(files) {
 }
 
 async function importFiles(files) {
-  let n = 0, nd = 0, err = 0, first = '';
+  let n = 0, nd = 0, nu = 0, err = 0, first = '';
   const ok = [];
   for (const f of files) {
-    try { const r = await importBlob(f.name, f); ok.push(f); n++; if (r && isDoc(r)) nd++; }
+    try { const r = await importBlob(f.name, f); ok.push(f); n++; if (r && isDoc(r)) nd++; if (r && r._upd) nu++; }
     catch (e) { console.warn(f.name, e); err++; if (!first) first = e.message || String(e); }
   }
   const copied = ok.length ? await mirrorToFolder(ok) : 0;
-  if (n) toast(putLabel(n, nd) +
+  if (n) toast(putLabel(n, nd, nu) +
     (copied ? '／' + copied + '件をフォルダにも保存' : '') +
     (err ? '（' + err + '件は読めませんでした）' : ''));
   else if (err) toast('読み込めませんでした: ' + first.slice(0, 60));
@@ -1378,24 +1400,17 @@ async function folderList(handle) {
   };
 }
 
-async function folderGet(items, msg, handle, replace) {
-  let n = 0, nd = 0, err = 0, first = '';
+async function folderGet(items, msg, handle) {
+  let n = 0, nd = 0, nu = 0, err = 0, first = '';
   const done = [];
   for (const f of items) {
     if (msg) msg.textContent = '取り込んでいます… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
     try {
       const file = await Folder.read(f);
       const src = folderSource(f.path);
-      // 入れ直しのときは古いほうを先に片づける（抜き書きは残す）
-      if (replace) {
-        const olds = S.all.filter((b) => b.source === src);
-        for (const b of olds) {
-          await DB.del('files', b.id); await DB.del('marks', b.id); await DB.del('books', b.id);
-        }
-        if (olds.length) await loadBooks();
-      }
-      const r = await importBlob(f.name, file, src);
-      done.push(f); n++; if (r && isDoc(r)) nd++;
+      // 入れ直しは同じ本の中身を入れ替える（読んだ位置・印・抜き書きは残る）
+      const r = await importBlob(f.name, file, src, { p: 'folder', path: f.path, m: f.mtime, s: f.size });
+      done.push(f); n++; if (r && isDoc(r)) nd++; if (r && r._upd) nu++;
     } catch (e) {
       console.warn(f.path, e); err++;
       if (!first) first = (e && e.message) || String(e);
@@ -1403,9 +1418,9 @@ async function folderGet(items, msg, handle, replace) {
   }
   if (done.length) await Folder.remember(done);
   if (msg) msg.textContent = n
-    ? putLabel(n, nd) + (err ? '（' + err + '件は読めませんでした：' + first.slice(0, 40) + '）' : '')
+    ? putLabel(n, nd, nu) + (err ? '（' + err + '件は読めませんでした：' + first.slice(0, 40) + '）' : '')
     : '取り込めませんでした：' + first.slice(0, 60);
-  toast(n ? putLabel(n, nd) : '取り込めませんでした');
+  toast(n ? putLabel(n, nd, nu) : '取り込めませんでした');
   render();
   if (handle) folderList(handle);
 }
@@ -1505,17 +1520,18 @@ async function cloudBrowse(prov, stack) {
 }
 
 async function cloudGet(prov, items, msg) {
-  let n = 0, nd = 0, err = 0;
+  let n = 0, nd = 0, nu = 0, err = 0;
   for (const x of items) {
     if (msg) msg.textContent = '落としています… ' + (n + err + 1) + ' / ' + items.length + '：' + x.name;
     try {
       const blob = await prov.download(x);
-      const r = await importBlob(x.name, blob, prov.label + ':' + x.name);
-      n++; if (r && isDoc(r)) nd++;
+      const r = await importBlob(x.name, blob, prov.label + ':' + x.name,
+        { p: prov.key, id: x.id, e: x.etag || '', m: x.mtime || '', s: x.size || 0 });
+      n++; if (r && isDoc(r)) nd++; if (r && r._upd) nu++;
     } catch (e) { console.warn(e); err++; }
   }
-  if (msg) msg.textContent = putLabel(n, nd) + (err ? '（' + err + '件は取れませんでした）' : '');
-  toast(n ? putLabel(n, nd) : '取り込めませんでした');
+  if (msg) msg.textContent = putLabel(n, nd, nu) + (err ? '（' + err + '件は取れませんでした）' : '');
+  toast(n ? putLabel(n, nd, nu) : '取り込めませんでした');
   render();
 }
 
@@ -1543,10 +1559,193 @@ function applyPaper() {
   if (R.open) Paper.tint(getComputedStyle(e.root).backgroundColor);
 }
 
+// ---- 開くときに取り込み元を見て、新しい版なら入れ替える ----------------------
+// OneDrive（Microsoft Graph）と、覚えているフォルダ（PC の OneDrive 同期フォルダなど）が対象。
+// 待つのは短く。電波が悪い・サインインが切れている・許可が無いときは、手元の版でそのまま開く。
+const within = (p, ms) => Promise.race([p, new Promise((ok) => setTimeout(() => ok(null), ms))]);
+
+async function newerSource(r) {
+  if (r.p === 'onedrive') {
+    if (!navigator.onLine || !(await OneDrive.resume())) return null;
+    const st = await OneDrive.stat(r.id);
+    if (!st) return null;
+    if ((r.e && st.etag === r.e) || (!r.e && st.mtime === r.m && st.size === r.s)) return null;
+    return { name: st.name, ref: Object.assign({}, r, { e: st.etag, m: st.mtime, s: st.size }),
+      get: () => OneDrive.download({ id: r.id, url: st.url }) };
+  }
+  if (r.p === 'folder') {
+    const h = await Folder.getHandle();
+    if (!h || !(await Folder.permission(h, false))) return null;
+    const file = await Folder.fileAt(h, r.path);
+    if (!file || (file.lastModified === r.m && file.size === r.s)) return null;
+    return { name: file.name, ref: Object.assign({}, r, { m: file.lastModified, s: file.size }), get: async () => file };
+  }
+  return null;
+}
+
+async function freshen(b) {
+  if (!b || !b.src) return b;
+  try {
+    const hit = await within(newerSource(b.src).catch(() => null), 3000);
+    if (!hit) return b;
+    toast('「' + b.title + '」の新しい版を取り込んでいます…');
+    await importBlob(hit.name, await hit.get(), b.source, hit.ref);
+    if (b.src.p === 'folder') await Folder.remember([{ path: b.src.path, mtime: hit.ref.m, size: hit.ref.s }]);
+    toast('「' + b.title + '」を新しい版に更新しました');
+    return S.all.find((x) => x.id === b.id) || b;
+  } catch (e) {
+    console.warn('新しい版を確かめられません', e);
+    return b;
+  }
+}
+
+// ---- ページ設定の引き継ぎ（設計案 11） ----------------------------------------
+// 設定は本ごとに持つ（b.layout）。初めて開く本には「前回の設定」（直前に開いていた本の設定）を写す。
+// 写すのは複製なので、元の本の設定を後で変えても動かない。形式で決まる項目（Markdown と洋書は
+// 横組み、洋書の組み方）は写しても上書きしない。
+const enBook = (b) => !/[぀-ヿ㐀-鿿]/.test((b.title || '') + (b.author || ''));
+const fmtOf = (b) => (b.kind === 'md' ? 'md' : enBook(b) ? 'en' : 'ja');
+const FMT_LABEL = { md: 'Markdown', en: '洋書', ja: '和書' };
+const horizOnly = (b) => b.kind === 'md' || enBook(b);
+const baseMood = (b) => (b.kind === 'md' ? 'memo' : enBook(b) ? 'yo' : (b.mood && Paper.MOODS[b.mood] ? b.mood : 'wa_v'));
+
+function fitLayout(b, s) {
+  const o = Object.assign(Paper.defaults(), s);
+  if (horizOnly(b)) o.dir = 'h';
+  o.style = enBook(b) ? 'en' : 'ja';
+  return o;
+}
+
+function layoutSummary(s) {
+  const fs = s.fs <= 15 ? '小' : s.fs <= 18 ? '中' : s.fs <= 21 ? '大' : '特大';
+  return [(Paper.MOODS[s.mood] || {}).label, (Paper.PAPERS[s.paper] || {}).label, '文字 ' + fs, s.dir === 'v' ? '縦' : '横']
+    .filter(Boolean).join(' · ');
+}
+
+async function pickLayout(b, m) {
+  if (b.layout) return { s: fitLayout(b, b.layout), note: null };
+  // 前の版から読んでいる本は、その頃の見た目（全体の設定＋この本の雰囲気）を黙って引き継ぐ
+  if (m && m.updated) {
+    const base = S.legacy || Paper.defaults();
+    return { s: fitLayout(b, b.mood && Paper.MOODS[b.mood] ? Paper.moodSettings(b.mood, base) : base), note: null };
+  }
+  const last = await DB.setting('lastLayout');
+  if (last && last.s) {
+    const from = S.books.find((x) => x.id === last.from);
+    return { s: fitLayout(b, last.s), note: '前回の設定' + (from ? '（「' + from.title + '」で使用）' : '') + 'で開きました' };
+  }
+  const mood = baseMood(b);
+  return { s: fitLayout(b, Paper.moodSettings(mood, Paper.defaults())), note: FMT_LABEL[fmtOf(b)] + 'の既定（' + Paper.MOODS[mood].label + '）で開きました' };
+}
+
+// 本の設定と「前回の設定」の両方へ書く（保存ボタンは無い）
+function keepLayout(b) {
+  if (!b) return;
+  b.layout = Object.assign({}, S.paper);
+  b.mood = S.paper.mood;
+  DB.put('books', b);
+  DB.setting('lastLayout', { s: Object.assign({}, S.paper), from: b.id });
+}
+
+const layoutDonors = (b) => S.books.filter((x) => x.layout && x.id !== b.id);
+
+function layoutNote(text) {
+  let n = $('#rnote');
+  if (!n) {
+    n = document.createElement('div');
+    n.id = 'rnote';
+    // 本文のタップ（ページ送り）に届かないようにする
+    for (const t of ['click', 'pointerdown', 'pointerup']) n.addEventListener(t, (ev) => ev.stopPropagation());
+    $('#stage').appendChild(n);
+  }
+  n.innerHTML = '<span>' + esc(text) + '</span><span class="rn-a">' +
+    (layoutDonors(R.book).length ? '<button id="rn-pick">他の本の設定</button>' : '') +
+    '<button id="rn-x">このままでいい</button></span>';
+  n.hidden = false;
+  if ($('#rn-pick', n)) $('#rn-pick', n).onclick = layoutSheet;
+  $('#rn-x', n).onclick = hideLayoutNote;
+}
+function hideLayoutNote() { const n = $('#rnote'); if (n) n.hidden = true; }
+
+async function layoutSheet() {
+  const b = R.book;
+  if (!b) return;
+  const mk = await allMarks();
+  const seen = (x) => (mk.get(x.id) || {}).updated || 0;
+  const f = fmtOf(b);
+  // 同じ形式（和書・洋書・Markdown）の本を先に、その中は最近開いた順
+  const list = layoutDonors(b).sort((x, y) => ((fmtOf(y) === f) - (fmtOf(x) === f)) || seen(y) - seen(x)).slice(0, 40);
+  sheet('<h3>他の本の設定</h3>' +
+    '<p style="color:var(--sub);font-size:12.5px;margin:0 0 10px">選んだ本の設定をこの本に写します。写すのは複製なので、元の本は変わりません。' +
+      (horizOnly(b) ? 'この本は横組みのまま写します。' : '') + '</p>' +
+    (list.length ? list.map((x) =>
+      '<button class="item" data-id="' + x.id + '"><span class="mark">' + (fmtOf(x) === f ? '·' : '◦') + '</span><span><b>' + esc(x.title) + '</b>' +
+      '<span>' + esc(layoutSummary(x.layout)) + (fmtOf(x) === f ? '' : ' · ' + FMT_LABEL[fmtOf(x)]) + '</span></span></button>').join('')
+      : '<div class="empty">設定を持っている本がまだありません</div>'),
+    (el) => {
+      $$('[data-id]', el).forEach((it) => {
+        it.onclick = async () => {
+          const x = S.books.find((y) => y.id === it.dataset.id);
+          if (!x) return;
+          S.paper = fitLayout(b, x.layout);
+          await commitPaper(true);
+          closeSheet(); hideLayoutNote();
+          if (!$('#rbot').hidden) buildReadSheet();
+          toast('「' + x.title + '」の設定を写しました');
+        };
+      });
+    });
+}
+
+// ---- 辞書 -------------------------------------------------------------
+// 選んだ所の語と読み。ルビの付いた語を選んだら、そのルビを読みとして出す（本文の読みがいちばん確か）。
+function selWord(root) {
+  const s = getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount) return null;
+  const r = s.getRangeAt(0);
+  if (!root.contains(r.commonAncestorContainer)) return null;
+  const anc = r.commonAncestorContainer.nodeType === 3 ? r.commonAncestorContainer.parentElement : r.commonAncestorContainer;
+  const rb = anc && anc.closest('ruby');
+  const box = document.createElement('div');
+  box.appendChild(rb ? rb.cloneNode(true) : r.cloneContents());
+  let reading = '';
+  if (box.querySelector('ruby')) {
+    const rd = box.cloneNode(true);
+    rd.querySelectorAll('rp').forEach((x) => x.remove());
+    rd.querySelectorAll('ruby').forEach((x) => { const rt = x.querySelector('rt'); x.replaceWith(rt ? rt.textContent : x.textContent); });
+    reading = rd.textContent.replace(/\s+/g, '').trim();
+  }
+  box.querySelectorAll('rt,rp').forEach((x) => x.remove());
+  const word = box.textContent.replace(/\s+/g, ' ').trim();
+  return word ? { word, reading: reading !== word ? reading : '' } : null;
+}
+
+function dictSheet(w) {
+  if (!w || !w.word) return;
+  const word = w.word.slice(0, 40);
+  sheet('<h3>辞書</h3>' +
+    '<div class="dict-w"><b>' + esc(word) + '</b>' + (w.reading ? '<span>' + esc(w.reading) + '<small>本文のルビ</small></span>' : '') + '</div>' +
+    '<div class="dict-r" id="dict-r">引いています…</div>' +
+    '<div class="dict-l">' + Dict.links(word).map(([label, url]) =>
+      '<a class="btn sm" target="_blank" rel="noopener" href="' + esc(url) + '">' + esc(label) + ' ↗</a>').join('') + '</div>',
+    async (el) => {
+      const r = await Dict.lookup(word);
+      const box = $('#dict-r', el);
+      if (!box || !el.isConnected) return;
+      if (r && r.offline) { box.textContent = '電波がないので引けません。'; return; }
+      if (!r) { box.textContent = '見つかりませんでした。下のリンクから探せます。'; return; }
+      box.innerHTML = '<div class="dict-t"></div><div class="dict-src">出典：<a target="_blank" rel="noopener"></a></div>';
+      $('.dict-t', box).textContent = r.text;
+      const a = $('.dict-src a', box);
+      a.href = r.url; a.textContent = r.from + '「' + r.title + '」';
+    });
+}
+
 async function openBook(id) {
-  const b = S.books.find((x) => x.id === id);
+  let b = S.books.find((x) => x.id === id);
   if (!b) return;
   if (b.manual) { manualSheet(b); return; }
+  b = await freshen(b);
   const file = await DB.get('files', id);
   if (!file || !file.chapters) { toast('本文が見つかりません'); return; }
 
@@ -1555,8 +1754,10 @@ async function openBook(id) {
   const m = await markOf(id);
   R.ch = Math.min(m.ch || 0, R.chapters.length - 1);
 
-  // この本に覚えさせてある雰囲気を出す
-  if (b.mood && Paper.MOODS[b.mood]) S.paper = Paper.moodSettings(b.mood, S.paper);
+  // この本の設定で開く。初めての本には前回の設定を写す（設計案 11）
+  const pick = await pickLayout(b, m);
+  S.paper = pick.s;
+  keepLayout(b);
   applyPaper();
 
   const e = readerEls();
@@ -1571,6 +1772,7 @@ async function openBook(id) {
   Stats.begin(b.id);
   R.turnAt = Date.now();
   await DB.setting('lastBook', b.id);
+  if (pick.note) layoutNote(pick.note); else hideLayoutNote();
   if (b.status !== 'reading') { b.status = 'reading'; b.finished = 0; await DB.put('books', b); await loadBooks(); }
 }
 
@@ -1616,6 +1818,7 @@ function saveMark(pct, off) {
 async function turn(d) {
   const p = R.pager;
   if (!p) return;
+  hideLayoutNote();   // 引き継ぎの一行は、ページを送ったら消す
   // 送る前のページの文字数と、掛かった時間から読む速さを測る
   const dt = Date.now() - R.turnAt;
   if (d > 0) {
@@ -1650,6 +1853,7 @@ function closeReaderUI() {
   e.root.hidden = true;
   e.top.hidden = e.bot.hidden = e.toc.hidden = true;
   R.open = false; R.book = null; R.pager = null;
+  hideLayoutNote();
   applyChrome();
   loadBooks().then(render);
 }
@@ -1801,11 +2005,16 @@ function buildReadSheet() {
       '<span class="val" id="vl-' + key + '">' + s[key] + '</span></div>';
   };
 
+  const lockH = R.book && horizOnly(R.book);
   e.bot.innerHTML =
+    '<div class="ctl"><span class="lbl">引き継ぎ</span><button class="rbtn" id="g-inherit">他の本の設定を使う…</button></div>' +
+    '<div class="rsep"></div>' +
     '<div class="ctl"><span class="lbl">雰囲気</span>' + opts('g-mood', Paper.MOODS, s.mood) + '</div>' +
     '<div class="rhint">選ぶと下の値がまとめて動きます。そのあと個別に触れます。</div>' +
     '<div class="rsep"></div>' +
-    '<div class="ctl"><span class="lbl">組み方</span>' + opts('g-dir', { v: { label: '縦組み' }, h: { label: '横組み' } }, s.dir) + '</div>' +
+    (lockH
+      ? '<div class="ctl"><span class="lbl">組み方</span><span class="rhint" style="margin:0">横組み（' + FMT_LABEL[fmtOf(R.book)] + 'は横組み固定）</span></div>'
+      : '<div class="ctl"><span class="lbl">組み方</span>' + opts('g-dir', { v: { label: '縦組み' }, h: { label: '横組み' } }, s.dir) + '</div>') +
     '<div class="ctl"><span class="lbl">書体</span>' + opts('g-fam', Paper.FAMS, s.fam) + '</div>' +
     slider('fs') + slider('lh') + slider('ls') + slider('margin') +
     '<div class="rsep"></div>' +
@@ -1833,7 +2042,7 @@ function buildReadSheet() {
     };
   };
 
-  group('g-mood', async (v) => { S.paper = Paper.moodSettings(v, S.paper); await commitPaper(true); buildReadSheet(); });
+  group('g-mood', async (v) => { S.paper = fitLayout(R.book || {}, Paper.moodSettings(v, S.paper)); await commitPaper(true); buildReadSheet(); });
   group('g-dir', async (v) => { S.paper.dir = v; await commitPaper(true); });
   group('g-fam', async (v) => { S.paper.fam = v; await commitPaper(true); });
   group('g-paper', async (v) => { S.paper.paper = v; await commitPaper(false); });
@@ -1849,7 +2058,11 @@ function buildReadSheet() {
       commitPaper(RELAYOUT.has(key));
     };
   }
-  $('#g-reset', e.bot).onclick = async () => { S.paper = Paper.defaults(); await commitPaper(true); buildReadSheet(); };
+  $('#g-reset', e.bot).onclick = async () => {
+    S.paper = R.book ? fitLayout(R.book, Paper.moodSettings(baseMood(R.book), Paper.defaults())) : Paper.defaults();
+    await commitPaper(true); buildReadSheet();
+  };
+  $('#g-inherit', e.bot).onclick = layoutSheet;
   $('#g-close', e.bot).onclick = hideUI;
 }
 
@@ -1860,7 +2073,7 @@ async function commitPaper(relayout) {
   const off = R.pager ? R.off : 0;
   applyPaper();
   await DB.setting('paper', S.paper);
-  if (R.book) { R.book.mood = S.paper.mood; DB.put('books', R.book); }
+  keepLayout(R.book);
   if (!relayout || !R.pager) return;
   clearTimeout(relayoutT);
   relayoutT = setTimeout(() => {
@@ -2322,8 +2535,9 @@ function docJump(el) {
 }
 
 async function openDoc(id, opt = {}) {
-  const d = S.docs.find((x) => x.id === id);
+  let d = S.docs.find((x) => x.id === id);
   if (!d) return;
+  d = await freshen(d);
   const file = await DB.get('files', id);
   if (!file) { toast('本文が見つかりません'); return; }
   if (D.open) await saveDocPos();          // 文書の中のリンクから別の文書へ
@@ -2562,6 +2776,7 @@ function bindDocView() {
       D.sel = t;
       D.selHead = docHeadingOf(s.anchorNode);
       D.selHl = MdView.rangeToHl(e.body, s.getRangeAt(0));
+      D.selWord = selWord(e.body);
     }
     e.sel.hidden = !t;
   });
@@ -2575,6 +2790,7 @@ function bindDocView() {
       await refreshHl();
     };
   });
+  $('#d-dict').onclick = () => dictSheet(D.selWord);
   $('#d-note').onclick = async () => {
     if (!D.sel || !D.doc) return;
     await Notes.add({ bookId: D.doc.id, bookTitle: D.doc.title, chapter: D.selHead || '', quote: D.sel });
@@ -2671,6 +2887,9 @@ async function boot() {
   if (chrome) Object.assign(S.chrome, chrome);
   const paper = await DB.setting('paper');
   if (paper) S.paper = Object.assign(Paper.defaults(), paper);
+  S.legacy = Object.assign({}, S.paper);   // 前の版の「全体で1つ」の設定。前から読んでいる本を開くときに使う
+  // 前回の設定がまだ無ければ、前の版の設定と最後に開いた本から作る
+  if (!(await DB.setting('lastLayout')) && paper) await DB.setting('lastLayout', { s: S.legacy, from: await DB.setting('lastBook') });
   applyChrome();
   Font.install().catch(() => {});
   await Stats.load();
@@ -2735,6 +2954,7 @@ async function boot() {
   $('#r-close').onclick = closeReader;
   $('#r-toc').onclick = tocOpen;
   $('#sel-note').onclick = saveSelection;
+  $('#sel-dict').onclick = () => { const w = selWord($('#rflow')); if (w) { $('#selbar').hidden = true; dictSheet(w); } };
   $('#sel-cancel').onclick = () => { getSelection().removeAllRanges(); $('#selbar').hidden = true; };
   document.addEventListener('selectionchange', onSelChange);
 

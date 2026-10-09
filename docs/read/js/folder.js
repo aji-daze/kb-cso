@@ -146,6 +146,17 @@ export async function remember(entries) {
   await DB.setting(META_KEY, m);
 }
 
+// 覚えているフォルダの中の1ファイル（path は scan の path と同じ形）。無ければ null。
+export async function fileAt(handle, path) {
+  const parts = String(path || '').split('/').filter(Boolean);
+  if (!parts.length) return null;
+  try {
+    let dir = handle;
+    for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p);
+    return await (await dir.getFileHandle(parts[parts.length - 1])).getFile();
+  } catch { return null; }
+}
+
 export async function read(entry) {
   const file = await entry.handle.getFile();
   // 文字コードはここで決めない。青空文庫のテキストは Shift_JIS なので、
