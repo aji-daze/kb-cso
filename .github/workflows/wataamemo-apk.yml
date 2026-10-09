@@ -44,6 +44,16 @@ jobs:
           cp app/build/outputs/apk/release/*.apk out/wataamemo.apk
           ls -la out
 
+      # 画面が同梱されていること・固定の鍵で署名されていること（上書きで更新できる条件）を確かめる
+      - name: check apk
+        run: |
+          unzip -l out/wataamemo.apk | grep -E "assets/memo/(index.html|sync.js)"
+          n=$(unzip -l out/wataamemo.apk | grep -cE "assets/memo/(index.html|sync.js|manifest.json)")
+          test "$n" = 3
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$signer" verify --print-certs out/wataamemo.apk | tee signer.txt
+          grep -qi "SHA-256 digest: b70e5520bcd31c9e5df258e419c32ca7b0ed56378c1d324e56363030fc64a074" signer.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: wataamemo-apk
