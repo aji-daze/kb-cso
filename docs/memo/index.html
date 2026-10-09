@@ -284,7 +284,7 @@ function enter(x){
 }
 ed.addEventListener('click',function(e){
   var cp=e.target.closest('.cp');
-  if(cp){var v=area(blk(cp)).value;if(navigator.clipboard)navigator.clipboard.writeText(v).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')});return}
+  if(cp){copyText(area(blk(cp)).value);return}
   // ブロックの間や下の余白を押したら、いちばん近いブロックにカーソルを置く
   if(e.target===ed){
     var b=ed.children;
@@ -376,6 +376,12 @@ function render(){
 function openList(){save();wake();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
 function close(){dr.className=''}
 function back(){close();lastTa.focus()}
+window.WataaBack=function(){
+  var p=document.getElementById('syp');
+  if(p&&p.className){p.className='';return true}
+  if(dr.className){back();return true}
+  return false;
+};
 
 // 書いている間はバーを消して文字だけにする。手が止まるかマウスが動けば戻す。
 var wT=0,mx=-1,my=-1,B=document.body;
@@ -400,10 +406,16 @@ $('bD').onclick=function(){
   toast('削除しました',function(){setM(id,m);open(id)});
 };
 $('tu').onclick=function(){if(undo)undo();to.className='';undo=null};
+// Android アプリ（WataaApp）の中では、共有・コピー・書き出しをアプリ側に頼む（WebView では使えないため）
+function copyText(t){
+  if(window.WataaApp){WataaApp.copy(t);return}
+  if(navigator.clipboard)navigator.clipboard.writeText(t).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')});
+}
 $('bS').onclick=function(){
   var t=getText();if(!t)return;
-  if(navigator.share&&matchMedia('(pointer:coarse)').matches){navigator.share({text:t}).catch(function(){})}
-  else if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')})}
+  if(window.WataaApp)WataaApp.share(t);
+  else if(navigator.share&&matchMedia('(pointer:coarse)').matches){navigator.share({text:t}).catch(function(){})}
+  else copyText(t);
 };
 dr.onclick=function(e){if(e.target===dr)close()};
 q.oninput=render;
@@ -413,8 +425,9 @@ ls.onclick=function(e){var li=e.target.closest('li[data-id]');if(li)open(li.getA
 $('bE').onclick=function(){
   var a=all().map(function(m){return{id:m.id,t:m.t,c:m.c,u:m.u}});
   var b=new Blob([JSON.stringify({app:'memo',v:1,memos:a},null,1)],{type:'application/json'});
-  var x=document.createElement('a'),d=new Date();
-  x.href=URL.createObjectURL(b);x.download='memo-'+d.getFullYear()+(d.getMonth()+101+'').slice(1)+(d.getDate()+100+'').slice(1)+'.json';
+  var x=document.createElement('a'),d=new Date(),name='memo-'+d.getFullYear()+(d.getMonth()+101+'').slice(1)+(d.getDate()+100+'').slice(1)+'.json';
+  if(window.WataaApp){b.text().then(function(t){WataaApp.saveFile(name,t)});return}
+  x.href=URL.createObjectURL(b);x.download=name;
   x.click();setTimeout(function(){URL.revokeObjectURL(x.href)},1000);
 };
 $('bI').onclick=function(){

@@ -138,9 +138,20 @@ OneDrive に置きたければ「同期をやめる」→ つなぎ直す。
 
 Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコン長押しに対応していない（Web アプリに許されていない）。
 
-## ホーム画面に追加する
+## スマホに入れる
 
-- iPhone/iPad: Safari で開く → 共有 → 「ホーム画面に追加」
+### Android: アプリ（APK）を入れる（おすすめ）
+
+スマホのブラウザで次を開いてダウンロード → 開く → インストール。
+
+`https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`
+
+画面をアプリに同梱しているので、電波がなくても・更新直後でも、いつも同じ版がすぐ開く。
+更新は同じリンクから落として上から入れるだけ。詳しくは `android-memo/README.md`。
+
+### ホーム画面に追加する（Web 版）
+
+- iPhone/iPad: Safari で開く → 共有 → 「ホーム画面に追加」（iPhone はこれしか方法がない）
 - Android: Chrome で開く → メニュー → 「ホーム画面に追加」 / 「アプリをインストール」
 
 ## ファイル
