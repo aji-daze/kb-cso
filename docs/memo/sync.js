@@ -22,10 +22,11 @@
   function tok() { return LS.getItem(TK) || ''; }
   function markDirty(id) { var q = M.getQ(); q.dirty[id] = 1; LS.setItem('memo.q', JSON.stringify(q)); }
 
-  // 前の形（memos/<ID>.md）でつないでいた端末: パスを補って、題名のファイル名へ付け替える
+  // 前の形（memos/<ID>.md）でつないでいた端末: 題名のファイル名へ付け替える。
+  // pomera-data なら置き場所も Obsidian/wataamemo へ移す（他の端末の新しい版と同じ場所にそろえる）
   if (S && S.repo && S.v !== 2) {
-    S.dir = S.dir || 'memos';
-    Object.keys(S.map || {}).forEach(function (id) { S.map[id] = { p: S.dir + '/' + id + '.md', v: S.map[id].v, b: id }; });
+    S.dir = S.repo === DEF_REPO ? DEF_DIR : (S.dir || 'memos');
+    Object.keys(S.map || {}).forEach(function (id) { S.map[id] = { p: 'memos/' + id + '.md', v: S.map[id].v, b: id }; });
     S.v = 2; saveS();
     M.all().forEach(function (m) { markDirty(m.id); });
   }
@@ -136,6 +137,7 @@
         // 向こうで消された（または名前を変えられた）ファイル
         Object.keys(S.map).forEach(function (id) {
           if (seen[S.map[id].p]) return;
+          if (S.map[id].p.indexOf(S.dir + '/') !== 0) return;   // 前の置き場所のもの（一覧に入らない）。送る段で移す
           if (!q.dirty[id] && !q.del[id] && M.get(id)) { M.rmRaw(id); changed.push(id); }
           delete S.map[id];                               // 手元で書き換えていれば、送る段で作り直す
         });

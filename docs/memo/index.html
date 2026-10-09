@@ -509,7 +509,19 @@ $('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
 if(LS.getItem('memo.s'))addEventListener('load',function(){setTimeout(loadSync,300)});
 
 // Service Worker は描画が終わってから。起動の邪魔をしない。
-if('serviceWorker' in navigator)addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
+// Android アプリ（WataaApp）の中では画面をアプリに同梱しているので使わない。
+// 新しい版が届いたら（裏で入れ替わったら）、書きかけを保存して読み直す。
+// 起動直後の古い版のまま同期して、別の版と食い違うのを防ぐため。打ち始めていたら、次に画面に戻ったときに読み直す。
+if('serviceWorker' in navigator&&!window.WataaApp){
+  var hadSW=!!navigator.serviceWorker.controller,typed=false,stale=false;
+  ed.addEventListener('input',function(){typed=true},{once:true});
+  navigator.serviceWorker.addEventListener('controllerchange',function(){
+    if(!hadSW)return;
+    save();if(!typed)location.reload();else stale=true;
+  });
+  document.addEventListener('visibilitychange',function(){if(!document.hidden&&stale){save();location.reload()}});
+  addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
+}
 })();
 </script>
 </body>
