@@ -63,50 +63,67 @@
 
 ## 保存について
 
-データはまずこの端末のブラウザ（localStorage）に入る。GitHub 同期を設定しなければ、どこにも送らない。
+データはまずこの端末のブラウザ（localStorage）に入る。同期を設定しなければ、どこにも送らない。
 一覧下部の「書き出し」で JSON を保存し、別端末で「読み込み」しても移せる。
 読み込みは同じ ID のメモがあれば更新日時が新しい方を残す。`.txt` / `.md` は1件のメモとして取り込む。
 
 localStorage の容量は多くのブラウザで約5MB（日本語でおよそ250万字）。
 
-## GitHub 同期
+## どの端末でも同じメモにする（同期）
 
-一覧下部の「同期」から設定する。メモは自分の**非公開リポジトリ**に `memos/<ID>.md`（1件1ファイル）で置かれ、
-同じ設定をした端末どうしで揃う。保存のたびに1コミットになるので、GitHub 上で履歴もたどれる。
+一覧下部の「同期」から設定する。メモは **OneDrive の `Obsidian/wataamemo/`** に、1件1ファイルの「題名.md」で置かれる。
 
 ```
-書く → 端末に即保存 → 送信待ち（memo.q）に ID を残す
-     → オンラインなら、手が3秒止まったら GitHub へ送る
-オフライン → 送信待ちにたまる（バーに「オフライン · 未送信3」）
-つながる → たまった分をまとめて送り、GitHub 側の変更も取り込む
+スマホ・タブレット・PC の wataamemo
+        ⇅ GitHub の API（トークン）
+非公開リポジトリ aji-daze/pomera-data の Obsidian/wataamemo/   ← pomenote・notes と同じ置き場
+        ⇅ PC の同期（pomera_sync）
+OneDrive の Obsidian/wataamemo/   ← Obsidian・notes・ポメラタブからも同じファイルが見える
 ```
+
+OneDrive に直接つながず pomera-data を通すのは、
+
+- **準備がトークンを貼るだけ**で済む（pomenote / notes で使っているものをそのまま使える）。
+  OneDrive に直接つなぐには Microsoft Entra でアプリ登録が要る
+- **再ログインが要らない**。OneDrive（ブラウザ用のサインイン）は 24 時間で切れる
+
+から。そのかわり OneDrive に届くのは PC の同期が動いたとき（端末どうしは GitHub を通してすぐそろう）。
 
 | 場面 | 動き |
 | --- | --- |
 | いつ同期するか | 書いて3秒後 / 起動時 / オンラインに戻ったとき / 画面に戻ったとき（20秒以上空いていれば）/ 開いている間は1分ごと |
+| 電波がない | 変更は端末にためる（バーに「オフライン · 未送信3」）。つながったらまとめて送る |
+| ファイル名 | 1行目が名前になる（`買い物リスト.md`）。同じ名前があれば `買い物リスト (2).md`。Windows で使えない文字は空白に置き換える。1行目が空なら `無題.md` |
+| 1行目を書き換えた | ファイル名も付け替える（新しい名前で書いてから古いものを消す） |
+| Obsidian・notes で作った・書き換えた・消した | 次の同期で取り込む。人が付けた名前（1行目と違う名前）は、wataamemo で書き換えても変えない |
+| 別の端末で同じメモを同時に書き換えた | 両方残す。向こうの版は先頭に「（競合: 別の端末の版）」を付けた別のメモになる |
 | 中身が変わっていない | 送らない（コミットを増やさない。git の blob sha を手元で計算して比べる） |
-| 別の端末で同じメモを同時に書き換えた | 両方残す。GitHub 側の版は先頭に「（競合: 別の端末の版）」を付けた別のメモになる |
-| メモを消した | GitHub からもファイルを消す（履歴には残るので戻せる） |
-| GitHub 上で .md を直接書き換えた・消した | 次の同期で端末にも反映される |
+| メモを消した | ファイルも消す（GitHub の履歴には残るので戻せる） |
 | トークンが切れた・取り消された | バーに「トークン無効」。その間も書けて、変更はたまる。「同期」から貼り直す |
-| 同期をやめる | 端末のメモも GitHub のファイルも残る |
+| 同期をやめる | 端末のメモも、GitHub・OneDrive のファイルも残る |
 
-公開リポジトリを指定した場合はつながない（メモが誰でも読めてしまうため）。
+保存のたびに `update: Obsidian/wataamemo/題名.md (wataamemo)` というコミットになる（pomenote は `(tablet)`、notes は `(notes)`）。
+置き場所は「同期」の画面で変えられる（リポジトリ・フォルダ）。公開リポジトリを指定した場合はつながない。
 
-### 準備（最初に1回、5分）
+### 準備（端末ごとに1回）
 
-1. GitHub で新しいリポジトリを **Private** で作る（例: `memo`）
-2. [Fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) を作る
-   - Repository access: **Only select repositories** → 1 のリポジトリだけ
-   - Permissions → Repository permissions → **Contents: Read and write**（ほかは No access のまま）
-   - Expiration: 好みで（切れたら貼り直すだけ）
-3. 各端末で wataamemo を開き、一覧 → 同期 → リポジトリ名とトークンを貼って「つなぐ」
+1. wataamemo を開く → ≡ → 一番下の「同期」
+2. リポジトリ `aji-daze/pomera-data`・置き場所 `Obsidian/wataamemo` はそのまま
+3. トークンに **pomenote / notes で使っているもの**を貼る → 「つなぐ」
 
-トークンはその端末のブラウザ（localStorage）にだけ保存する。対象を1つのリポジトリの中身だけに絞っておけば、
-万一漏れても他のリポジトリやアカウントには触れない。
+トークンが手元に無ければ、[Fine-grained token](https://github.com/settings/personal-access-tokens/new) を作る
+（Repository access: Only select repositories → `pomera-data`、Permissions → Contents: Read and write）。
+トークンはその端末のブラウザ（localStorage）にだけ保存する。
 
-アプリの画面（`aji-daze.github.io/kb-cso/memo/`）自体は公開 URL だが、中身は空の入れ物で、
-メモは各端末と非公開リポジトリにしかない。他人が開いても、その人の端末の空のメモ帳が出るだけ。
+前の形（`memos/<ID>.md`）でつないでいた端末は、同じフォルダの中で題名のファイル名に付け替わる。
+OneDrive に置きたければ「同期をやめる」→ つなぎ直す。
+
+### 注意
+
+- pomera_sync が `Obsidian/` を OneDrive とそろえる前提。`Obsidian/wataamemo/` が OneDrive に出てこなければ、PC の同期の対象を確かめる
+- 1つのフォルダに置けるのは 1000 件まで（GitHub の API でフォルダの中身を1回で読める上限）
+- アプリの画面（`aji-daze.github.io/kb-cso/memo/`）自体は公開 URL だが、中身は空の入れ物。
+  メモは各端末と非公開リポジトリ（と OneDrive）にしかない
 
 ## OS との連携（ホーム画面に追加・インストールしたとき）
 
@@ -131,7 +148,7 @@ Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコ
 ```
 memo/
   index.html   画面・見た目・動作のすべて
-  sync.js      GitHub 同期（設定したときだけ、起動後に読む）
+  sync.js      同期（pomera-data 経由で OneDrive へ。設定したときだけ、起動後に読む）
   sw.js        オフライン用キャッシュ
   manifest.json
   icons/
