@@ -7,3 +7,10 @@ android/.idea/
 __pycache__/
 *.pyc
 tools/notes-editor/node_modules/
+
+# Android（wataamemo）
+android-memo/.gradle/
+android-memo/build/
+android-memo/app/build/
+android-memo/local.properties
+android-memo/.idea/
