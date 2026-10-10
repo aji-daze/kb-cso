@@ -70,8 +70,9 @@ body.w .bar{opacity:0;transition:opacity 1.2s}
 #ls small{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #ls .none{cursor:default;font-size:13px}
 .ft{display:flex;gap:24px;padding:16px 0 24px;font-size:12px;letter-spacing:.08em}
-.ft button{color:var(--sub)}
-.ft button:hover{color:var(--fg)}
+.ft button,.ft a{color:var(--sub);text-decoration:none}
+.ft button:hover,.ft a:hover{color:var(--fg)}
+.ft a[hidden]{display:none}
 /* スマホのキーボードの真上に出る補助バー */
 #kb{display:none;flex:none;align-items:center;height:44px;padding:0 max(11px,calc((100% - 660px)/2 - 13px));border-top:1px solid var(--faint)}
 body.k #kb{display:flex}
@@ -112,6 +113,7 @@ body.k #kb{display:flex}
     <button id="bE">書き出し</button>
     <button id="bI">読み込み</button>
     <button id="bY">同期</button>
+    <a id="bA" href="../apk/wataamemo.apk" download hidden>Android アプリ</a>
   </div>
 </div></div>
 <div id="to"><span id="tm"></span><button id="tu" hidden>元に戻す</button></div>
@@ -517,6 +519,8 @@ function loadSync(cb){
   var x=document.createElement('script');x.src='sync.js';x.onload=function(){if(cb)cb()};
   x.onerror=function(){toast('同期の部品を読み込めませんでした（オフライン？）')};document.head.appendChild(x);
 }
+// Android のブラウザで開いているときだけ、アプリ（APK）の入手先を出す
+if(/Android/i.test(navigator.userAgent)&&!window.WataaApp)$('bA').hidden=false;
 $('bY').onclick=function(){loadSync(function(){MemoSync.panel()})};
 $('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
 if(LS.getItem('memo.s'))addEventListener('load',function(){setTimeout(loadSync,300)});

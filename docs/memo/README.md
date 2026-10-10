@@ -144,7 +144,9 @@ Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコ
 
 スマホのブラウザで次を開いてダウンロード → 開く → インストール。
 
-`https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`
+`https://aji-daze.github.io/kb-cso/apk/wataamemo.apk`
+
+（予備: `https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`）
 
 画面をアプリに同梱しているので、電波がなくても・更新直後でも、いつも同じ版がすぐ開く。
 更新は同じリンクから落として上から入れるだけ。詳しくは `android-memo/README.md`。

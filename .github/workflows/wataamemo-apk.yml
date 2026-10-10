@@ -1,8 +1,8 @@
 name: wataamemo-apk
 
 # wataamemo の Android アプリ（android-memo/）を作る。画面は docs/memo を同梱するので、
-# 画面を直したときも作り直す。main に入ったら、Releases の「wataamemo」に最新の APK を置く。
-# スマホからは次の固定リンクで落とせる:
+# 画面を直したときも作り直す。main に入ったら次の2か所に最新の APK を置く。
+#   https://aji-daze.github.io/kb-cso/apk/wataamemo.apk            ← GitHub Pages（軽い・おすすめ）
 #   https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk
 
 on:
@@ -25,6 +25,8 @@ jobs:
         working-directory: android-memo
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -44,7 +46,7 @@ jobs:
           cp app/build/outputs/apk/release/*.apk out/wataamemo.apk
           ls -la out
 
-      # 画面が同梱されていること・固定の鍵で署名されていること（上書きで更新できる条件）を確かめる
+      # 画面が同梱されていること・固定の鍵で署名されていること（上書きで更新できる条件）・軽いことを確かめる
       - name: check apk
         run: |
           unzip -l out/wataamemo.apk | grep -E "assets/memo/(index.html|sync.js)"
@@ -53,6 +55,9 @@ jobs:
           signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
           "$signer" verify --print-certs out/wataamemo.apk | tee signer.txt
           grep -qi "SHA-256 digest: b70e5520bcd31c9e5df258e419c32ca7b0ed56378c1d324e56363030fc64a074" signer.txt
+          size=$(stat -c %s out/wataamemo.apk)
+          echo "APK size: $size bytes"
+          test "$size" -lt 1000000
 
       - uses: actions/upload-artifact@v4
         with:
@@ -72,3 +77,22 @@ jobs:
           fi
           gh release upload wataamemo out/wataamemo.apk --clobber
           gh release edit wataamemo --notes "最新: ${GITHUB_SHA::7}（$(date -u +%Y-%m-%d)）。スマホで開いて wataamemo.apk をダウンロード → インストール。上書きで更新できる（署名鍵は固定）。"
+
+      # main のときだけ、GitHub Pages（docs/apk/）にも置く。github.com の重い画面を通らずに落とせる。
+      # Actions の権限で push したものは別のワークフローを起こさない（この APK のビルドが繰り返されない）
+      - name: publish to pages
+        if: github.ref == 'refs/heads/main'
+        working-directory: .
+        run: |
+          mkdir -p docs/apk
+          cp android-memo/out/wataamemo.apk docs/apk/wataamemo.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/apk/wataamemo.apk
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "apk: wataamemo ${GITHUB_SHA::7}"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
