@@ -1,7 +1,9 @@
 // Google ドライブからの取り込み（任意機能）。
 // ミュージックの drive.js と同じ作り。使うときだけ Google のスクリプトを読むので、
 // オフライン起動の邪魔はしない。
-const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+// 本棚フォルダ（青空文庫の本を置く共有の棚）へ書き込むので、読み書きの権限を取る。
+// drive.file では、アプリが作ったのではない既存のフォルダに置けないため。
+const SCOPE = 'https://www.googleapis.com/auth/drive';
 const GIS = 'https://accounts.google.com/gsi/client';
 
 export const key = 'drive';
@@ -86,8 +88,35 @@ export async function list(folderId) {
     pageToken = res.nextPageToken;
   } while (pageToken);
   return out.map((f) => ({
-    id: f.id, name: f.name, isFolder: f.mimeType === FOLDER, size: Number(f.size || 0),
+    id: f.id, name: f.name, isFolder: f.mimeType === FOLDER, size: Number(f.size || 0), mtime: f.modifiedTime || '',
   }));
+}
+
+// 1件の今の版（開くとき、取り込んだときから書き換わっていないかを見る）。消えていれば null。
+export async function stat(id) {
+  const r = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+    '?fields=id,name,size,modifiedTime,trashed&supportsAllDrives=true', { headers: { Authorization: 'Bearer ' + token } });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('ドライブ API エラー: ' + r.status);
+  const f = await r.json();
+  return f.trashed ? null : { id: f.id, name: f.name, size: Number(f.size || 0), mtime: f.modifiedTime || '' };
+}
+
+// フォルダにファイルを置く（同じ名前があれば中身を差し替える）
+export async function upload(folderId, name, blob) {
+  const q = "'" + folderId + "' in parents and trashed = false and name = '" + name.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+  const hit = await api('files', { q, fields: 'files(id)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
+  const id = hit.files && hit.files[0] && hit.files[0].id;
+  const meta = id ? {} : { name, parents: [folderId] };
+  const body = new FormData();
+  body.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+  body.append('file', blob, name);
+  const url = 'https://www.googleapis.com/upload/drive/v3/files' + (id ? '/' + id : '') +
+    '?uploadType=multipart&supportsAllDrives=true&fields=id,name,size,modifiedTime';
+  const r = await fetch(url, { method: id ? 'PATCH' : 'POST', headers: { Authorization: 'Bearer ' + token }, body });
+  if (!r.ok) throw new Error('ドライブに置けませんでした: ' + r.status);
+  const f = await r.json();
+  return { id: f.id, name: f.name, size: Number(f.size || 0), mtime: f.modifiedTime || '' };
 }
 
 export async function download(item) {
@@ -108,4 +137,5 @@ export const setupText =
   '5. 承認済みの JavaScript 生成元に <code>' + location.origin + '</code> を入れる<br>' +
   '6. 出てきたクライアント ID を下に貼る<br>' +
   'ミュージックで作ったものがあれば、それをそのまま使えます。' +
-  'アクセス権は<b>読み取り専用</b>で、ドライブ側のファイルは一切変更しません。';
+  'アクセス権は<b>読み書き</b>です。書き込むのは、青空文庫から落とした本を本棚フォルダに置くときだけで、' +
+  'それ以外のファイルには触りません（前に読み取り専用で許可していた場合は、一度だけ許可し直す画面が出ます）。';

@@ -47,6 +47,7 @@ const S = {
   all: [],              // 本と文書の両方
   shelfTab: 'all',
   shelfSort: 'added',   // 棚の並べ替え
+  shelfView: 'list',    // 棚の見せ方：list（題名と著者の一覧）／grid（表紙）
   shelfAuthor: null,    // 作家で絞る（null なら全部）
   pick: null,           // 選んでいる最中は Set。ふだんは null
   noteTag: null,
@@ -209,7 +210,7 @@ async function addDoc(meta, text) {
     id: DB.uid('d'),
     title: meta.title || '(無題)',
     author: '',
-    kind: 'md',
+    kind: meta.kind || 'md',
     shelf: 'doc',
     source: meta.source || '',
     status: 'stack',
@@ -281,9 +282,11 @@ async function importBlob(filename, blob, source, ref = null, status = 'stack') 
     }, txtToChapters(a.body, title), status);
   }
 
-  // 前に入れたものの入れ直しなら、置き場（文書／本）は前と同じにする
+  // 本棚に入るのは、ドライブの本棚から入れたものと青空文庫・EPUB。それ以外の Markdown・テキストは文書。
+  // 前に入れたものの入れ直しなら、置き場（文書／本）は前と同じにする。
   const prev = sameSource(source || filename);
-  if (isMd && (prev ? isDoc(prev) : text.length < DOC_MAX)) return addDoc({ title: name, source: source || filename, ref }, text);
+  const lib = !!(ref && ref.lib);
+  if (prev ? isDoc(prev) : !lib) return addDoc({ title: name, source: source || filename, ref, kind: isMd ? 'md' : 'txt' }, text);
   const chs = isMd ? mdToChapters(text, name) : txtToChapters(text, name);
   return addBook({
     title: name, kind: isMd ? 'md' : 'txt',
@@ -515,19 +518,6 @@ async function renderNow() {
     '<div class="home">' +
       quoteCard(q) +
 
-      '<button class="cont" id="n-cont">' +
-        '<span class="cv ' + coverClass(cur) + '"></span>' +
-        '<span class="ct">' +
-          '<span class="lbl">' + (cur.manual ? '書きとめる' : (mark.pct ? 'つづきから' : 'はじめから')) + '</span>' +
-          '<b>' + esc(cur.title) + '</b>' +
-          '<span class="meta">' + (cur.author ? esc(cur.author) + ' · ' : '') +
-            (pct ? pct + '%' : esc(KINDS[cur.kind] || '')) +
-            (remainLabel(cur, mark) && !cur.manual ? ' · 残り ' + remainLabel(cur, mark) : '') + '</span>' +
-          '<span class="prog"><i style="width:' + pct + '%"></i></span>' +
-        '</span>' +
-        '<span class="go" aria-hidden="true">▸</span>' +
-      '</button>' +
-
       '<section class="shelfcase">' +
         // 見出しは実際に並ぶ本（読んでいる棚まるごと）に合わせた言い方にする。
         // 「読みかけ」はそのうち進捗が付いている本だけの数（UI2-01）。
@@ -539,6 +529,19 @@ async function renderNow() {
             : '<span class="noshelf">読んでいる本はありません。「本棚」から開くとここに並びます</span>') +
         '</div>' +
       '</section>' +
+
+      '<button class="cont" id="n-cont">' +
+        '<span class="cv ' + coverClass(cur) + '"></span>' +
+        '<span class="ct">' +
+          '<span class="lbl">前回の続き · ' + (cur.manual ? '書きとめる' : (mark.pct ? 'つづきから' : 'はじめから')) + '</span>' +
+          '<b>' + esc(cur.title) + '</b>' +
+          '<span class="meta">' + (cur.author ? esc(cur.author) + ' · ' : '') +
+            (pct ? pct + '%' : esc(KINDS[cur.kind] || '')) +
+            (remainLabel(cur, mark) && !cur.manual ? ' · 残り ' + remainLabel(cur, mark) : '') + '</span>' +
+          '<span class="prog"><i style="width:' + pct + '%"></i></span>' +
+        '</span>' +
+        '<span class="go" aria-hidden="true">▸</span>' +
+      '</button>' +
 
       '<div class="flow-row">' +
         '<div><b>' + reading.length + '</b><span>読んでいる</span></div>' +
@@ -559,6 +562,22 @@ async function renderNow() {
 
 // ================================================================ 画面: 棚
 // 表紙を並べる。書影のない本は、題名と著者を刷った表紙をその場で作る。
+// 一覧の1行。表紙は出さず、作品名・著者・状態だけ。
+function listCell(b, m, picked) {
+  const p = Math.round(progressOf(b, m) * 100);
+  const on = picked !== null && picked.has(b.id);
+  const right = b.status === 'done' ? '読了'
+    : b.status === 'reading' ? (p ? p + '%' : '読んでいる')
+    : (remainLabel(b, m) || esc(KINDS[b.kind] || ''));
+  return '<button class="bk lr' + (b.status === 'done' ? ' done' : '') + (b.status === 'reading' ? ' rd' : '') + (on ? ' on' : '') +
+      '" data-id="' + b.id + '"' + (picked !== null ? ' aria-pressed="' + on + '"' : '') + '>' +
+    (picked !== null ? '<span class="lck" aria-hidden="true">' + (on ? '✓' : '') + '</span>' : '') +
+    '<span class="lt"><b>' + esc(b.title) + '</b><span>' + esc(b.author || '著者なし') + '</span></span>' +
+    '<span class="lm">' + right + '</span>' +
+    (p && b.status !== 'done' ? '<span class="lp"><i style="width:' + p + '%"></i></span>' : '') +
+  '</button>';
+}
+
 function coverCell(b, m, picked) {
   const p = Math.round(progressOf(b, m) * 100);
   const left = remainLabel(b, m);
@@ -581,26 +600,27 @@ function coverCell(b, m, picked) {
 
 const SORTS = {
   added:    '追加が新しい順',
-  title:    '題名の順',
-  author:   '作家でまとめる',
+  title:    '作品名の順',
+  author:   '著者名の順',
   progress: '進みが多い順',
   length:   '長い順',
 };
 
-const ja = (x, y) => String(x).localeCompare(String(y), 'ja');
+const ja = (x, y) => String(x).localeCompare(String(y), 'ja', { numeric: true });
 
 function sortBooks(list, how, mk) {
   const arr = list.slice();
   const au = (b) => b.author || '￿';          // 作家なしは末尾へ
   const pg = (b) => progressOf(b, mk.get(b.id));
-  if (how === 'title') arr.sort((x, y) => ja(x.title, y.title));
+  // 作品名は読み（青空文庫の目録から付けたもの）があれば五十音、無ければ文字の順
+  const tk = (b) => b.kana || b.title || '';
+  if (how === 'title') arr.sort((x, y) => ja(tk(x), tk(y)));
+  // 著者は読み（目録の新しい版にある）があれば五十音。同じ著者が読みの有無で離れないよう、名前→読みの表を作る
   else if (how === 'author') {
-    // 漢字の名前は五十音順に並べられない（読みを持っていないため）。
-    // 代わりに、冊数の多い作家から順にまとまりを作る。
-    const n = new Map();
-    for (const b of list) n.set(b.author || '', (n.get(b.author || '') || 0) + 1);
-    const cnt = (b) => n.get(b.author || '') || 0;
-    arr.sort((x, y) => cnt(y) - cnt(x) || ja(au(x), au(y)) || (y.added || 0) - (x.added || 0));
+    const yomi = new Map();
+    for (const b of list) if (b.akana && b.author) yomi.set(b.author, b.akana);
+    const ak = (b) => yomi.get(b.author) || au(b);
+    arr.sort((x, y) => ja(ak(x), ak(y)) || ja(au(x), au(y)) || ja(tk(x), tk(y)));
   }
   else if (how === 'progress') arr.sort((x, y) => pg(y) - pg(x) || (y.added || 0) - (x.added || 0));
   else if (how === 'length') arr.sort((x, y) => (y.chars || 0) - (x.chars || 0));
@@ -644,6 +664,16 @@ async function renderShelf() {
     ? groupByAuthor(list) : [[null, list]];
 
   el.innerHTML =
+    // いつも上に出しておく帯：本を入れる・ドライブの本棚・見せ方
+    '<div class="shtop">' +
+      '<button class="btn primary sm" id="s-add">＋ 本を入れる</button>' +
+      '<button class="btn sm" id="s-lib">ドライブの本棚</button>' +
+      '<span class="sp"></span>' +
+      '<span class="vsw" role="group" aria-label="見せ方">' +
+        '<button id="s-vl" aria-pressed="' + (S.shelfView === 'list') + '" aria-label="一覧">☰</button>' +
+        '<button id="s-vg" aria-pressed="' + (S.shelfView === 'grid') + '" aria-label="表紙">▦</button>' +
+      '</span>' +
+    '</div>' +
     '<div class="seg" id="s-seg">' +
       Object.entries(SHELF_TABS).map(([k, v]) =>
         '<button data-k="' + k + '" aria-pressed="' + (S.shelfTab === k) + '">' + v +
@@ -663,7 +693,9 @@ async function renderShelf() {
       ? groups.map(([name, rows]) =>
           (name !== null
             ? '<div class="ghead">' + esc(name || '作家なし') + '<em>' + rows.length + '冊</em></div>' : '') +
-          '<div class="grid">' + rows.map((b) => coverCell(b, mk.get(b.id), picked || null)).join('') + '</div>'
+          (S.shelfView === 'grid'
+            ? '<div class="grid">' + rows.map((b) => coverCell(b, mk.get(b.id), picked || null)).join('') + '</div>'
+            : '<div class="blist">' + rows.map((b) => listCell(b, mk.get(b.id), picked || null)).join('') + '</div>')
         ).join('')
       : '<div class="empty">' +
           (S.shelfAuthor != null
@@ -674,7 +706,6 @@ async function renderShelf() {
                 ? '<b>読み終えた本はまだありません</b>'
                 : '<b>本棚は空です</b>「＋ 本を入れる」から取り込んでください。') +
           '</div>') +
-    '<div class="actions" style="margin-top:20px"><button class="btn primary" id="s-add">＋ 本を入れる</button></div>' +
     (picked ? pickBar(picked, list) : '');
   el.classList.toggle('picking', !!picked);   // 帯のぶん下に余白を足す
 
@@ -697,6 +728,9 @@ async function renderShelf() {
     };
   });
   $('#s-add', el).onclick = addSheet;
+  $('#s-lib', el).onclick = libSheet;
+  $('#s-vl', el).onclick = () => { S.shelfView = 'list'; remember(); renderShelf(); };
+  $('#s-vg', el).onclick = () => { S.shelfView = 'grid'; remember(); renderShelf(); };
   if (picked) bindPickBar(el, list);
 }
 
@@ -923,16 +957,19 @@ async function renderLog() {
 // ================================================================ 本の詳細・登録
 function addSheet() {
   sheet('<h3>本を入れる</h3>' +
+    '<button class="item" id="a-lib"><span class="mark">▥</span><span><b>ドライブの本棚</b>' +
+      '<span>青空文庫の本はここに置いて、ここから入れる。どの端末でも同じ本が並ぶ</span></span></button>' +
     '<button class="item" id="a-folder"><span class="mark">▤</span><span><b>フォルダを開く</b>' +
       '<span>本の入ったフォルダごと。OneDrive の同期フォルダでよい' +
       (Folder.supported() ? '。一度選ぶと覚える' : '（この端末では毎回選び直し）') + '</span></span></button>' +
     '<button class="item" id="a-file"><span class="mark">·</span><span><b>ファイルを選ぶ</b>' +
-      '<span>EPUB・Markdown・テキスト・青空文庫の zip。Markdown は「文書」に入る（長いものは本）</span></span></button>' +
+      '<span>EPUB・青空文庫は本棚、Markdown・テキストは文書に入る</span></span></button>' +
     '<button class="item" id="a-aozora"><span class="mark">青</span><span><b>青空文庫</b>' +
       '<span>目録から探して落とす</span></span></button>' +
     '<button class="item" id="a-more"><span class="mark">⋯</span><span><b>その他</b>' +
       '<span>クラウド・紙の本・見本</span></span></button>',
     (el) => {
+      $('#a-lib', el).onclick = libSheet;
       $('#a-folder', el).onclick = folderSheet;
       $('#a-file', el).onclick = () => { closeSheet(); $('#pick').click(); };
       $('#a-aozora', el).onclick = aozoraSheet;
@@ -1219,13 +1256,32 @@ async function aozoraBulk(rows) {
   if (!list.length) { toast('落とせる版がありません'); return; }
 
   const ok = await confirmSheet(
-    list.length + '件をまとめて落としますか',
-    '<b>本文はアプリの外に落ちます。</b>落ちきったら「本を入れる」→「ファイルを選ぶ」で、' +
-    '落ちてきたファイルを<b>まとめて選んで</b>ください（複数選べます）。<br><br>' +
-    'ブラウザが「複数のファイルをダウンロードしますか」と一度聞いてきます。許可してください。<br>' +
-    'おおよそ ' + Math.ceil(list.length * 0.3) + ' 秒かかります。',
-    list.length + '件を落とす');
+    list.length + '件を本棚に入れますか',
+    '落として<b>ドライブの本棚</b>に置き、そのまま本棚に入れます。ドライブにつながっていなければ、この端末にだけ入れます。',
+    list.length + '件を入れる');
   if (!ok) return;
+  await driveReady(true);
+
+  sheet('<h3>入れています</h3>' +
+    '<div id="bk-msg" style="font-size:13px;color:var(--sub);line-height:1.8;min-height:52px"></div>' +
+    '<div class="prog" style="margin:10px 0"><i id="bk-bar" style="width:0%"></i></div>');
+  const res = await aozoraInstall(list, (i, r) => {
+    const m = $('#bk-msg'), b = $('#bk-bar');
+    if (m) m.textContent = (i + 1) + ' / ' + list.length + '　' + r.title;
+    if (b) b.style.width = Math.round((i + 1) / list.length * 100) + '%';
+  });
+  render();
+  if (!res.fail.length) {
+    closeSheet();
+    toast(res.n + '冊を本棚に入れました' + (res.put ? '（ドライブの本棚にも置きました）' : ''));
+    return;
+  }
+  toast(res.n + '冊を入れました。' + res.fail.length + '件は取れなかったので、ブラウザで落とします');
+  await aozoraFallback(res.fail);
+}
+
+// 写しから取れなかったものだけ、前のやり方（ブラウザに落としてもらい、ファイルを選んで入れる）で落とす
+async function aozoraFallback(list) {
 
   // 確認の画面が閉じたあとで、進み具合を出す先を作り直す
   sheet('<h3>落としています</h3>' +
@@ -1269,20 +1325,142 @@ function aozoraGet(row) {
   sheet('<h3>' + esc(row.title) + '</h3>' +
     '<p style="color:var(--sub);font-size:12.5px;margin:0 0 12px">' + esc(row.author) + '</p>' +
     '<p style="color:var(--sub);font-size:13px;line-height:1.85;margin:0 0 12px">' +
-    '下のボタンでファイルが落ちてきます。<br>' +
-    'そのあと「本を入れる」→<b style="color:var(--tx)">ファイルを選ぶ</b>で、落ちてきたファイルを選んでください。<br>' +
-    'zip のままでも、展開した .txt でも取り込めます。</p>' +
+    '落として<b style="color:var(--tx)">ドライブの本棚</b>に置き、そのまま本棚に入れます。</p>' +
     '<div class="actions"><button class="btn" id="g-c">閉じる</button>' +
-    '<button class="btn primary" id="g-dl">落とす</button></div>' +
-    '<div class="actions" style="margin-top:8px"><button class="btn sm ghost" id="g-pick">落としたファイルを選ぶ</button></div>',
+    '<button class="btn primary" id="g-in">本棚に入れる</button></div>' +
+    '<div class="actions" style="margin-top:8px"><button class="btn sm ghost" id="g-dl">ブラウザで落とす（うまく入らないとき）</button></div>',
     (el) => {
       $('#g-c', el).onclick = closeSheet;
+      $('#g-in', el).onclick = async () => {
+        await driveReady(true);   // つながなければ、この端末にだけ入れる
+        toast('落としています…');
+        const r = await aozoraInstall([row]);
+        if (r.n) { closeSheet(); render(); toast('本棚に入れました' + (r.put ? '（ドライブの本棚にも置きました）' : '（ドライブには置いていません）')); }
+        else toast('落とせませんでした。「ブラウザで落とす」を使ってください');
+      };
       $('#g-dl', el).onclick = () => {
         if (!url) { toast('ダウンロード先が目録にありません'); return; }
         window.open(url, '_blank', 'noopener');
       };
-      $('#g-pick', el).onclick = () => { closeSheet(); $('#pick').click(); };
     });
+}
+
+// ================================================================ ドライブの本棚
+// 青空文庫の本は Google ドライブの「本棚フォルダ」に置き、そこから入れる（どの端末でも同じ本が並ぶ）。
+// ここから入れたものと、青空文庫・EPUB は「本棚」。それ以外の Markdown・テキストは「文書」。
+const LIB_DEFAULT = '13QVgjpOVZqn-0zFWo9hEZwZ_mBc7Ctuf';
+const libFolder = async () => (await DB.setting('libFolder')) || LIB_DEFAULT;
+
+// ドライブにつなぐ。interactive のときだけ認証の画面を出す（押した操作の中で呼ぶこと）
+async function driveReady(interactive) {
+  if (Drive.hasToken()) return true;
+  if (!interactive) return false;
+  const cid = await DB.setting(CID_KEY.drive);
+  if (!cid) { toast('先に Google ドライブの設定をしてください'); cloudSheet(Drive); return false; }
+  try { await Drive.connect(cid); return true; }
+  catch (e) { toast('ドライブにつなげませんでした: ' + e.message); return false; }
+}
+
+function libSheet() {
+  sheet('<h3>ドライブの本棚</h3>' +
+    '<p class="lib-p">青空文庫の本はこのフォルダに置き、ここから入れます。どの端末でも同じ本が並びます。</p>' +
+    '<div id="lib-body"></div>',
+    (el) => {
+      const body = $('#lib-body', el);
+      if (Drive.hasToken()) { libList(body); return; }
+      body.innerHTML = '<div class="actions"><button class="btn primary" id="lib-go">ドライブにつなぐ</button></div>';
+      $('#lib-go', body).onclick = async () => { if (await driveReady(true)) libList(body); };
+    });
+}
+
+async function libList(body) {
+  body.innerHTML = '<div class="lib-msg">見ています…</div>';
+  let files;
+  try { files = (await Drive.list(await libFolder())).filter((f) => !f.isFolder && BOOK_EXT.test(f.name)); }
+  catch (e) { body.innerHTML = '<b style="color:var(--danger)">フォルダを読めませんでした。</b><br>' + esc(e.message); return; }
+  const mine = (f) => S.all.find((b) => (b.src && b.src.id === f.id) || b.source === f.name);
+  const state = (f) => { const b = mine(f); return !b ? 'new' : (b.src && b.src.id === f.id && b.src.m && b.src.m !== f.mtime) ? 'chg' : 'ok'; };
+  const fresh = files.filter((f) => state(f) === 'new'), chg = files.filter((f) => state(f) === 'chg');
+  const MARK = { new: '＋', chg: '↻', ok: '✓' }, WORD = { new: 'まだ入れていない', chg: 'ドライブ側が新しい', ok: '入っています' };
+  body.innerHTML =
+    '<div class="lib-msg" id="lib-msg">' + files.length + '件。' +
+      (fresh.length ? '<b>まだ入れていないもの ' + fresh.length + '件</b>' : 'すべて入っています') +
+      (chg.length ? '・新しい版 ' + chg.length + '件' : '') + '</div>' +
+    '<div class="actions">' +
+      (fresh.length ? '<button class="btn primary" id="lib-all">' + fresh.length + '件を入れる</button>' : '') +
+      (chg.length ? '<button class="btn" id="lib-upd">新しい版を入れる</button>' : '') + '</div>' +
+    files.map((f, i) => '<button class="item" data-i="' + i + '"><span class="mark">' + MARK[state(f)] + '</span>' +
+      '<span><b>' + esc(f.name.replace(/\.[^.]+$/, '')) + '</b><span>' + WORD[state(f)] + '</span></span></button>').join('');
+  const go = (list) => libGet(list, body);
+  if ($('#lib-all', body)) $('#lib-all', body).onclick = () => go(fresh);
+  if ($('#lib-upd', body)) $('#lib-upd', body).onclick = () => go(chg);
+  $$('.item[data-i]', body).forEach((b) => { b.onclick = () => go([files[+b.dataset.i]]); });
+}
+
+async function libGet(items, body) {
+  let n = 0, nu = 0, err = 0;
+  const msg = () => $('#lib-msg', body);
+  for (const f of items) {
+    if (msg()) msg().textContent = '入れています… ' + (n + err + 1) + ' / ' + items.length + '：' + f.name;
+    try {
+      const r = await importBlob(f.name, await Drive.download(f), f.name, { p: 'drive', lib: 1, id: f.id, m: f.mtime, s: f.size });
+      n++; if (r && r._upd) nu++;
+    } catch (e) { console.warn(f.name, e); err++; }
+  }
+  toast(n ? n + '冊を本棚に入れました' + (nu ? '（うち' + nu + '冊は新しい版に更新）' : '') + (err ? '／' + err + '件は読めませんでした' : '') : '入れられませんでした');
+  fillKana();
+  render();
+  if (body.isConnected) libList(body);
+}
+
+// 青空文庫の本を落とす。青空文庫のサーバーはアプリから直接読めない（CORS）ので、
+// GitHub にある公式の写し（aozorabunko/aozorabunko）から取る。取れたらドライブの本棚に置いてから入れる。
+const mirrorOf = (url) => String(url || '').replace(/^https?:\/\/www\.aozora\.gr\.jp\//, 'https://raw.githubusercontent.com/aozorabunko/aozorabunko/master/');
+async function aozoraFetch(row) {
+  if (!row.txt) return null;
+  try {
+    const r = await fetch(mirrorOf(row.txt));
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    return blob.size > 200 ? { blob, name: row.txt.split('/').pop() } : null;
+  } catch { return null; }
+}
+
+async function aozoraInstall(rows, onStep) {
+  const lib = Drive.hasToken() ? await libFolder() : null;
+  let n = 0, put = 0;
+  const fail = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (onStep) onStep(i, row);
+    const got = await aozoraFetch(row);
+    if (!got) { fail.push(row); continue; }
+    let ref = { lib: 1 };
+    if (lib) {
+      try { const f = await Drive.upload(lib, got.name, got.blob); ref = { p: 'drive', lib: 1, id: f.id, m: f.mtime, s: f.size }; put++; }
+      catch (e) { console.warn('ドライブに置けません', e); }
+    }
+    try { await importBlob(got.name, got.blob, got.name, ref); n++; } catch (e) { console.warn(e); fail.push(row); }
+  }
+  fillKana();
+  return { n, put, fail };
+}
+
+// 作品名の読み（五十音で並べるため）。青空文庫の目録があれば、題名と著者が一致する本に付ける。
+async function fillKana() {
+  let rows = null;
+  try { rows = await Aozora.index(); } catch {}
+  if (!rows || !rows.length) return;
+  const m = new Map(rows.map((r) => [r[1] + '\t' + r[3], r]));
+  let n = 0;
+  for (const b of S.books) {
+    const r = (!b.kana || !b.akana) && m.get(b.title + '\t' + (b.author || ''));
+    if (!r) continue;
+    const k = b.kana || r[2] || '', ak = b.akana || r[9] || '';   // r[9] は著者の読み（目録の新しい版から）
+    if (k === (b.kana || '') && ak === (b.akana || '')) continue;
+    b.kana = k; b.akana = ak; await putBookSafe(b); n++;
+  }
+  if (n) await loadBooks();
 }
 
 // ================================================================ フォルダを開く
@@ -1572,6 +1750,13 @@ async function newerSource(r) {
     if ((r.e && st.etag === r.e) || (!r.e && st.mtime === r.m && st.size === r.s)) return null;
     return { name: st.name, ref: Object.assign({}, r, { e: st.etag, m: st.mtime, s: st.size }),
       get: () => OneDrive.download({ id: r.id, url: st.url }) };
+  }
+  if (r.p === 'drive') {
+    // ドライブは認証の画面を出さないとつなげない。今つながっているときだけ見る
+    if (!navigator.onLine || !Drive.hasToken()) return null;
+    const st = await Drive.stat(r.id);
+    if (!st || st.mtime === r.m) return null;
+    return { name: st.name, ref: Object.assign({}, r, { m: st.mtime, s: st.size }), get: () => Drive.download({ id: r.id }) };
   }
   if (r.p === 'folder') {
     const h = await Folder.getHandle();
@@ -2837,13 +3022,18 @@ async function classifyDocs() {
 // 端末ごとの見た目の話なので localStorage に置く。読めない環境でも困らない。
 const VIEWS = ['now', 'shelf', 'docs', 'notes', 'log'];
 function remember() {
-  try { localStorage.setItem('pocha.view', S.view + '/' + S.shelfTab + '/' + S.shelfSort + '/' + S.docSort); } catch {}
+  // 見ていた画面は、引っ張って更新したとき（同じ起動のあいだ）だけ戻す。アプリを開き直したらホーム。
+  try { sessionStorage.setItem('pocha.v', S.view); } catch {}
+  try { localStorage.setItem('pocha.view', 'now/' + S.shelfTab + '/' + S.shelfSort + '/' + S.docSort + '/' + S.shelfView); } catch {}
 }
 function recallView() {
   let v = '';
   try { v = localStorage.getItem('pocha.view') || ''; } catch {}
-  const [view, tab, sort, dsort] = v.split('/');
+  const [, tab, sort, dsort, sview] = v.split('/');
+  let view = '';
+  try { view = sessionStorage.getItem('pocha.v') || ''; } catch {}
   if (VIEWS.includes(view)) S.view = view;
+  if (sview === 'grid' || sview === 'list') S.shelfView = sview;
   if (SHELF_TABS[tab]) S.shelfTab = tab;
   if (SORTS[sort]) S.shelfSort = sort;
   if (DOC_SORTS[dsort]) S.docSort = dsort;
@@ -2987,6 +3177,7 @@ async function boot() {
 
   // 前の版で取り込んだ本の段落を切り直す（1回だけ。済んだ本は paraFix で飛ばす）
   setTimeout(() => repairParagraphs(), 1500);
+  setTimeout(() => fillKana().catch(() => {}), 2500);
   dropFetchedCovers().catch((e) => console.warn('表紙の後片づけ', e));
 
   // Android の「戻る」など、こちらから history.back() を呼ばずに届く popstate。

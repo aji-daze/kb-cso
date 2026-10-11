@@ -80,6 +80,8 @@ def main():
     i_kana = col("作品名読み")
     i_sei = col("姓")
     i_mei = col("名")
+    i_sei_k = col("姓読み")      # 著者名の五十音順に並べるため
+    i_mei_k = col("名読み")
     i_free = col("作品著作権フラグ")
     i_txt = col("テキストファイルURL")
     i_html = next((i for i, h in enumerate(head) if "XHTML/HTML" in h), -1)
@@ -115,6 +117,7 @@ def main():
             (r[i_kana] if i_kana >= 0 and len(r) > i_kana else ""),
             author, txt, htm,
             cell(i_tb_name), cell(i_tb_pub), cell(i_tb_year),
+            (cell(i_sei_k) + cell(i_mei_k)).strip(),
         ])
 
     out.sort(key=lambda x: (x[3], x[1]))

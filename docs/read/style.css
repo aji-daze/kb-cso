@@ -778,3 +778,41 @@ input, select, textarea { font-size: 16px; }
 .dict-l { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .dict-l a { text-decoration: none; }
 #d-sel #d-dict { padding: 0 12px; }
+
+/* ---------- 棚：上の帯と一覧 ---------- */
+.shtop {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px;
+  margin: -14px -16px 12px; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.shtop .sp { flex: 1; }
+.vsw { display: flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.vsw button { width: 40px; height: 34px; font-size: 16px; color: var(--sub); }
+.vsw button[aria-pressed="true"] { background: var(--surface2); color: var(--tx); }
+.blist { border-top: 1px solid var(--line); }
+.bk.lr {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px;
+  width: 100%; text-align: left; padding: 13px 4px; border-bottom: 1px solid var(--line); color: var(--tx);
+}
+.bk.lr:has(.lck) { grid-template-columns: auto 1fr auto; }
+.bk.lr .lt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bk.lr .lt b { font-size: 15.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.bk.lr .lt span { font-size: 12.5px; color: var(--sub); }
+.bk.lr .lm { font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bk.lr.rd .lm { color: var(--acc-ink); font-weight: 600; }
+.bk.lr.done .lt b { color: var(--sub); font-weight: 500; }
+.bk.lr .lp { grid-column: 1 / -1; height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.bk.lr .lp i { display: block; height: 100%; background: var(--acc); }
+.bk.lr .lck {
+  width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line); display: grid; place-items: center;
+  font-size: 12px; color: var(--on-acc);
+}
+.bk.lr.on .lck { background: var(--acc); border-color: var(--acc); }
+.lib-p { color: var(--sub); font-size: 13px; line-height: 1.8; margin: 0 0 10px; }
+.lib-msg { font-size: 13px; color: var(--sub); line-height: 1.8; margin-bottom: 8px; }
+.lib-msg b { color: var(--tx); }
+
+/* 見やすさ：小さすぎた字と詰まった間を少し広げる */
+.seg button { font-size: 13px; padding: 10px 0; }
+.bar .tag { font-size: 12.5px; padding: 7px 12px; }
+.ghead { font-size: 13px; }
+.cont { margin-top: 14px; }
