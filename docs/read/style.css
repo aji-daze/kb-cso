@@ -816,3 +816,22 @@ input, select, textarea { font-size: 16px; }
 .bar .tag { font-size: 12.5px; padding: 7px 12px; }
 .ghead { font-size: 13px; }
 .cont { margin-top: 14px; }
+
+/* 棚の検索欄・一覧の詰め・著者の付箋 */
+.ssearch { display: block; margin: 0 0 10px; }
+.ssearch input {
+  width: 100%; box-sizing: border-box; padding: 9px 12px; font: inherit; font-size: 14px;
+  color: var(--tx); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.ssearch input:focus { outline: none; border-color: var(--acc); }
+.bk.lr { padding: 8px 4px 8px 12px; position: relative; gap: 1px 12px; }
+.bk.lr .lt { gap: 0; }
+.bk.lr .lt b { font-size: 15px; line-height: 1.4; }
+.bk.lr .lt span { font-size: 12px; line-height: 1.5; }
+.bk.lr .lp { margin-top: 4px; }
+.bk.lr[style*="--au"]::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 4px; border-radius: 0 2px 2px 0;
+  background: hsl(var(--au) 45% 58%);
+}
+[data-theme="kinari"] .bk.lr[style*="--au"]::before, [data-theme="shirokuma"] .bk.lr[style*="--au"]::before,
+[data-theme="hakuji"] .bk.lr[style*="--au"]::before { background: hsl(var(--au) 45% 50%); }
