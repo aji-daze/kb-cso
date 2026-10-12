@@ -14,3 +14,8 @@ android-memo/build/
 android-memo/app/build/
 android-memo/local.properties
 android-memo/.idea/
+
+# 署名鍵（GitHub Secrets から復元）
+android-memo/app/signing.p12
+*.keystore
+*.jks

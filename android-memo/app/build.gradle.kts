@@ -29,10 +29,11 @@ android {
     // 一度消すと端末のメモも消えてしまうため。個人で直接入れる用で、ストアには出さない。
     signingConfigs {
         create("fixed") {
-            storeFile = file("wataamemo.keystore")
-            storePassword = "wataamemo"
+            storeFile = file("signing.p12")
+            storeType = "pkcs12"
+            storePassword = System.getenv("SIGNING_PASSWORD")
             keyAlias = "wataamemo"
-            keyPassword = "wataamemo"
+            keyPassword = System.getenv("SIGNING_PASSWORD")
         }
     }
 

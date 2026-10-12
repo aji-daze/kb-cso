@@ -35,8 +35,13 @@ jobs:
           cache: gradle
 
       # ランナーには Android SDK が最初から入っている（android.yml と同じ）
+      # 署名鍵は GitHub Secrets から復元する（鍵とパスワードはリポジトリに置かない）
       - name: build apk
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: |
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 -d > app/signing.p12
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
 
@@ -54,7 +59,7 @@ jobs:
           test "$n" = 3
           signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
           "$signer" verify --print-certs out/wataamemo.apk | tee signer.txt
-          grep -qi "SHA-256 digest: b70e5520bcd31c9e5df258e419c32ca7b0ed56378c1d324e56363030fc64a074" signer.txt
+          grep -qi "SHA-256 digest: 124b2fdedbd31158ba40051ff3ed0128f87e1aa2d4b6f6c0b8f3cec92a61a78a" signer.txt
           size=$(stat -c %s out/wataamemo.apk)
           echo "APK size: $size bytes"
           test "$size" -lt 1000000

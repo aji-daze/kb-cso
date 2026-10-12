@@ -46,8 +46,8 @@ GitHub Actions（`.github/workflows/wataamemo-apk.yml`）が作る。
 - 軽さのために Java と Android 標準の部品だけで書く（AndroidX・Kotlin を使わない）。R8 で使わない部分を削る。
   ワークフローは 1MB を超えたら失敗にする
 
-署名鍵は `app/wataamemo.keystore`（パスワードは `app/build.gradle.kts` に書いてある）。
-ビルドのたびに鍵が変わると上から入れ直せず、消すと端末のメモも消えてしまうので、固定してリポジトリに置いている。
-公開リポジトリなので鍵は誰でも見られる。個人で直接入れる用で、ストアには出さない。
+署名鍵とパスワードは GitHub Secrets（`SIGNING_KEYSTORE_B64` / `SIGNING_PASSWORD`）に置き、リポジトリには含めない。
+CI がビルド時に `app/signing.p12` へ復元して使う。ビルドのたびに鍵が変わると上から入れ直せず、消すと端末のメモも消えてしまうので、鍵は固定。
+2026-10-12 に鍵を交換した。それ以前の APK が入っている端末は「書き出し」でメモを保存 → アンインストール → 入れ直して「読み込み」。
 
 手元でビルドするなら Android SDK（compileSdk 35）と JDK 17 で `./gradlew assembleRelease`。
