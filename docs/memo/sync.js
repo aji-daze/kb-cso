@@ -88,7 +88,16 @@
     return gh('/contents/' + encPath(S.dir)).then(function (r) {
       return (Array.isArray(r) ? r : []).filter(function (x) { return x.type === 'file' && /\.md$/i.test(x.name); })
         .map(function (x) { return { p: x.path, sha: x.sha }; });
-    }, function (e) { if (e.status === 404 || e.status === 409) return []; throw e; });   // フォルダがまだ無い
+    }, function (e) {
+      if (e.status === 409) return [];   // 空のリポジトリ
+      if (e.status === 404) {            // フォルダがまだ無い。ただしリポジトリが見えない（権限が外れた）ときは空と取り違えない
+        return gh('').then(function () { return []; }, function (x) {
+          if (x.status === 404) throw E('リポジトリが見えません（トークンの権限を確認してください）。同期を中止しました', 404);
+          throw x;
+        });
+      }
+      throw e;
+    });
   }
 
   // ---- 同期本体: 先に GitHub の変更を取り込み、次にたまった変更を送る ----
@@ -110,6 +119,10 @@
       var q = M.getQ(), seen = {}, byPath = {};
       Object.keys(S.map).forEach(function (id) { byPath[S.map[id].p] = id; });
       files.forEach(function (f) { taken[f.p.toLowerCase()] = byPath[f.p] || '?'; seen[f.p] = 1; });
+      // 一覧が空、または対応付け済みの大半が消えて見えるときは、向こうで消されたと決めつけず中止する
+      var mapped = Object.keys(S.map).filter(function (id) { return S.map[id].p.indexOf(S.dir + '/') === 0; });
+      var gone = mapped.filter(function (id) { return !seen[S.map[id].p]; }).length;
+      if (mapped.length >= 5 && gone * 2 >= mapped.length) throw E('GitHub 上のメモの一覧が空、または大半が見えません（' + mapped.length + '件中' + gone + '件）。端末のメモを守るため同期を中止しました', 0);
       return files.reduce(function (p, f) {
         return p.then(function () {
           var id = byPath[f.p];
