@@ -15,8 +15,8 @@
 <title>wataamemo</title>
 <!-- 速さのために CSS も JS もこのファイルに直書きする。外部ファイル・フォント・ライブラリは読まない。 -->
 <style>
-:root{--bg:#0e0e0e;--fg:#d8d8d4;--sub:#5c5c5a;--faint:#2a2a29;--code:#171716;color-scheme:dark}
-@media (prefers-color-scheme:light){:root{--bg:#fafaf8;--fg:#222;--sub:#a3a3a0;--faint:#ececea;--code:#f1f1ee;color-scheme:light}}
+:root{--bg:#0e0e0e;--fg:#e6e6e2;--sub:#9b9b96;--mute:#5d5d5a;--faint:#252524;--code:#181817;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#fafaf8;--fg:#1d1d1d;--sub:#6c6c68;--mute:#b2b2ae;--faint:#e7e7e3;--code:#f0f0ec;color-scheme:light}}
 *{box-sizing:border-box;margin:0}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font:17px/1.85 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;letter-spacing:.02em;
@@ -24,14 +24,14 @@ body{background:var(--bg);color:var(--fg);font:17px/1.85 system-ui,-apple-system
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 ::selection{background:var(--faint)}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
-svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;display:block}
+svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;display:block}
 .bar{display:flex;align-items:center;height:52px;padding:0 max(11px,calc((100% - 660px)/2 - 13px));flex:none;transition:opacity .6s}
 .bar button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);transition:color .2s}
 .bar button:hover,.bar button:active{color:var(--fg)}
 body.w .bar{opacity:0;transition:opacity 1.2s}
-#sy{height:44px;padding:0 8px;font-size:11px;letter-spacing:.08em;color:var(--sub);white-space:nowrap}
+#sy{height:44px;padding:0 8px;font-size:12px;letter-spacing:.06em;color:var(--sub);white-space:nowrap}
 #sy[hidden]{display:none}
-#st{flex:1;text-align:center;font-size:11px;letter-spacing:.12em;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+#st{flex:1;text-align:center;font-size:12px;letter-spacing:.08em;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
 /* 本文。文字は透明な textarea で受け、真下の pre に同じ文字を飾り付きで描く（下線など）。 */
 #ed{flex:1;overflow:auto;padding:8px 0 45vh;cursor:text;--gx:max(24px,calc((100% - 660px)/2))}
 .t,.cw{position:relative}
@@ -40,14 +40,16 @@ body.w .bar{opacity:0;transition:opacity 1.2s}
 .t textarea,.cw textarea{position:absolute;inset:0;height:100%;resize:none;outline:0;background:transparent;overflow:hidden}
 .t textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--fg)}
 .t textarea::selection{background:rgba(128,128,128,.28)}
-.t .m{color:var(--sub)}
+.t textarea::placeholder{color:transparent;-webkit-text-fill-color:transparent}
+#ed>.t:only-child textarea::placeholder{color:var(--mute);-webkit-text-fill-color:var(--mute)}
+.t .m{color:var(--mute)}
 .t u{text-decoration:underline 1px;text-underline-offset:.32em}
 /* コードブロック。中身は普通に見える textarea。pre は高さを決めるためだけにある。 */
 .c{margin:10px calc(var(--gx) - 16px);padding:6px 16px 12px;background:var(--code)}
-.ch{display:flex;align-items:center;height:26px;font-size:11px;letter-spacing:.08em;color:var(--sub)}
+.ch{display:flex;align-items:center;height:28px;font-size:12px;letter-spacing:.06em;color:var(--sub)}
 .lg{flex:1;min-width:0;padding:0;border:0;outline:0;background:none;color:inherit;font:inherit;letter-spacing:inherit}
-.lg::placeholder{color:var(--sub);opacity:.7}
-.cp{color:var(--sub);font-size:11px;letter-spacing:.08em}
+.lg::placeholder{color:var(--mute);opacity:1}
+.cp{color:var(--sub);font-size:12px;letter-spacing:.06em;padding:4px 0 4px 12px}
 .cp:hover{color:var(--fg)}
 .cw pre,.cw textarea{display:block;width:100%;margin:0;padding:0;border:0;font:13.5px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;letter-spacing:0;
   white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4;color:var(--fg)}
@@ -59,17 +61,23 @@ body.w .bar{opacity:0;transition:opacity 1.2s}
 .top{display:flex;align-items:center;gap:8px;height:52px;flex:none;margin-top:16px}
 #q{flex:1;min-width:0;padding:6px 0;border:0;border-bottom:1px solid var(--faint);background:none;color:inherit;font:inherit;letter-spacing:inherit;outline:0;border-radius:0;-webkit-appearance:none}
 #q:focus{border-color:var(--sub)}
-#q::placeholder{color:var(--sub)}
+#q::placeholder{color:var(--sub);font-size:.94em}
 #q::-webkit-search-cancel-button{display:none}
 #bX{width:44px;height:44px;display:grid;place-items:center;color:var(--sub);margin-right:-12px}
 #bX:hover{color:var(--fg)}
-#ls{flex:1;overflow:auto;list-style:none;padding:24px 0;scrollbar-width:none}
-#ls li{padding:12px 0;cursor:pointer;color:var(--sub);transition:color .15s}
-#ls li:hover{color:var(--fg)}
-#ls b{display:block;font-weight:400;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ls small{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ls .none{cursor:default;font-size:13px}
-.ft{display:flex;gap:24px;padding:16px 0 24px;font-size:12px;letter-spacing:.08em}
+#ls{flex:1;overflow:auto;list-style:none;padding:4px 0 24px;scrollbar-width:none}
+#ls li{color:var(--sub)}
+#ls li[data-id]{padding:12px 0 13px;border-bottom:1px solid var(--faint);cursor:pointer}
+#ls li.g{padding:24px 0 4px;font-size:12px;letter-spacing:.14em;cursor:default}
+#ls li.g:first-child{padding-top:12px}
+#ls b{display:block;font-size:16px;line-height:1.6;font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls li.cur b::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin:0 8px 3px 0}
+#ls small{display:block;margin-top:2px;font-size:13px;line-height:1.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ls .d{margin-right:1em;font-variant-numeric:tabular-nums}
+@media (hover:hover){#ls li[data-id]:hover b{text-decoration:underline 1px;text-underline-offset:.3em}}
+#ls .none{padding:24px 0;font-size:14px}
+.ft{display:flex;flex-wrap:wrap;column-gap:24px;padding:8px 0 16px;font-size:13px;letter-spacing:.06em;border-top:1px solid var(--faint)}
+.ft button,.ft a{padding:12px 0}
 .ft button,.ft a{color:var(--sub);text-decoration:none}
 .ft button:hover,.ft a:hover{color:var(--fg)}
 .ft a[hidden]{display:none}
@@ -79,17 +87,18 @@ body.k #kb{display:flex}
 #kb button{width:44px;height:44px;display:grid;place-items:center;color:var(--sub)}
 #kb button:active{color:var(--fg)}
 #kb .sp{flex:1}
-#kb #kD{width:auto;padding:0 12px;font-size:13px;letter-spacing:.08em}
+#kb #kD{width:auto;padding:0 12px;font-size:14px;letter-spacing:.06em;color:var(--fg)}
 @media (pointer:coarse){#bU,#bC{display:none}}
-#to{position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:12px;letter-spacing:.08em;color:var(--sub);
-  display:none;z-index:10;gap:16px;white-space:nowrap}
+#to{position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:13px;letter-spacing:.04em;
+  color:var(--bg);background:var(--fg);padding:9px 16px;border-radius:6px;display:none;z-index:12;gap:18px;align-items:center;max-width:calc(100% - 32px)}
 #to.on{display:flex}
-#to button{color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+body.k #to{bottom:calc(60px + env(safe-area-inset-bottom))}
+#to button{color:var(--bg);font-weight:600;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
 </style>
 </head>
 <body>
 <div class="bar">
-  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 16h9"/></svg></button>
+  <button id="bL" title="一覧 (Ctrl/⌘+K)" aria-label="一覧"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></svg></button>
   <button id="bN" title="新しいメモ (Alt+N)" aria-label="新しいメモ"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
   <div id="st"></div>
   <button id="sy" hidden></button>
@@ -98,7 +107,7 @@ body.k #kb{display:flex}
   <button id="bS" title="共有・コピー" aria-label="共有・コピー"><svg viewBox="0 0 24 24"><path d="M12 15V5M8 9l4-4 4 4M6 14v5h12v-5"/></svg></button>
   <button id="bD" title="このメモを削除" aria-label="削除"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
 </div>
-<div id="ed"><div class="t"><pre aria-hidden="true"> </pre><textarea rows="1" autofocus spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div></div>
+<div id="ed"><div class="t"><pre aria-hidden="true"> </pre><textarea rows="1" autofocus placeholder="メモ" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></div></div>
 <div id="kb">
   <button id="kU" aria-label="下線"><svg viewBox="0 0 24 24"><path d="M8 5v6a4 4 0 008 0V5M7 19h10"/></svg></button>
   <button id="kC" aria-label="コードブロック"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg></button>
@@ -153,7 +162,7 @@ function paint(b){
 function ta(){var x=document.createElement('textarea');x.rows=1;x.spellcheck=false;x.setAttribute('autocomplete','off');x.setAttribute('autocapitalize','off');return x}
 function mkT(v){
   var d=document.createElement('div'),p=document.createElement('pre'),x=ta();
-  d.className='t';p.setAttribute('aria-hidden','true');x.value=v;d.appendChild(p);d.appendChild(x);paint(d);return d;
+  d.className='t';p.setAttribute('aria-hidden','true');x.placeholder='メモ';x.value=v;d.appendChild(p);d.appendChild(x);paint(d);return d;
 }
 function mkC(lang,v){
   var c=document.createElement('div'),h=document.createElement('div'),w=document.createElement('div'),p=document.createElement('pre'),x=ta();
@@ -361,19 +370,34 @@ function toast(msg,fn){
   clearTimeout(toT);toT=setTimeout(function(){to.className='';undo=null},fn?5000:2500);
 }
 
-// 一覧
+// 一覧。更新が新しい順に、今日・昨日・この1週間・月ごとの見出しを付ける
+function day0(t){var d=new Date(t);d.setHours(0,0,0,0);return +d}
+function group(u){
+  var t=day0(Date.now()),d=day0(u),n=new Date(u);
+  if(d>=t)return'今日';if(d>=t-864e5)return'昨日';if(d>t-7*864e5)return'この1週間';
+  return(n.getFullYear()===new Date().getFullYear()?'':n.getFullYear()+'年')+(n.getMonth()+1)+'月';
+}
+function when(u){
+  var d=new Date(u),g=group(u),p=function(v){return(v<10?'0':'')+v};
+  return g==='今日'||g==='昨日'?p(d.getHours())+':'+p(d.getMinutes()):(d.getMonth()+1)+'月'+d.getDate()+'日';
+}
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
 function render(){
-  var w=q.value.trim().toLowerCase(),a=all(),h='',n=0;
+  var w=q.value.trim().toLowerCase(),a=all(),f=document.createDocumentFragment(),n=0,last='';
   for(var i=0;i<a.length;i++){
     var t=a[i].t;if(w&&t.toLowerCase().indexOf(w)<0)continue;
-    var lines=t.replace(/<\/?u>/g,'').replace(/^```.*$/gm,'').trim().split('\n'),head=lines[0].slice(0,80),rest=lines.slice(1).join(' ').trim().slice(0,80);
-    h+='<li data-id="'+a[i].id+'"'+(a[i].id===cur?' class="cur"':'')+'><b></b><small></small></li>';
-    a[i]._h=head;a[i]._r=fmt(a[i].u)+(rest?'　'+rest:'');n++;
+    var lines=t.replace(/<\/?u>/g,'').replace(/^```.*$/gm,'').trim().split('\n'),head=lines[0].slice(0,80),rest=lines.slice(1).join(' ').replace(/\s+/g,' ').trim().slice(0,80);
+    var g=group(a[i].u);
+    if(g!==last){f.appendChild(el('li','g',g));last=g}
+    // 本文は textContent で入れる（HTML として解釈させない）
+    var li=el('li',a[i].id===cur?'cur':''),sm=el('small');
+    li.setAttribute('data-id',a[i].id);
+    sm.appendChild(el('span','d',when(a[i].u)));if(rest)sm.appendChild(document.createTextNode(rest));
+    li.appendChild(el('b','',head||'無題'));li.appendChild(sm);f.appendChild(li);n++;
   }
-  ls.innerHTML=n?h:'<li class="none">'+(w?'見つかりません':'メモはまだありません')+'</li>';
-  // 本文は textContent で入れる（HTML として解釈させない）
-  var li=ls.children,j=0;
-  for(i=0;i<a.length&&j<li.length;i++){if('_h' in a[i]){li[j].firstChild.textContent=a[i]._h;li[j].lastChild.textContent=a[i]._r;j++}}
+  ls.textContent='';
+  ls.appendChild(n?f:el('li','none',w?'見つかりません':'メモはまだありません'));
+  q.placeholder='検索'+(a.length?'（'+a.length+'件）':'');
 }
 function openList(){save();wake();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
 function close(){dr.className=''}
