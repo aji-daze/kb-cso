@@ -1,9 +1,9 @@
 // どの端末でも同じメモを見るための同期。設定したときだけ index.html が読み込む。
 //
 // 正本は端末（localStorage）。GitHub の非公開リポジトリ（既定は pomenote / notes と同じ
-// aji-daze/pomera-data）の Obsidian/wataamemo/ に、1件1ファイルの「題名.md」で置く。
-// PC の同期（pomera_sync）が OneDrive の Obsidian とそろえるので、OneDrive・Obsidian・notes・
-// ポメラタブからも同じファイルが見える。そちらで書き換えたものも次の同期で取り込む。
+// aji-daze/pomera-data）の メモ-wataamemo/ に、1件1ファイルの「題名.md」で置く。
+// pomera-data の一番上は OneDrive の一番上と同じで、PC の同期（pomera_sync）がそろえるので、
+// C:\Users\A.H\OneDrive\メモ-wataamemo に届く。そちらで書き換えたものも次の同期で取り込む。
 //
 // 書くたびに index.html が送信待ち（memo.q）に ID を残すので、オフラインの間はそこにたまり、
 // つながったらまとめて送る。鍵は fine-grained token（対象1リポジトリ、Contents の読み書きのみ）。
@@ -13,21 +13,26 @@
   var M = window.MEMO, LS = localStorage;
   var API = 'https://api.github.com/repos/';
   var SK = 'memo.s', TK = 'memo.ghtok';
-  var DEF_REPO = 'aji-daze/pomera-data', DEF_DIR = 'Obsidian/wataamemo';
+  var DEF_REPO = 'aji-daze/pomera-data', DEF_DIR = 'メモ-wataamemo', OLD_DIR = 'Obsidian/wataamemo';
 
-  // S = { repo, dir, map: { メモID: { p: リポジトリ上のパス, v: 最後に揃えたときの blob sha, b: そのときの題名 } }, last, v: 2 }
+  // S = { repo, dir, map: { メモID: { p: リポジトリ上のパス, v: 最後に揃えたときの blob sha, b: そのときの題名 } }, last, v: 3 }
   function loadS() { try { return JSON.parse(LS.getItem(SK)); } catch (e) { return null; } }
   var S = loadS();
   function saveS() { if (S) LS.setItem(SK, JSON.stringify(S)); }
   function tok() { return LS.getItem(TK) || ''; }
   function markDirty(id) { var q = M.getQ(); q.dirty[id] = 1; LS.setItem('memo.q', JSON.stringify(q)); }
 
-  // 前の形（memos/<ID>.md）でつないでいた端末: 題名のファイル名へ付け替える。
-  // pomera-data なら置き場所も Obsidian/wataamemo へ移す（他の端末の新しい版と同じ場所にそろえる）
-  if (S && S.repo && S.v !== 2) {
-    S.dir = S.repo === DEF_REPO ? DEF_DIR : (S.dir || 'memos');
-    Object.keys(S.map || {}).forEach(function (id) { S.map[id] = { p: 'memos/' + id + '.md', v: S.map[id].v, b: id }; });
-    S.v = 2; saveS();
+  // 前の版でつないでいた端末を、今の置き場所（OneDrive の メモ-wataamemo）へ引っ越す。
+  // ファイルは送る段で「新しい場所に書いてから古いものを消す」。中身が消える瞬間はない
+  if (S && S.repo && S.v !== 3) {
+    if (S.v !== 2) {
+      // いちばん前の形（memos/<ID>.md）
+      S.dir = S.repo === DEF_REPO ? DEF_DIR : (S.dir || 'memos');
+      Object.keys(S.map || {}).forEach(function (id) { S.map[id] = { p: 'memos/' + id + '.md', v: S.map[id].v, b: id }; });
+    } else if (S.repo === DEF_REPO && S.dir === OLD_DIR) {
+      S.dir = DEF_DIR;   // Obsidian/wataamemo → メモ-wataamemo
+    }
+    S.v = 3; saveS();
     M.all().forEach(function (m) { markDirty(m.id); });
   }
 
@@ -68,10 +73,12 @@
   }
   function stem(p) { return p.slice(p.lastIndexOf('/') + 1).replace(/\.md$/i, '').replace(/ \(\d+\)$/, ''); }
   // 今のパスの題名が変わっていなければそのまま。変わったら空いている名前を探す（大文字小文字は同じと見なす）。
-  // Obsidian などで人が付けた名前（前の題名と違う名前）は変えない
+  // Obsidian などで人が付けた名前（前の題名と違う名前）は変えない。
+  // 置き場所の外（前の置き場所）にあるものは、名前はそのままの決め方で置き場所の中へ移す
   function wantPath(id, m, taken) {
-    var b = baseName(m.t), e = S.map[id];
-    if (e && (stem(e.p) === b || stem(e.p) !== e.b)) return e.p;
+    var b = baseName(m.t), e = S.map[id], own = e && stem(e.p) !== e.b;
+    if (e && e.p.indexOf(S.dir + '/') === 0 && (stem(e.p) === b || own)) return e.p;
+    if (own) b = stem(e.p);
     var p = S.dir + '/' + b + '.md', n = 2;
     while (taken[p.toLowerCase()] && taken[p.toLowerCase()] !== id) p = S.dir + '/' + b + ' (' + (n++) + ').md';
     return p;
@@ -246,7 +253,7 @@
   function connect() {
     var g = function (id) { var x = pv.querySelector(id); return x ? x.value.trim() : ''; };
     var repo = (g('#gr') || S.repo).replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
-    var dir = (pv.querySelector('#gd') ? g('#gd') : S.dir).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    var dir = toRepoDir(pv.querySelector('#gd') ? g('#gd') : S.dir);
     var t = g('#gt');
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { M.toast('リポジトリは「持ち主/名前」の形で書きます'); return; }
     if (!dir || /(^|\/)\.\.?(\/|$)|^\./.test(dir)) { M.toast('置き場所のフォルダを書いてください（. で始まる名前は使えません）'); return; }
@@ -254,7 +261,7 @@
     var old = tok(); LS.setItem(TK, t); bad = false;
     gh('', null, repo).then(function (r) {
       if (!r.private) { if (old) LS.setItem(TK, old); else LS.removeItem(TK); M.toast('公開リポジトリです。メモが誰でも読めてしまうので使いません'); return; }
-      if (!S || S.repo !== repo || S.dir !== dir) { S = { repo: repo, dir: dir, map: {}, last: 0, v: 2 }; M.all().forEach(function (m) { markDirty(m.id); }); }   // 手元のメモを全部送る
+      if (!S || S.repo !== repo || S.dir !== dir) { S = { repo: repo, dir: dir, map: {}, last: 0, v: 3 }; M.all().forEach(function (m) { markDirty(m.id); }); }   // 手元のメモを全部送る
       delete S.editTok; saveS(); err = '';
       M.toast('つながりました'); ui(); refresh(); run();
     }, function (x) {
@@ -263,6 +270,11 @@
     });
   }
 
+  // 置き場所は Windows のパスで書いてもよい。OneDrive の一番上 = リポジトリの一番上として読み替える
+  function toRepoDir(v) {
+    return String(v || '').trim().replace(/^"|"$/g, '').replace(/\\/g, '/').replace(/^[a-z]:\/.*?\/onedrive[^/]*\//i, '').replace(/^\/+|\/+$/g, '');
+  }
+  function shown(dir) { return S && S.repo === DEF_REPO ? 'OneDrive\\' + dir.replace(/\//g, '\\') : dir; }
   function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
   function refresh() {
     if (!pv || !pv.className) return;
@@ -270,21 +282,21 @@
     if (!S || !S.repo || S.editTok) {
       var editing = S && S.repo && S.editTok;
       bd.innerHTML = (editing ? '<p>新しいトークンを貼ってください。</p>' :
-        '<p>メモを <b>OneDrive の Obsidian/wataamemo</b> に、1件1ファイルの「題名.md」で置いて、どの端末でも同じ中身にします。' +
+        '<p>メモを <b>OneDrive\\メモ-wataamemo</b> に、1件1ファイルの「題名.md」で置いて、どの端末でも同じ中身にします。' +
         'pomenote・notes と同じ非公開リポジトリ <b>pomera-data</b> を通り、PC の同期で OneDrive に届きます。' +
-        'Obsidian・notes で書き換えたものも取り込みます。電波がない間の変更は端末にためて、つながったら送ります。</p>' +
+        'PC でそのフォルダのファイルを書き換えたものも取り込みます。電波がない間の変更は端末にためて、つながったら送ります。</p>' +
         '<p><b>pomenote / notes で使っているトークンをそのまま貼れます。</b>無ければ ' +
         '<a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">ここで作る</a>' +
         '（Only select repositories → pomera-data、Contents: Read and write）。</p>' +
         '<label for="gr">リポジトリ</label><input id="gr" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + DEF_REPO + '">' +
-        '<label for="gd">置き場所（リポジトリの中のフォルダ）</label><input id="gd" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + DEF_DIR + '">') +
+        '<label for="gd">置き場所（OneDrive の中のフォルダ。C:\\Users\\…\\OneDrive\\… を貼ってもよい）</label><input id="gd" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + DEF_DIR + '">') +
         '<label for="gt">トークン</label><input id="gt" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="github_pat_…">' +
         '<p>トークンはこの端末のブラウザにだけ保存します。端末ごとに1回貼ります。</p>' +
         '<div class="bt"><button data-a="connect">つなぐ</button></div>';
       return;
     }
     var n = pending();
-    bd.innerHTML = '<p>置き場所 <b>' + esc(S.repo) + ' / ' + esc(S.dir) + '</b>　<a href="https://github.com/' + esc(S.repo) + '/tree/HEAD/' + esc(encPath(S.dir)) + '" target="_blank" rel="noopener">開く</a></p>' +
+    bd.innerHTML = '<p>置き場所 <b>' + esc(shown(S.dir)) + '</b>（' + esc(S.repo) + '）　<a href="https://github.com/' + esc(S.repo) + '/tree/HEAD/' + esc(encPath(S.dir)) + '" target="_blank" rel="noopener">開く</a></p>' +
       '<p>状態 <b>' + esc(M.sy.textContent) + '</b></p>' +
       '<p>最終同期 <b>' + (S.last ? M.fmt(S.last) : 'まだ') + '</b>　未送信 <b>' + n + '件</b></p>' +
       (err ? '<p>' + esc(err) + '</p>' : '') +
