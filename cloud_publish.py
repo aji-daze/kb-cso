@@ -11,8 +11,24 @@ import engine  # noqa: E402
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: E402
 
 
+def check_result(d):
+    """取得失敗で空・欠けたデータを公開しないための検査（問題があれば例外→リトライ→中断）"""
+    pf = engine.load_portfolio()
+    held = list((pf.get("holdings") or {}).keys())
+    if not held:
+        raise RuntimeError("portfolio.json が空か壊れています（保有銘柄が読めません）")
+    got = {h.get("ticker") for h in (d.get("holdings") or [])}
+    missing = [tk for tk in held if tk not in got]
+    if not got:
+        raise RuntimeError("保有銘柄の価格が1件も取得できませんでした")
+    if missing:
+        raise RuntimeError(f"保有銘柄の価格が取得できませんでした: {', '.join(missing)}")
+    if not d.get("market"):
+        raise RuntimeError("市場データ（指数）が空です")
+
+
 def main():
-    pin = os.environ.get("DATA_PIN", "")
+    pin = os.environ.get("DATA_PIN", "").strip()
     if not pin:
         raise SystemExit("環境変数 DATA_PIN が未設定です（GitHub Secretsに追加してください）")
 
@@ -22,8 +38,10 @@ def main():
     for attempt in range(3):
         try:
             d = engine.update(False)
+            check_result(d)
             break
         except Exception:
+            d = None
             traceback.print_exc()
             if attempt < 2:
                 print(f"リトライします（{attempt + 2}/3回目・60秒待機）")
