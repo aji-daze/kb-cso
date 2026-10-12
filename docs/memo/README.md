@@ -71,14 +71,14 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
 
 ## どの端末でも同じメモにする（同期）
 
-一覧下部の「同期」から設定する。メモは **OneDrive の `Obsidian/wataamemo/`** に、1件1ファイルの「題名.md」で置かれる。
+一覧下部の「同期」から設定する。メモは **`C:\Users\A.H\OneDrive\メモ-wataamemo`** に、1件1ファイルの「題名.md」で置かれる。
 
 ```
 スマホ・タブレット・PC の wataamemo
         ⇅ GitHub の API（トークン）
-非公開リポジトリ aji-daze/pomera-data の Obsidian/wataamemo/   ← pomenote・notes と同じ置き場
+非公開リポジトリ aji-daze/pomera-data の メモ-wataamemo/   ← pomenote・notes と同じリポジトリ（一番上 = OneDrive の一番上）
         ⇅ PC の同期（pomera_sync）
-OneDrive の Obsidian/wataamemo/   ← Obsidian・notes・ポメラタブからも同じファイルが見える
+C:\Users\A.H\OneDrive\メモ-wataamemo\   ← PC のエクスプローラー・メモ帳などからも同じファイルが見える
 ```
 
 OneDrive に直接つながず pomera-data を通すのは、
@@ -95,32 +95,33 @@ OneDrive に直接つながず pomera-data を通すのは、
 | 電波がない | 変更は端末にためる（バーに「オフライン · 未送信3」）。つながったらまとめて送る |
 | ファイル名 | 1行目が名前になる（`買い物リスト.md`）。同じ名前があれば `買い物リスト (2).md`。Windows で使えない文字は空白に置き換える。1行目が空なら `無題.md` |
 | 1行目を書き換えた | ファイル名も付け替える（新しい名前で書いてから古いものを消す） |
-| Obsidian・notes で作った・書き換えた・消した | 次の同期で取り込む。人が付けた名前（1行目と違う名前）は、wataamemo で書き換えても変えない |
+| PC（OneDrive のフォルダ）で作った・書き換えた・消した | 次の同期で取り込む。人が付けた名前（1行目と違う名前）は、wataamemo で書き換えても変えない |
 | 別の端末で同じメモを同時に書き換えた | 両方残す。向こうの版は先頭に「（競合: 別の端末の版）」を付けた別のメモになる |
 | 中身が変わっていない | 送らない（コミットを増やさない。git の blob sha を手元で計算して比べる） |
 | メモを消した | ファイルも消す（GitHub の履歴には残るので戻せる） |
 | トークンが切れた・取り消された | バーに「トークン無効」。その間も書けて、変更はたまる。「同期」から貼り直す |
 | 同期をやめる | 端末のメモも、GitHub・OneDrive のファイルも残る |
 
-保存のたびに `update: Obsidian/wataamemo/題名.md (wataamemo)` というコミットになる（pomenote は `(tablet)`、notes は `(notes)`）。
+保存のたびに `update: メモ-wataamemo/題名.md (wataamemo)` というコミットになる（pomenote は `(tablet)`、notes は `(notes)`）。
 置き場所は「同期」の画面で変えられる（リポジトリ・フォルダ）。公開リポジトリを指定した場合はつながない。
 
 ### 準備（端末ごとに1回）
 
 1. wataamemo を開く → ≡ → 一番下の「同期」
-2. リポジトリ `aji-daze/pomera-data`・置き場所 `Obsidian/wataamemo` はそのまま
+2. リポジトリ `aji-daze/pomera-data`・置き場所 `メモ-wataamemo` はそのまま（`C:\Users\A.H\OneDrive\メモ-wataamemo` を貼ってもよい）
 3. トークンに **pomenote / notes で使っているもの**を貼る → 「つなぐ」
 
 トークンが手元に無ければ、[Fine-grained token](https://github.com/settings/personal-access-tokens/new) を作る
 （Repository access: Only select repositories → `pomera-data`、Permissions → Contents: Read and write）。
 トークンはその端末のブラウザ（localStorage）にだけ保存する。
 
-前の形（`memos/<ID>.md`）でつないでいた端末は、同じフォルダの中で題名のファイル名に付け替わる。
-OneDrive に置きたければ「同期をやめる」→ つなぎ直す。
 
 ### 注意
 
-- pomera_sync が `Obsidian/` を OneDrive とそろえる前提。`Obsidian/wataamemo/` が OneDrive に出てこなければ、PC の同期の対象を確かめる
+- pomera_sync が OneDrive の一番上（`メモ`・`小説`・`Obsidian` など）をリポジトリとそろえる前提。
+  `OneDrive\メモ-wataamemo` にファイルが出てこなければ、PC の同期の対象を確かめる
+- 前の版の置き場所（`memos/`・`Obsidian/wataamemo/`）でつないでいた端末は、新しい版で開いたときに
+  `メモ-wataamemo/` へ自動で引っ越す（新しい場所に書いてから古いものを消す。人が付けた名前は保つ）
 - 1つのフォルダに置けるのは 1000 件まで（GitHub の API でフォルダの中身を1回で読める上限）
 - アプリの画面（`aji-daze.github.io/kb-cso/memo/`）自体は公開 URL だが、中身は空の入れ物。
   メモは各端末と非公開リポジトリ（と OneDrive）にしかない
@@ -144,7 +145,9 @@ Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコ
 
 スマホのブラウザで次を開いてダウンロード → 開く → インストール。
 
-`https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`
+`https://aji-daze.github.io/kb-cso/apk/wataamemo.apk`
+
+（予備: `https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`）
 
 画面をアプリに同梱しているので、電波がなくても・更新直後でも、いつも同じ版がすぐ開く。
 更新は同じリンクから落として上から入れるだけ。詳しくは `android-memo/README.md`。

@@ -5,8 +5,11 @@ wataamemo（`../docs/memo/`）をそのまま同梱した Android アプリ。�
 
 ## 入れ方（スマホだけで）
 
-1. スマホのブラウザで次を開く（ダウンロードが始まる）
-   `https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`
+1. スマホの **Chrome** で次を開く（ダウンロードが始まる）。
+   LINE・Gmail・Claude などのアプリの中でリンクを押すと、中の簡易ブラウザでは落ちないことがある。
+   その場合はリンクをコピーして Chrome に貼る。Web 版の一覧の下の「Android アプリ」からも落とせる
+   `https://aji-daze.github.io/kb-cso/apk/wataamemo.apk`
+   （予備: `https://github.com/aji-daze/kb-cso/releases/download/wataamemo/wataamemo.apk`）
 2. ダウンロードした `wataamemo.apk` を開く
 3. 「提供元不明のアプリ」を聞かれたら、そのブラウザ（またはファイルアプリ）に許可して、もう一度開く
 4. 「インストール」
@@ -28,18 +31,20 @@ wataamemo（`../docs/memo/`）をそのまま同梱した Android アプリ。�
 
 ## 仕組み
 
-- 画面は `https://appassets.androidplatform.net/assets/memo/` として WebView で開く（`WebViewAssetLoader`）。
+- 画面は `https://appassets.androidplatform.net/memo/` として WebView で開き、assets から自分で返す。
   本物の https のオリジンなので、localStorage・crypto.subtle・GitHub への同期がブラウザと同じに動く
 - ブラウザの機能が WebView で使えないところ（共有・コピー・書き出し・ファイル選択・戻る）は、
   画面から `window.WataaApp` を呼んでアプリ側がやる
-- ビルド時に `docs/memo` の `index.html`・`sync.js`・`manifest.json`・`icons/` を assets に写す
+- ビルド時に `docs/memo` の `index.html`・`sync.js`・`manifest.json`・`icons/icon-192.png` を assets に写す
 
 ## ビルド
 
 GitHub Actions（`.github/workflows/wataamemo-apk.yml`）が作る。
 
 - どのブランチでも、`android-memo/**` か `docs/memo/**` を変えて push → Actions の成果物（wataamemo-apk）
-- main に入ったら、Releases の `wataamemo` の APK を差し替える（上のリンクはずっと同じ）
+- main に入ったら、`docs/apk/wataamemo.apk`（GitHub Pages）と Releases の `wataamemo` の APK を差し替える（リンクはずっと同じ）
+- 軽さのために Java と Android 標準の部品だけで書く（AndroidX・Kotlin を使わない）。R8 で使わない部分を削る。
+  ワークフローは 1MB を超えたら失敗にする
 
 署名鍵は `app/wataamemo.keystore`（パスワードは `app/build.gradle.kts` に書いてある）。
 ビルドのたびに鍵が変わると上から入れ直せず、消すと端末のメモも消えてしまうので、固定してリポジトリに置いている。
