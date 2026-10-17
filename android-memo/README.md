@@ -33,6 +33,8 @@ wataamemo（`../docs/memo/`）をそのまま同梱した Android アプリ。�
 
 - 画面は `https://appassets.androidplatform.net/memo/` として WebView で開き、assets から自分で返す。
   本物の https のオリジンなので、localStorage・crypto.subtle・GitHub への同期がブラウザと同じに動く
+- OneDrive のサインイン（Microsoft の画面）はアプリの中で開き、終わったら戻ってくる。
+  Entra のアプリ登録に SPA のリダイレクト URI `https://appassets.androidplatform.net/memo/index.html` を足しておく
 - ブラウザの機能が WebView で使えないところ（共有・コピー・書き出し・ファイル選択・戻る）は、
   画面から `window.WataaApp` を呼んでアプリ側がやる
 - ビルド時に `docs/memo` の `index.html`・`sync.js`・`manifest.json`・`icons/icon-192.png` を assets に写す

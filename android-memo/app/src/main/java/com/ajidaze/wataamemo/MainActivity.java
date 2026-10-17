@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -90,6 +91,9 @@ public class MainActivity extends Activity {
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
         web.addJavascriptInterface(new Bridge(), "WataaApp");
+        // サインインの画面が Microsoft の別のドメインどうしでログイン状態を受け渡すため
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -101,7 +105,10 @@ public class MainActivity extends Activity {
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
-                if (HOST.equals(req.getUrl().getHost())) return false;
+                String host = req.getUrl().getHost();
+                if (HOST.equals(host)) return false;
+                // OneDrive のサインイン（Microsoft の画面）はこの中で開き、終わったらこの画面に戻ってくる
+                if (signInHost(host)) return false;
                 // トークンの作り方など、外のページはブラウザで開く
                 try { startActivity(new Intent(Intent.ACTION_VIEW, req.getUrl())); } catch (Exception ignored) { }
                 return true;
@@ -120,6 +127,14 @@ public class MainActivity extends Activity {
 
         if (state != null) web.restoreState(state);
         if (web.getUrl() == null) web.loadUrl(startUrl(getIntent()));
+    }
+
+    // Microsoft のサインインで行き来する場所
+    static boolean signInHost(String h) {
+        if (h == null) return false;
+        String[] ok = {"microsoftonline.com", "live.com", "microsoft.com", "msauth.net", "msftauth.net", "msidentity.com", "live.net"};
+        for (String d : ok) if (h.equals(d) || h.endsWith("." + d)) return true;
+        return false;
     }
 
     // assets/memo/... を返す
@@ -158,12 +173,16 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
+        // サインインの画面の途中なら、ひとつ前に戻る
+        String u = web.getUrl();
+        if (u != null && signInHost(Uri.parse(u).getHost()) && web.canGoBack()) { web.goBack(); return; }
         web.evaluateJavascript("window.WataaBack?WataaBack():false", r -> { if (!"true".equals(r)) moveTaskToBack(true); });
     }
 
     @Override
     protected void onPause() {
         web.evaluateJavascript("window.MEMO&&MEMO.save()", null);   // 裏に回る前に必ず書き込む
+        CookieManager.getInstance().flush();                         // サインインの状態を残す（次に黙ってつなぎ直せる）
         super.onPause();
     }
 
