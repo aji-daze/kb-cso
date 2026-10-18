@@ -75,11 +75,11 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
 
 一覧下部の「同期」から設定する。置き場所は2通り。
 
-| | **OneDrive（おすすめ）** | GitHub |
+| | OneDrive に直接 | **GitHub 経由（おすすめ）** |
 | --- | --- | --- |
 | 置き場所 | OneDrive のフォルダ（既定 `メモ-wataamemo` = `C:\Users\A.H\OneDrive\メモ-wataamemo`） | 非公開リポジトリ `aji-daze/pomera-data` の `メモ-wataamemo/` |
-| つながり方 | wataamemo が Microsoft Graph で**フォルダを直接**読み書きする | GitHub の API。OneDrive に届くのは PC の同期（pomera_sync）が動いたとき |
-| 準備 | Microsoft Entra のアプリ登録（1回）＋各端末でサインイン | トークンを貼る |
+| つながり方 | wataamemo が Microsoft Graph で**フォルダを直接**読み書きする | GitHub の API。PC の OneDrive フォルダへは PC 用の同期（wataamemo_sync）が5分ごとに運ぶ |
+| 準備 | Microsoft Entra のアプリ登録（個人アカウントだけでは不可。Azure の無料アカウントが要る）＋各端末でサインイン | 各端末でトークンを貼る＋PC に wataamemo_sync |
 | ほかの端末・PC での編集 | そのフォルダのファイルを書き換えた・作った・消した・名前を変えたものを取り込む | リポジトリ側の変更を取り込む |
 | サインインの期限 | Microsoft の決まりでブラウザ用は 24 時間。切れたら起動直後に画面を出さずに自動で入り直す（Microsoft 側にログインが残っていれば）。だめならバーに「サインイン」 | トークンの期限まで |
 
@@ -102,6 +102,30 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
 | メモを消した | ファイルも消す（OneDrive はごみ箱、GitHub は履歴から戻せる） |
 | 向こうの一覧が急に空・大半が消えて見える | 端末のメモを消さずに同期を中止する（5件以上で半分以上が見えないとき） |
 | 同期をやめる | 端末のメモも、置き場所のファイルも残る |
+
+### PC の OneDrive フォルダにも置く（GitHub 経由のとき）
+
+PC に小さな同期プログラム `pc/wataamemo_sync.py` を入れると、5分ごとに
+GitHub（pomera-data の `メモ-wataamemo/`）と `C:\Users\A.H\OneDrive\メモ-wataamemo` をそろえる。
+PC で書き換えたファイルもスマホ・タブレットに届く。PC の電源が入っていてログインしている間だけ動く。
+
+入れ方（PowerShell に貼って Enter。Python が要る。`py` が無ければ `python`）:
+
+```
+irm https://aji-daze.github.io/kb-cso/memo/pc/wataamemo_sync.py -OutFile $env:TEMP\wataamemo_sync.py; py $env:TEMP\wataamemo_sync.py
+```
+
+- フォルダを聞かれたら Enter（`OneDrive\メモ-wataamemo` のまま）、トークンは pomenote / notes のものを貼る
+- タスクスケジューラに `wataamemo-sync`（5分ごと）が入り、1回目の同期をする
+- 状態を見る: `py %LOCALAPPDATA%\wataamemo\wataamemo_sync.py --status`、外す: `--uninstall`
+- 記録は `%LOCALAPPDATA%\wataamemo\sync.log`
+
+決まり（アプリと同じ考え方）: 前に同期したときの中身の印を覚えておき、どちらが変わったかで決める。
+両方で書き換えていたら PC の版を送り、GitHub の版は「名前 (競合 GitHub版 日時).md」で残す。
+一覧が急に空に見えるとき・OneDrive のフォルダが見えないときは、何も消さずに止める。`.md` と `.txt` だけを扱う。
+
+pomera_sync（PC の全体の同期）がまた動くようになり、このフォルダも運ぶなら、どちらか一方だけにする
+（`--uninstall` で外せる）。
 
 ### OneDrive の準備
 
@@ -156,7 +180,8 @@ Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコ
 ```
 memo/
   index.html   画面・見た目・動作のすべて
-  sync.js      同期（OneDrive 直接 / GitHub。設定したときだけ、起動後に読む）
+  sync.js      同期（GitHub / OneDrive 直接。設定したときだけ、起動後に読む）
+  pc/wataamemo_sync.py  PC 用の同期（GitHub ⇄ OneDrive のフォルダ。タスクスケジューラで5分ごと）
   sw.js        オフライン用キャッシュ
   manifest.json
   icons/

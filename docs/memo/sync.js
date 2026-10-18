@@ -452,7 +452,7 @@
   }
 
   // ---- 設定画面 ----
-  var pv = null, mode = 'onedrive';
+  var pv = null, mode = 'github';
   function panel() {
     if (!pv) {
       var st = document.createElement('style');
@@ -548,11 +548,13 @@
         '<div class="bt"><button data-a="connect-gh">つなぐ</button></div>';
       return;
     }
-    var tabs = '<div class="tabs"><button data-a="tab-od" class="' + (mode === 'onedrive' ? 'on' : '') + '">OneDrive（おすすめ）</button><button data-a="tab-gh" class="' + (mode === 'github' ? 'on' : '') + '">GitHub</button></div>';
+    var tabs = '<div class="tabs"><button data-a="tab-gh" class="' + (mode === 'github' ? 'on' : '') + '">GitHub 経由（おすすめ）</button><button data-a="tab-od" class="' + (mode === 'onedrive' ? 'on' : '') + '">OneDrive に直接</button></div>';
     if (mode === 'onedrive') {
       bd.innerHTML = tabs +
-        '<p>メモを <b>OneDrive のフォルダ</b>に1件1ファイルの「題名.md」で置き、どの端末でも同じ中身にします。' +
-        'PC やほかのアプリでそのフォルダのファイルを書き換えたものも取り込みます。電波がない間の変更は端末にためて、つながったら送ります。</p>' +
+        '<p>wataamemo から <b>OneDrive のフォルダ</b>を直接読み書きします。PC が動いていなくても全端末でそろいます。</p>' +
+        '<p><b>Microsoft Entra（Azure）のアプリ登録が要ります。</b>個人の Microsoft アカウントだけでは登録できず'+
+        '（「AADSTS16000」と出る）、Azure の無料アカウント（カードと電話番号での本人確認）でディレクトリを作る必要があります。'+
+        '登録できない場合は「GitHub 経由」を使ってください。</p>' +
         '<label for="op">フォルダ（C:\\Users\\…\\OneDrive\\… のパス、OneDrive の中の名前、共有リンクのどれでもよい）</label>' +
         '<input id="op" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(DEF_OD) + '">' +
         '<label for="oc">クライアント ID（Microsoft Entra に登録したアプリの ID）</label>' +
@@ -568,7 +570,10 @@
       detectCid().then(function (id) { var i = pv.querySelector('#oc'); if (id && i && !i.value) i.value = id; });
     } else {
       bd.innerHTML = tabs +
-        '<p>pomenote・notes と同じ非公開リポジトリ <b>pomera-data</b> に置きます。OneDrive に届くのは PC の同期（pomera_sync）が動いたとき。</p>' +
+        '<p>メモを非公開リポジトリ <b>pomera-data</b> の <b>メモ-wataamemo</b> に、1件1ファイルの「題名.md」で置き、どの端末でも同じ中身にします。' +
+        'トークンは pomenote・notes と同じものでよい。電波がない間の変更は端末にためて、つながったら送ります。</p>' +
+        '<p>PC の <b>OneDrive\\メモ-wataamemo</b> にも置くには、PC に <a href="pc/wataamemo_sync.py" target="_blank" rel="noopener">PC 用の同期（wataamemo_sync）</a> を入れます。' +
+        '5分ごとに GitHub と OneDrive のフォルダをそろえ、PC で書き換えたものもスマホに届きます（入れ方は README）。</p>' +
         '<label for="gr">リポジトリ</label><input id="gr" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + DEF_REPO + '">' +
         '<label for="gd">置き場所（リポジトリの中のフォルダ）</label><input id="gd" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + DEF_DIR + '">' +
         '<label for="gt">トークン（pomenote / notes のものでよい）</label><input id="gt" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="github_pat_…">' +
