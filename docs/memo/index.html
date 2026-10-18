@@ -42,7 +42,6 @@ body.w .bar{opacity:0;transition:opacity 1.2s}
 .t textarea::selection{background:rgba(128,128,128,.28)}
 .t textarea::placeholder{color:transparent;-webkit-text-fill-color:transparent}
 #ed>.t:only-child textarea::placeholder{color:var(--mute);-webkit-text-fill-color:var(--mute)}
-.t .m{color:var(--mute)}
 .t u{text-decoration:underline 1px;text-underline-offset:.32em}
 /* コードブロック。中身は普通に見える textarea。pre は高さを決めるためだけにある。 */
 .c{margin:10px calc(var(--gx) - 16px);padding:6px 16px 12px;background:var(--code)}
@@ -150,19 +149,52 @@ if(iOS){
 // ---- エディタ ----
 // 本文は「文章ブロック(.t)」と「コードブロック(.c)」の並び。必ず 文章, コード, 文章, … の順で、両端は文章。
 // 保存は素のテキスト。コードは ``` で囲み、下線は <u>…</u> で書く（Markdown でもそのまま下線になる）。
+// 画面では <u> の記号を出さない。文章ブロックごとに下線の範囲（何文字目から何文字目まで）を持ち（b._u）、
+// 文字を足したり消したりしたらその差から範囲をずらす。保存するときだけ記号を差し込む。
 var FENCE=/^(?:```|｀｀｀)([^`｀\s]*)\s*$/,CLOSE=/^(?:```|｀｀｀)\s*$/;
 function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function paint(b){
   var v=b.lastChild.value;
   if(b.className==='t'){
-    b.firstChild.innerHTML=esc(v).replace(/&lt;u>([\s\S]*?)&lt;\/u>/g,'<span class="m">&lt;u></span><u>$1</u><span class="m">&lt;/u></span>')+' ';
+    var h='',p=0;(b._u||[]).forEach(function(x){h+=esc(v.slice(p,x[0]))+'<u>'+esc(v.slice(x[0],x[1]))+'</u>';p=x[1]});
+    b.firstChild.innerHTML=h+esc(v.slice(p))+' ';
   }else b.firstChild.textContent=v+' ';
   b.lastChild.scrollTop=0;
 }
+// 下線の範囲: 並べ替えて、重なり・隣り合いをまとめ、空のものを捨てる
+function norm(r){
+  var o=[];r.filter(function(x){return x[1]>x[0]}).sort(function(a,b){return a[0]-b[0]}).forEach(function(x){
+    var l=o[o.length-1];if(l&&x[0]<=l[1])l[1]=Math.max(l[1],x[1]);else o.push([x[0],x[1]]);
+  });return o;
+}
+function cut(r,s,e,sh){return norm(r.map(function(x){return[Math.max(x[0],s)-sh,Math.min(x[1],e)-sh]}))}
+// 保存の形（<u>…</u>）⇔ 文字と範囲
+function unmark(t){
+  var o='',r=[],re=/<u>([\s\S]*?)<\/u>/g,last=0,m;
+  while((m=re.exec(t))){o+=t.slice(last,m.index);var s=o.length;o+=m[1];r.push([s,o.length]);last=re.lastIndex}
+  return{t:o+t.slice(last),r:norm(r)};
+}
+function markup(v,r){var o='',p=0;(r||[]).forEach(function(x){o+=v.slice(p,x[0])+'<u>'+v.slice(x[0],x[1])+'</u>';p=x[1]});return o+v.slice(p)}
+// 文字が変わったら、変わった所（前後の一致しない部分）に合わせて範囲をずらす。
+// 下線の中で打てば下線が伸び、下線の端の外で打っても伸びない
+function follow(b,nv,caret){
+  var ov=b._v||'',r=b._u||[];b._v=nv;
+  if(!r.length||ov===nv)return;
+  var ol=ov.length,nl=nv.length,d=nl-ol,a=0,z=0;
+  while(a<ol&&a<nl&&ov[a]===nv[a])a++;
+  if(caret!=null)a=Math.max(0,Math.min(a,caret-Math.max(d,0)));
+  while(z<ol-a&&z<nl-a&&ov[ol-1-z]===nv[nl-1-z])z++;
+  var oe=ol-z,ins=nl-z-a;
+  b._u=norm(r.map(function(x){
+    var s=x[0],e=x[1];
+    return[s<a?s:(s>=oe?s+d:a+ins),e<=a?e:(e>=oe?e+d:a)];
+  }));
+}
+function plain(t){return t.replace(/<\/?u>/g,'')}
 function ta(){var x=document.createElement('textarea');x.rows=1;x.spellcheck=false;x.setAttribute('autocomplete','off');x.setAttribute('autocapitalize','off');return x}
-function mkT(v){
+function mkT(v,r){
   var d=document.createElement('div'),p=document.createElement('pre'),x=ta();
-  d.className='t';p.setAttribute('aria-hidden','true');x.placeholder='メモ';x.value=v;d.appendChild(p);d.appendChild(x);paint(d);return d;
+  d.className='t';p.setAttribute('aria-hidden','true');x.placeholder='メモ';x.value=v;d._v=v;d._u=r||[];d.appendChild(p);d.appendChild(x);paint(d);return d;
 }
 function mkC(lang,v){
   var c=document.createElement('div'),h=document.createElement('div'),w=document.createElement('div'),p=document.createElement('pre'),x=ta();
@@ -178,7 +210,7 @@ function getText(){
   var a=[],b=ed.children;
   for(var i=0;i<b.length;i++){
     var v=area(b[i]).value;
-    if(b[i].className==='t'){if(v!=='')a.push(v)}
+    if(b[i].className==='t'){if(v!=='')a.push(markup(v,b[i]._u))}
     else a.push('```'+b[i].querySelector('.lg').value.trim()+'\n'+v+'\n```');
   }
   return a.join('\n');
@@ -191,9 +223,11 @@ function parse(t){
     var code=[];i++;
     while(i<L.length&&!CLOSE.test(L[i]))code.push(L[i++]);
     i++;
-    out.push(mkT(buf.join('\n')),mkC(m[1],code.join('\n')));buf=[];
+    var u=unmark(buf.join('\n'));
+    out.push(mkT(u.t,u.r),mkC(m[1],code.join('\n')));buf=[];
   }
-  out.push(mkT(buf.join('\n')));
+  var w=unmark(buf.join('\n'));
+  out.push(mkT(w.t,w.r));
   return out;
 }
 function setText(t){
@@ -209,50 +243,63 @@ function ins(x,s){
 }
 function changed(){later();status();quiet()}
 
-// 文章ブロックを「前の文章 / コード / 後ろの文章」に割る
-function split(b,before,lang,code,after){
-  var c=mkC(lang,code),t2=mkT(after);
-  area(b).value=before;paint(b);
+// 文章ブロックを「前の文章 / コード / 後ろの文章」に割る。
+// bEnd: 前の文章が元の何文字目で終わるか、aStart: 後ろの文章が元の何文字目から始まるか（下線の範囲を振り分ける）
+function split(b,before,lang,code,after,bEnd,aStart){
+  var r=b._u||[],L=area(b).value.length;
+  var c=mkC(lang,code),t2=mkT(after,cut(r,aStart,L,aStart));
+  b._u=cut(r,0,bEnd,0);area(b).value=before;b._v=before;paint(b);
   b.after(c,t2);return c;
 }
 // ``` の行のあとで改行された・貼り付けられたらコードブロックにする
 function fence(b){
-  var L=area(b).value.split('\n'),first=null;
-  for(var i=0;i<L.length-1;i++){
-    var m=L[i].match(FENCE);if(!m)continue;
-    var j=i+1;while(j<L.length&&!CLOSE.test(L[j]))j++;
-    var code=j<L.length?L.slice(i+1,j):[L[i+1]],rest=j<L.length?L.slice(j+1):L.slice(i+2);
-    var c=split(b,L.slice(0,i).join('\n'),m[1],code.join('\n'),rest.join('\n'));
-    if(!first)first=c;
-    b=c.nextSibling;L=area(b).value.split('\n');i=-1;
+  var first=null;
+  for(;;){
+    var v=area(b).value,L=v.split('\n'),off=[],o=0,found=false;
+    for(var k=0;k<L.length;k++){off.push(o);o+=L[k].length+1}
+    for(var i=0;i<L.length-1;i++){
+      var m=L[i].match(FENCE);if(!m)continue;
+      var j=i+1;while(j<L.length&&!CLOSE.test(L[j]))j++;
+      var code=j<L.length?L.slice(i+1,j):[L[i+1]],rs=j<L.length?j+1:i+2;
+      var bEnd=i>0?off[i]-1:0,aStart=rs<L.length?off[rs]:v.length;
+      var c=split(b,v.slice(0,bEnd),m[1],code.join('\n'),v.slice(aStart),bEnd,aStart);
+      if(!first)first=c;
+      b=c.nextSibling;found=true;break;
+    }
+    if(!found)return first;
   }
-  return first;
 }
 function codeBlock(){
   var x=lastTa,b=blk(x);
   if(b.className!=='t'){toast('すでにコードブロックの中です');return}
   var v=x.value,s=x.selectionStart,e=x.selectionEnd;
-  if(v.slice(s-3,s)==='<u>'&&v.slice(e,e+4)==='</u>'){v=v.slice(0,s-3)+v.slice(s,e)+v.slice(e+4);s-=3;e-=3}   // 下線の中身だけを選んだときは記号ごと外す
-  var c=split(b,v.slice(0,s).replace(/\n$/,''),'',v.slice(s,e),v.slice(e).replace(/^\n/,''));
+  var bEnd=v[s-1]==='\n'?s-1:s,aStart=v[e]==='\n'?e+1:e;
+  var c=split(b,v.slice(0,bEnd),'',v.slice(s,e),v.slice(aStart),bEnd,aStart);
   put(area(c),'end');changed();
 }
+// 下線: 選んだ所に引く。全部に引いてあれば外す（本文の文字は変えない）
 function underline(){
-  var x=lastTa;if(blk(x).className!=='t')return;
-  var v=x.value,s=x.selectionStart,e=x.selectionEnd,sel=v.slice(s,e);
+  var x=lastTa,b=blk(x);if(b.className!=='t')return;
+  var s=x.selectionStart,e=x.selectionEnd,r=b._u||[];
   x.focus();
-  if(v.slice(s-3,s)==='<u>'&&v.slice(e,e+4)==='</u>'){x.setSelectionRange(s-3,e+4);ins(x,sel);x.setSelectionRange(s-3,e-3)}
-  else if(/^<u>[\s\S]*<\/u>$/.test(sel)){ins(x,sel.slice(3,-4));x.setSelectionRange(s,e-7)}
-  else{ins(x,'<u>'+sel+'</u>');x.setSelectionRange(s+3,s+3+sel.length)}
+  if(s===e){toast('下線を引く文字を選んでから押してください');return}
+  if(r.some(function(y){return y[0]<=s&&y[1]>=e})){
+    var o=[];r.forEach(function(y){if(y[1]<=s||y[0]>=e){o.push(y);return}if(y[0]<s)o.push([y[0],s]);if(y[1]>e)o.push([e,y[1]])});
+    b._u=norm(o);
+  }else b._u=norm(r.concat([[s,e]]));
+  paint(b);x.setSelectionRange(s,e);changed();
 }
 // コードブロックを消して、前後の文章をつなぐ
 function unblock(c){
-  var p=c.previousSibling,n=c.nextSibling,a=area(p).value,z=area(n).value;
-  area(p).value=a&&z?a+'\n'+z:a+z;paint(p);c.remove();n.remove();put(area(p),a.length);changed();
+  var p=c.previousSibling,n=c.nextSibling,a=area(p).value,z=area(n).value,off=a.length+(a&&z?1:0);
+  p._u=norm((p._u||[]).concat((n._u||[]).map(function(x){return[x[0]+off,x[1]+off]})));
+  area(p).value=a&&z?a+'\n'+z:a+z;p._v=area(p).value;paint(p);c.remove();n.remove();put(area(p),a.length);changed();
 }
 
 ed.addEventListener('input',function(e){
   var x=e.target;if(x.tagName!=='TEXTAREA'){changed();return}
   var b=blk(x);
+  if(b.className==='t')follow(b,x.value,x.selectionEnd);
   if(b.className==='t'&&!e.isComposing&&/(```|｀｀｀)/.test(x.value)){var c=fence(b);if(c){put(area(c),'end')}}
   paint(wrapOf(x));changed();
 });
@@ -315,7 +362,7 @@ addEventListener('resize',function(){var p=ed.querySelectorAll('.t,.cw');for(var
 function nid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function get(id){try{return JSON.parse(LS.getItem(P+id))}catch(e){return null}}
 // 書き込みは必ず setM / rmM を通す。変更したメモの ID を送信待ち（memo.q）に残し、
-// オフラインの間もたまっていく。GitHub 同期（sync.js）がこれを見て送る。
+// オフラインの間もたまっていく。同期（sync.js。OneDrive / GitHub）がこれを見て送る。
 var Q='memo.q';
 function getQ(){var q=null;try{q=JSON.parse(LS.getItem(Q))}catch(e){}q=q||{};q.dirty=q.dirty||{};q.del=q.del||{};return q}
 function mark(id,gone){var q=getQ();if(gone){q.del[id]=1;delete q.dirty[id]}else{q.dirty[id]=1;delete q.del[id]}LS.setItem(Q,JSON.stringify(q));if(window.MemoSync)MemoSync.kick()}
@@ -333,7 +380,7 @@ function fmt(ms){
   return(d.getFullYear()===n.getFullYear()?'':d.getFullYear()+'/')+(d.getMonth()+1)+'/'+d.getDate()+' '+hm;
 }
 function status(){
-  var n=getText().length;
+  var n=plain(getText()).length;
   st.textContent=(n?n+'字':'')+(cur&&curU?(n?' · ':'')+fmt(curU):'');
 }
 
@@ -438,7 +485,7 @@ function copyText(t){
   if(navigator.clipboard)navigator.clipboard.writeText(t).then(function(){toast('コピーしました')},function(){toast('コピーできませんでした')});
 }
 $('bS').onclick=function(){
-  var t=getText();if(!t)return;
+  var t=plain(getText());if(!t)return;
   if(window.WataaApp)WataaApp.share(t);
   else if(navigator.share&&matchMedia('(pointer:coarse)').matches){navigator.share({text:t}).catch(function(){})}
   else copyText(t);
@@ -506,7 +553,7 @@ addEventListener('storage',function(e){
 // ---- OS からの呼び出し ----
 // 他のアプリの「共有」から来た文字を新しいメモにする。?list はアイコン長押しの「一覧」。
 (function(){
-  if(!location.search)return;
+  if(!location.search||/[?&](code|error)=/.test(location.search))return;
   var u=new URLSearchParams(location.search),t=(u.get('text')||'').trim(),ti=(u.get('title')||'').trim(),url=(u.get('url')||'').trim(),a=[];
   if(ti&&t.indexOf(ti)!==0)a.push(ti);
   if(t)a.push(t);
@@ -525,7 +572,7 @@ if('launchQueue' in window)launchQueue.setConsumer(function(p){
   });
 });
 
-// ---- GitHub 同期 ----
+// ---- 同期（OneDrive / GitHub） ----
 // 同期の処理は sync.js にある。設定済みのときだけ、描画が終わってから読む（起動の速さに影響させない）。
 window.MEMO={
   P:P,get:get,all:all,nid:nid,getQ:getQ,setM:setM,save:save,toast:toast,fmt:fmt,sy:$('sy'),
@@ -547,7 +594,10 @@ function loadSync(cb){
 if(/Android/i.test(navigator.userAgent)&&!window.WataaApp)$('bA').hidden=false;
 $('bY').onclick=function(){loadSync(function(){MemoSync.panel()})};
 $('sy').onclick=function(){loadSync(function(){MemoSync.tap()})};
-if(LS.getItem('memo.s'))addEventListener('load',function(){setTimeout(loadSync,300)});
+if(LS.getItem('memo.s')){
+  if(/[?&](code|error)=/.test(location.search))loadSync();   // サインインから戻ってきた: すぐ受け取る
+  else addEventListener('load',function(){setTimeout(loadSync,300)});
+}
 
 // Service Worker は描画が終わってから。起動の邪魔をしない。
 // Android アプリ（WataaApp）の中では画面をアプリに同梱しているので使わない。

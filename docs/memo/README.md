@@ -48,7 +48,7 @@
 
 | 書式 | 書き方 | 画面での見え方 |
 | --- | --- | --- |
-| 下線 | `<u>文字</u>` | 文字に下線。`<u>` `</u>` は薄く残る |
+| 下線 | 文字を選んで U̲ / `Ctrl`+`U`（保存の形は `<u>文字</u>`） | 文字に下線だけ。記号は出ない |
 | コードブロック | 行頭に ```` ``` ````（後ろに言語名も可）と打って改行 | 等幅・薄い地の枠。右上に「コピー」 |
 
 コードブロックの中:
@@ -58,8 +58,10 @@
 - 中身を空にして Backspace でブロックごと消える
 - ```` ``` ```` を含む文章を貼り付けると、その場でコードブロックに変わる
 
-下線の記号を隠さないのは、隠すと文字の位置がずれて入力欄が壊れるため
-（透明な入力欄の下に同じ文字を描いて飾る作りで、日本語入力と元に戻すをそのまま使えるようにしている）。
+下線は、文章ブロックごとに「何文字目から何文字目まで」という範囲で持つ。画面の文字には記号を入れず、
+保存するときだけ `<u>…</u>` を差し込む（ファイルを Obsidian などで開いても下線になる）。
+文字を足したり消したりしたら、その差から範囲をずらす（下線の中で打てば伸び、端の外では伸びない）。
+透明な入力欄の下に同じ文字を描いて飾る作りなので、日本語入力と元に戻すはそのまま使える。
 
 ## 保存について
 
@@ -71,60 +73,76 @@ localStorage の容量は多くのブラウザで約5MB（日本語でおよそ2
 
 ## どの端末でも同じメモにする（同期）
 
-一覧下部の「同期」から設定する。メモは **`C:\Users\A.H\OneDrive\メモ-wataamemo`** に、1件1ファイルの「題名.md」で置かれる。
+一覧下部の「同期」から設定する。置き場所は2通り。
+
+| | OneDrive に直接 | **GitHub 経由（おすすめ）** |
+| --- | --- | --- |
+| 置き場所 | OneDrive のフォルダ（既定 `メモ-wataamemo` = `C:\Users\A.H\OneDrive\メモ-wataamemo`） | 非公開リポジトリ `aji-daze/pomera-data` の `メモ-wataamemo/` |
+| つながり方 | wataamemo が Microsoft Graph で**フォルダを直接**読み書きする | GitHub の API。PC の OneDrive フォルダへは PC 用の同期（wataamemo_sync）が5分ごとに運ぶ |
+| 準備 | Microsoft Entra のアプリ登録（個人アカウントだけでは不可。Azure の無料アカウントが要る）＋各端末でサインイン | 各端末でトークンを貼る＋PC に wataamemo_sync |
+| ほかの端末・PC での編集 | そのフォルダのファイルを書き換えた・作った・消した・名前を変えたものを取り込む | リポジトリ側の変更を取り込む |
+| サインインの期限 | Microsoft の決まりでブラウザ用は 24 時間。切れたら起動直後に画面を出さずに自動で入り直す（Microsoft 側にログインが残っていれば）。だめならバーに「サインイン」 | トークンの期限まで |
+
+どちらも 1件1ファイルの「題名.md」。`.md` と `.txt` を取り込む（画像などは触らない）。
 
 ```
-スマホ・タブレット・PC の wataamemo
-        ⇅ GitHub の API（トークン）
-非公開リポジトリ aji-daze/pomera-data の メモ-wataamemo/   ← pomenote・notes と同じリポジトリ（一番上 = OneDrive の一番上）
-        ⇅ PC の同期（pomera_sync）
-C:\Users\A.H\OneDrive\メモ-wataamemo\   ← PC のエクスプローラー・メモ帳などからも同じファイルが見える
+書く → 端末に即保存 → 送信待ち（memo.q）に ID を残す
+     → オンラインなら、手が3秒止まったら送る
+オフライン → 送信待ちにたまる（バーに「オフライン · 未送信3」）
+つながる → たまった分をまとめて送り、向こうの変更も取り込む
 ```
-
-OneDrive に直接つながず pomera-data を通すのは、
-
-- **準備がトークンを貼るだけ**で済む（pomenote / notes で使っているものをそのまま使える）。
-  OneDrive に直接つなぐには Microsoft Entra でアプリ登録が要る
-- **再ログインが要らない**。OneDrive（ブラウザ用のサインイン）は 24 時間で切れる
-
-から。そのかわり OneDrive に届くのは PC の同期が動いたとき（端末どうしは GitHub を通してすぐそろう）。
 
 | 場面 | 動き |
 | --- | --- |
 | いつ同期するか | 書いて3秒後 / 起動時 / オンラインに戻ったとき / 画面に戻ったとき（20秒以上空いていれば）/ 開いている間は1分ごと |
-| 電波がない | 変更は端末にためる（バーに「オフライン · 未送信3」）。つながったらまとめて送る |
-| ファイル名 | 1行目が名前になる（`買い物リスト.md`）。同じ名前があれば `買い物リスト (2).md`。Windows で使えない文字は空白に置き換える。1行目が空なら `無題.md` |
-| 1行目を書き換えた | ファイル名も付け替える（新しい名前で書いてから古いものを消す） |
-| PC（OneDrive のフォルダ）で作った・書き換えた・消した | 次の同期で取り込む。人が付けた名前（1行目と違う名前）は、wataamemo で書き換えても変えない |
-| 別の端末で同じメモを同時に書き換えた | 両方残す。向こうの版は先頭に「（競合: 別の端末の版）」を付けた別のメモになる |
-| 中身が変わっていない | 送らない（コミットを増やさない。git の blob sha を手元で計算して比べる） |
-| メモを消した | ファイルも消す（GitHub の履歴には残るので戻せる） |
-| トークンが切れた・取り消された | バーに「トークン無効」。その間も書けて、変更はたまる。「同期」から貼り直す |
-| 同期をやめる | 端末のメモも、GitHub・OneDrive のファイルも残る |
+| ファイル名 | 1行目が名前になる（`買い物リスト.md`）。同じ名前があれば `(2)`。Windows で使えない文字は空白に。1行目が空なら `無題.md` |
+| 1行目を書き換えた | ファイル名も変える（OneDrive は名前の変更、GitHub は新しい名前で書いてから古いものを消す） |
+| PC などで名前を変えた | その名前に合わせる。人が付けた名前（1行目と違う名前）は、wataamemo で書き換えても変えない |
+| 別の端末で同じメモを同時に書き換えた | 両方残す。向こうの版は先頭に「（競合: 別の端末の版）」を付けた別のメモになる（OneDrive は版の照合 If-Match で検出） |
+| メモを消した | ファイルも消す（OneDrive はごみ箱、GitHub は履歴から戻せる） |
+| 向こうの一覧が急に空・大半が消えて見える | 端末のメモを消さずに同期を中止する（5件以上で半分以上が見えないとき） |
+| 同期をやめる | 端末のメモも、置き場所のファイルも残る |
 
-保存のたびに `update: メモ-wataamemo/題名.md (wataamemo)` というコミットになる（pomenote は `(tablet)`、notes は `(notes)`）。
-置き場所は「同期」の画面で変えられる（リポジトリ・フォルダ）。公開リポジトリを指定した場合はつながない。
+### PC の OneDrive フォルダにも置く（GitHub 経由のとき）
 
-### 準備（端末ごとに1回）
+PC に小さな同期プログラム `pc/wataamemo_sync.py` を入れると、5分ごとに
+GitHub（pomera-data の `メモ-wataamemo/`）と `C:\Users\A.H\OneDrive\メモ-wataamemo` をそろえる。
+PC で書き換えたファイルもスマホ・タブレットに届く。PC の電源が入っていてログインしている間だけ動く。
 
-1. wataamemo を開く → ≡ → 一番下の「同期」
-2. リポジトリ `aji-daze/pomera-data`・置き場所 `メモ-wataamemo` はそのまま（`C:\Users\A.H\OneDrive\メモ-wataamemo` を貼ってもよい）
-3. トークンに **pomenote / notes で使っているもの**を貼る → 「つなぐ」
+入れ方（PowerShell に貼って Enter。Python が要る。`py` が無ければ `python`）:
 
-トークンが手元に無ければ、[Fine-grained token](https://github.com/settings/personal-access-tokens/new) を作る
-（Repository access: Only select repositories → `pomera-data`、Permissions → Contents: Read and write）。
-トークンはその端末のブラウザ（localStorage）にだけ保存する。
+```
+irm https://aji-daze.github.io/kb-cso/memo/pc/wataamemo_sync.py -OutFile $env:TEMP\wataamemo_sync.py; py $env:TEMP\wataamemo_sync.py
+```
 
+- フォルダを聞かれたら Enter（`OneDrive\メモ-wataamemo` のまま）、トークンは pomenote / notes のものを貼る
+- タスクスケジューラに `wataamemo-sync`（5分ごと）が入り、1回目の同期をする
+- 状態を見る: `py %LOCALAPPDATA%\wataamemo\wataamemo_sync.py --status`、外す: `--uninstall`
+- 記録は `%LOCALAPPDATA%\wataamemo\sync.log`
 
-### 注意
+決まり（アプリと同じ考え方）: 前に同期したときの中身の印を覚えておき、どちらが変わったかで決める。
+両方で書き換えていたら PC の版を送り、GitHub の版は「名前 (競合 GitHub版 日時).md」で残す。
+一覧が急に空に見えるとき・OneDrive のフォルダが見えないときは、何も消さずに止める。`.md` と `.txt` だけを扱う。
 
-- pomera_sync が OneDrive の一番上（`メモ`・`小説`・`Obsidian` など）をリポジトリとそろえる前提。
-  `OneDrive\メモ-wataamemo` にファイルが出てこなければ、PC の同期の対象を確かめる
-- 前の版の置き場所（`memos/`・`Obsidian/wataamemo/`）でつないでいた端末は、新しい版で開いたときに
-  `メモ-wataamemo/` へ自動で引っ越す（新しい場所に書いてから古いものを消す。人が付けた名前は保つ）
-- 1つのフォルダに置けるのは 1000 件まで（GitHub の API でフォルダの中身を1回で読める上限）
-- アプリの画面（`aji-daze.github.io/kb-cso/memo/`）自体は公開 URL だが、中身は空の入れ物。
-  メモは各端末と非公開リポジトリ（と OneDrive）にしかない
+pomera_sync（PC の全体の同期）がまた動くようになり、このフォルダも運ぶなら、どちらか一方だけにする
+（`--uninstall` で外せる）。
+
+### OneDrive の準備
+
+1. [Microsoft Entra のアプリの登録](https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → 新規登録
+   （栞の OneDrive 取り込みで登録済みなら、そのアプリを使ってよい。同期の画面に ID が自動で入る）
+   - サポートされるアカウントの種類: **個人用 Microsoft アカウント**を含むもの
+   - リダイレクト URI: **シングルページ アプリケーション (SPA)** で次の2つ
+     - `https://aji-daze.github.io/kb-cso/memo/`（Web 版）
+     - `https://appassets.androidplatform.net/memo/index.html`（Android アプリ）
+   - API のアクセス許可: Microsoft Graph の `Files.ReadWrite`（委任）
+2. 各端末で wataamemo → ≡ → 「同期」 → OneDrive → フォルダ（そのままでよい。`C:\Users\…` のパスや共有リンクでもよい）と
+   クライアント ID を入れて「サインインしてつなぐ」
+
+### GitHub の準備
+
+同期 → GitHub → リポジトリ・置き場所はそのまま、pomenote / notes のトークンを貼って「つなぐ」。
+前の版の置き場所（`memos/`・`Obsidian/wataamemo/`）でつないでいた端末は、新しい版で開いたときに `メモ-wataamemo/` へ自動で引っ越す。
 
 ## OS との連携（ホーム画面に追加・インストールしたとき）
 
@@ -162,7 +180,8 @@ Safari（iPhone/iPad）は共有メニュー・ファイルを開く・アイコ
 ```
 memo/
   index.html   画面・見た目・動作のすべて
-  sync.js      同期（pomera-data 経由で OneDrive へ。設定したときだけ、起動後に読む）
+  sync.js      同期（GitHub / OneDrive 直接。設定したときだけ、起動後に読む）
+  pc/wataamemo_sync.py  PC 用の同期（GitHub ⇄ OneDrive のフォルダ。タスクスケジューラで5分ごと）
   sw.js        オフライン用キャッシュ
   manifest.json
   icons/
