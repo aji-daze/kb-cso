@@ -16,7 +16,7 @@ OneDrive に置いたファイルは OneDrive のアプリがクラウドへ上�
   py wataamemo_sync.py --uninstall  タスクを外す（ファイルとメモはそのまま）
 
 決まり（wataamemo・ポメラタブと同じ考え方）
-  - 1件1ファイル。.md と .txt だけを扱う（フォルダの中の画像などには触らない）
+  - 1件1ファイル。.md と .txt と、アプリで添付した画像（画像/ の中）を扱う（ほかの画像などには触らない）
   - 前に同期したときの中身の印（git の blob sha）を覚えておき、どちらが変わったかで決める（3方向比較）
   - 両方で書き換えていたら、PC の版をそのまま送り、GitHub の版は「名前 (競合 GitHub版 日時).md」で残す
   - 消したら向こうでも消す。ただし向こうで書き換えられていたら消さずに戻す
@@ -46,6 +46,7 @@ STATE = os.path.join(APP, 'state.json')
 LOG = os.path.join(APP, 'sync.log')
 TASK = 'wataamemo-sync'
 EXT = ('.md', '.txt')
+IDIR = '画像'   # アプリで添付した画像。中の物はすべて扱う（名前は「画像/xxx.jpg」）
 ONEDRIVE = os.environ.get('OneDrive') or os.environ.get('OneDriveConsumer') or os.path.join(os.path.expanduser('~'), 'OneDrive')
 DEFAULT = {
     'repo': 'aji-daze/pomera-data',
@@ -149,8 +150,12 @@ class GitHub:
                 self.repo_info()   # リポジトリ自体が見えないなら、ここで 404 のまま止まる（空と取り違えない）
                 return {}
             raise
-        return {x['name']: x['sha'] for x in (r if isinstance(r, list) else [])
-                if x.get('type') == 'file' and x['name'].lower().endswith(EXT)}
+        out = {x['name']: x['sha'] for x in (r if isinstance(r, list) else [])
+               if x.get('type') == 'file' and x['name'].lower().endswith(EXT)}
+        if any(x.get('type') == 'dir' and x['name'] == IDIR for x in (r if isinstance(r, list) else [])):
+            r = self.call('GET', '/contents/' + urllib.parse.quote(self.dir + '/' + IDIR) + '?ref=' + urllib.parse.quote(self.branch))
+            out.update({IDIR + '/' + x['name']: x['sha'] for x in (r if isinstance(r, list) else []) if x.get('type') == 'file'})
+        return out
 
     def read(self, sha):
         r = self.call('GET', '/git/blobs/' + sha)
@@ -180,19 +185,28 @@ def local_files(folder):
             continue
         with open(p, 'rb') as f:
             out[name] = blob_sha(f.read())
+    sub = os.path.join(folder, IDIR)
+    if os.path.isdir(sub):
+        for name in os.listdir(sub):
+            p = os.path.join(sub, name)
+            if os.path.isfile(p) and not name.startswith(('.', '~$')):
+                with open(p, 'rb') as f:
+                    out[IDIR + '/' + name] = blob_sha(f.read())
     return out
 
 
 def write_local(folder, name, data):
-    p = os.path.join(folder, name)
-    tmp = os.path.join(folder, '.' + name + '.wataamemo-tmp')
+    p = os.path.join(folder, *name.split('/'))
+    d, base = os.path.split(p)
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, '.' + base + '.wataamemo-tmp')
     with open(tmp, 'wb') as f:
         f.write(data)
     os.replace(tmp, p)
 
 
 def read_local(folder, name):
-    with open(os.path.join(folder, name), 'rb') as f:
+    with open(os.path.join(folder, *name.split('/')), 'rb') as f:
         return f.read()
 
 
@@ -244,7 +258,7 @@ def sync_once(verbose=False):
             continue
         if L == B:                     # PC は前のまま → GitHub の変更を写す
             if R is None:
-                os.remove(os.path.join(folder, name))
+                os.remove(os.path.join(folder, *name.split('/')))
                 state.pop(name, None)
                 done.append('PC から削除: ' + name)
             else:
