@@ -14,7 +14,7 @@
   var M = window.MEMO, LS = localStorage;
   var SK = 'memo.s', GTK = 'memo.ghtok', OTK = 'memo.od', OPK = 'memo.odp', OSK = 'memo.odsilent';
   var DEF_REPO = 'aji-daze/pomera-data', DEF_DIR = 'メモ-wataamemo', OLD_DIR = 'Obsidian/wataamemo';
-  var DEF_OD = 'メモ-wataamemo';
+  var DEF_OD = 'メモ-wataamemo', IDIR = '画像';
   var loadedAt = Date.now(), typed = false;
   document.addEventListener('input', function () { typed = true; }, { capture: true, once: true });
 
@@ -63,7 +63,7 @@
   // ---- ファイル名 ----
   // 1行目を題名にする。Windows（OneDrive）で使えない文字・末尾の点や空白は除く
   function baseName(t) {
-    var l = t.replace(/<\/?u>/g, '').split('\n').map(function (x) { return x.replace(/^```.*$/, '').replace(/^#+\s+/, '').replace(/^（競合: .*）$/, '').trim(); }).filter(Boolean)[0] || '';
+    var l = M.meta(t).t.replace(/<\/?u>/g, '').split('\n').map(function (x) { return x.replace(/^```.*$/, '').replace(/^#+\s+/, '').replace(/^（競合: .*）$/, '').trim(); }).filter(Boolean)[0] || '';
     l = l.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').slice(0, 50).replace(/[.\s]+$/, '').replace(/^[.\s]+/, '');
     if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(l)) l = l + '_';
     return l || '無題';
@@ -242,6 +242,23 @@
       return od(odItem(e.k), { method: 'DELETE' }).then(function () { }, function (x) { if (x.status !== 404) throw x; });
     },
     conflict: function (x) { return x.status === 412 || x.status === 409; },
+    // 画像（フォルダの中の 画像/）。名前は作るたびに新しいので、中身は書き換えない
+    ilist: function () {
+      var out = {};
+      var page = function (url) {
+        return od(url).then(function (r) {
+          (r.value || []).forEach(function (x) { if (x.file) out[x.name] = x.id; });
+          return r['@odata.nextLink'] ? page(r['@odata.nextLink']) : out;
+        });
+      };
+      return page(odItem(S.folder.id) + ':/' + encodeURIComponent(IDIR) + ':/children?$select=id,name,file&$top=999')
+        .catch(function (x) { if (x.status === 404) return out; throw x; });
+    },
+    iget: function (k) { return od(odItem(k) + '/content', null, true).then(function (r) { return r.blob(); }); },
+    iput: function (n, blob) {
+      return od(odItem(S.folder.id) + ':/' + encodeURIComponent(IDIR) + '/' + encodeURIComponent(n) + ':/content?@microsoft.graph.conflictBehavior=replace',
+        { method: 'PUT', headers: { 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
+    },
   };
 
   // =====================================================================
@@ -298,7 +315,50 @@
         .then(function () { }, function (x) { if (x.status !== 404) throw x; });
     },
     conflict: function (x) { return x.status === 409 || x.status === 422; },
+    ilist: function () {
+      return gh('/contents/' + enc(S.dir + '/' + IDIR)).then(function (r) {
+        var out = {};
+        (Array.isArray(r) ? r : []).forEach(function (x) { if (x.type === 'file') out[x.name] = x.sha; });
+        return out;
+      }, function (x) { if (x.status === 404) return {}; throw x; });
+    },
+    iget: function (sha) {
+      return gh('/git/blobs/' + sha).then(function (b) {
+        var s = atob(b.content.replace(/\s/g, '')), u = new Uint8Array(s.length);
+        for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+        return new Blob([u], { type: 'image/jpeg' });
+      });
+    },
+    iput: function (n, blob) {
+      return blob.arrayBuffer().then(function (buf) {
+        var b = new Uint8Array(buf), s = '';
+        for (var i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+        var to = S.dir + '/' + IDIR + '/' + n;
+        return gh('/contents/' + enc(to), json('PUT', { message: 'add: ' + to + ' (wataamemo)', content: btoa(s) }))
+          .catch(function (x) { if (x.status !== 422) throw x; });   // もうある
+      });
+    },
   };
+
+  // ---- 画像: メモが使っている画像のうち、こちらにだけある物を送り、向こうにだけある物を受け取る ----
+  function syncImages() {
+    if (!M.img) return;
+    var want = {};
+    M.all().forEach(function (m) { M.meta(m.t).im.forEach(function (n) { want[n] = 1; }); });
+    var names = Object.keys(want);
+    if (!names.length) return;
+    var b = B(), got = false;
+    return Promise.all([b.ilist(), M.img.keys()]).then(function (x) {
+      var rem = x[0], loc = {};
+      (x[1] || []).forEach(function (k) { loc[k] = 1; });
+      return names.reduce(function (p, n) {
+        return p.then(function () {
+          if (loc[n] && !rem[n]) return M.img.get(n).then(function (bl) { if (bl) return b.iput(n, bl); });
+          if (!loc[n] && rem[n]) return b.iget(rem[n]).then(function (bl) { got = true; return M.img.put(n, bl); });
+        });
+      }, Promise.resolve());
+    }).then(function () { if (got) M.imgs(); });
+  }
 
   function B() { return S && S.kind === 'onedrive' ? OD : GH; }
   function connected() { return !!(S && (S.kind === 'onedrive' ? S.cid : S.repo)); }
@@ -406,7 +466,7 @@
           });
         });
       }, p);
-    }).then(function () {
+    }).then(syncImages).then(function () {
       S.last = Date.now(); err = ''; need = ''; saveS();
       changed.forEach(M.remote);
       if (conflicts) M.toast('別の端末と同時に書き換えたメモが' + conflicts + '件あり、両方を残しました');

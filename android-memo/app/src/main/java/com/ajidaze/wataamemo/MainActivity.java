@@ -119,7 +119,10 @@ public class MainActivity extends Activity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> cb, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = cb;
-                Intent i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+                String[] acc = params.getAcceptTypes();
+                boolean img = acc != null && acc.length > 0 && acc[0].startsWith("image");
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType(img ? "image/*" : "*/*");
+                if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 try { startActivityForResult(i, REQ_FILE); return true; }
                 catch (Exception e) { fileCallback = null; return false; }
             }
@@ -198,7 +201,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(req, res, data);
         Uri uri = res == RESULT_OK && data != null ? data.getData() : null;
         if (req == REQ_FILE) {
-            if (fileCallback != null) fileCallback.onReceiveValue(uri != null ? new Uri[]{uri} : null);
+            if (fileCallback != null) fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
             fileCallback = null;
         } else if (req == REQ_SAVE) {
             String text = pendingSave;
