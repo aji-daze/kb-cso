@@ -130,6 +130,31 @@ public class MainActivity extends Activity {
 
         if (state != null) web.restoreState(state);
         if (web.getUrl() == null) web.loadUrl(startUrl(getIntent()));
+        web.postDelayed(this::checkUpdate, 3000);   // 起動の邪魔をしない
+    }
+
+    // 画面の新しい版を裏で取ってきて、書きかけでなければ読み直す。アプリ本体の新しい版があれば知らせる
+    private boolean checking;
+    private void checkUpdate() {
+        if (checking || !Updater.due(this)) return;
+        checking = true;
+        new Thread(() -> {
+            boolean web2 = Updater.checkWeb(this), apk = Updater.newerApk();
+            runOnUiThread(() -> {
+                checking = false;
+                if (web2) web.evaluateJavascript("window.WataaReload&&WataaReload()", null);
+                if (apk) web.evaluateJavascript("window.WataaUpdate&&WataaUpdate()", null);
+            });
+        }).start();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (web != null && web.getUrl() != null) {
+            web.evaluateJavascript("window.WataaResume&&WataaResume()", null);
+            checkUpdate();
+        }
     }
 
     // Microsoft のサインインで行き来する場所
@@ -145,7 +170,9 @@ public class MainActivity extends Activity {
         if (path == null || path.contains("..")) return missing();
         String p = path.replaceFirst("^/+", "");
         try {
-            InputStream in = getAssets().open(p);
+            // 裏で取ってきた新しい画面があればそちらを返す（Updater）
+            java.io.File o = p.startsWith("memo/") ? Updater.override(this, p.substring(5)) : null;
+            InputStream in = o != null ? new java.io.FileInputStream(o) : getAssets().open(p);
             String mime = p.endsWith(".html") ? "text/html" : p.endsWith(".js") ? "application/javascript"
                     : p.endsWith(".json") ? "application/json" : p.endsWith(".png") ? "image/png" : "application/octet-stream";
             return new WebResourceResponse(mime, mime.startsWith("image") ? null : "utf-8", in);
@@ -175,6 +202,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        // アプリ本体の更新: OS の確認画面を出す
+        if (Updater.ACTION_INSTALLED.equals(intent.getAction())) {
+            int st = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, -999);
+            if (st == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                @SuppressWarnings("deprecation") Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) try { startActivity(confirm); } catch (Exception ignored) { }
+            } else if (st != android.content.pm.PackageInstaller.STATUS_SUCCESS) {
+                toast("更新できませんでした。ブラウザでダウンロードしてください");
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(Updater.APK))); } catch (Exception ignored) { }
+            }
+            return;
+        }
         // 開いている最中に「共有」で呼ばれた: 画面を読み直す（書きかけは pagehide で保存される）
         if (Intent.ACTION_SEND.equals(intent.getAction())) web.loadUrl(startUrl(intent));
         // 通知を押した: そのメモを開く
@@ -274,6 +313,13 @@ public class MainActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                     requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTE);
             });
+        }
+
+        // アプリ本体を更新する（APK を落として確認画面を出す）
+        @JavascriptInterface
+        public void update() {
+            runOnUiThread(() -> toast("更新をダウンロードしています…"));
+            new Thread(() -> Updater.install(MainActivity.this)).start();
         }
 
         @JavascriptInterface

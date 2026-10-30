@@ -494,9 +494,9 @@ function open(id){
   ed.scrollTop=0;status();close();put(area(bx.firstChild),0);
 }
 
-function toast(msg,fn){
-  $('tm').textContent=msg;$('tu').hidden=!fn;undo=fn||null;to.className='on';
-  clearTimeout(toT);toT=setTimeout(function(){to.className='';undo=null},fn?5000:2500);
+function toast(msg,fn,label,ms){
+  $('tm').textContent=msg;$('tu').hidden=!fn;$('tu').textContent=label||'元に戻す';undo=fn||null;to.className='on';
+  clearTimeout(toT);toT=setTimeout(function(){to.className='';undo=null},ms||(fn?5000:2500));
 }
 
 // ---- 画像 ----
@@ -831,14 +831,20 @@ if(LS.getItem('memo.s')){
 // Android アプリ（WataaApp）の中では画面をアプリに同梱しているので使わない。
 // 新しい版が届いたら（裏で入れ替わったら）、書きかけを保存して読み直す。
 // 起動直後の古い版のまま同期して、別の版と食い違うのを防ぐため。打ち始めていたら、次に画面に戻ったときに読み直す。
+var typed=false,stale=false;
+ed.addEventListener('input',function(){typed=true},{once:true});
+function reloadSoon(){save();if(!typed)location.reload();else stale=true}
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&stale){save();location.reload()}});
+// Android アプリ: 画面の新しい版を裏で取ってきたとき（WataaReload）と、アプリ本体の新しい版があるとき（WataaUpdate）
+window.WataaReload=reloadSoon;
+window.WataaResume=function(){if(stale){save();location.reload()}};   // アプリが前に戻ったとき（WebView では visibilitychange が来ないため）
+window.WataaUpdate=function(){if(window.WataaApp&&WataaApp.update)toast('アプリの新しい版があります',function(){WataaApp.update()},'更新',15000)};
 if('serviceWorker' in navigator&&!window.WataaApp){
-  var hadSW=!!navigator.serviceWorker.controller,typed=false,stale=false;
-  ed.addEventListener('input',function(){typed=true},{once:true});
+  var hadSW=!!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange',function(){
     if(!hadSW)return;
-    save();if(!typed)location.reload();else stale=true;
+    reloadSoon();
   });
-  document.addEventListener('visibilitychange',function(){if(!document.hidden&&stale){save();location.reload()}});
   addEventListener('load',function(){setTimeout(function(){navigator.serviceWorker.register('sw.js').catch(function(){})},1000)});
 }
 })();
