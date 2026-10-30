@@ -1,0 +1,81 @@
+name: kabu-apk
+
+# 株ダッシュの Android アプリ（android-stock/）を作る。main に入ったら次に最新の APK を置く。
+#   https://aji-daze.github.io/kb-cso/apk/kabu.apk
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android-stock/**"
+      - ".github/workflows/kabu-apk.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-stock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # ランナーには Android SDK が最初から入っている（android.yml と同じ）
+      # 署名鍵は GitHub Secrets から復元する（鍵とパスワードはリポジトリに置かない）
+      - name: build apk
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          printf '%s' "$SIGNING_KEYSTORE_B64" | base64 -d > app/signing.p12
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+
+      - name: rename
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/*.apk out/kabu.apk
+          ls -la out
+
+      # 固定の鍵で署名されていること（上書きで更新できる）と、大きくなりすぎていないこと
+      - name: check apk
+        run: |
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$signer" verify --print-certs out/kabu.apk | tee signer.txt
+          grep -qi "SHA-256 digest: 124b2fdedbd31158ba40051ff3ed0128f87e1aa2d4b6f6c0b8f3cec92a61a78a" signer.txt
+          size=$(stat -c %s out/kabu.apk)
+          echo "APK size: $size bytes"
+          test "$size" -lt 1000000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kabu-apk
+          path: android-stock/out/kabu.apk
+          if-no-files-found: error
+
+      # main のときだけ GitHub Pages（docs/apk/）に置く
+      - name: publish to pages
+        if: github.ref == 'refs/heads/main'
+        working-directory: .
+        run: |
+          mkdir -p docs/apk
+          cp android-stock/out/kabu.apk docs/apk/kabu.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/apk/kabu.apk
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "apk: kabu ${GITHUB_SHA::7}"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1

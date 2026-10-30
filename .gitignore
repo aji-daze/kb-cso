@@ -19,3 +19,11 @@ android-memo/.idea/
 android-memo/app/signing.p12
 *.keystore
 *.jks
+
+# Android（株ダッシュ）
+android-stock/.gradle/
+android-stock/build/
+android-stock/app/build/
+android-stock/local.properties
+android-stock/.idea/
+android-stock/app/signing.p12
