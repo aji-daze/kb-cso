@@ -46,7 +46,7 @@ public class MainActivity extends Activity {
 
     static final String HOST = "appassets.androidplatform.net";
     static final String URL = "https://" + HOST + "/memo/index.html";
-    static final int REQ_FILE = 1, REQ_SAVE = 2;
+    static final int REQ_FILE = 1, REQ_SAVE = 2, REQ_NOTE = 3;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
@@ -158,7 +158,14 @@ public class MainActivity extends Activity {
         return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", null, new ByteArrayInputStream(new byte[0]));
     }
 
+    // 通知から開いたメモの ID（英数字だけ通す）
+    private static String openId(Intent intent) {
+        String id = intent == null ? null : intent.getStringExtra("open");
+        return id != null && id.matches("[A-Za-z0-9_-]{1,64}") ? id : null;
+    }
+
     private String startUrl(Intent intent) {
+        if (openId(intent) != null) return URL + "?open=" + openId(intent);
         if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return URL;
         String text = intent.getStringExtra(Intent.EXTRA_TEXT), title = intent.getStringExtra(Intent.EXTRA_SUBJECT);
         if ((text == null || text.trim().isEmpty()) && (title == null || title.trim().isEmpty())) return URL;
@@ -170,6 +177,8 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         // 開いている最中に「共有」で呼ばれた: 画面を読み直す（書きかけは pagehide で保存される）
         if (Intent.ACTION_SEND.equals(intent.getAction())) web.loadUrl(startUrl(intent));
+        // 通知を押した: そのメモを開く
+        else if (openId(intent) != null) web.evaluateJavascript("window.WataaOpen&&WataaOpen('" + openId(intent) + "')", null);
     }
 
     // 戻る: 一覧や同期の画面を閉じる。閉じるものがなければアプリを裏に回す（次に開くのが速い）
@@ -216,6 +225,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        if (req != REQ_NOTE) return;
+        if (res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) Pins.showAll(this);
+        else toast("通知が許可されていないため、通知欄に出せません（設定 → アプリ → wataamemo → 通知）");
+    }
+
     private void toast(String msg) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(); }
 
     /** 画面 → アプリ。ブラウザの機能が WebView では使えないところを肩代わりする */
@@ -249,6 +265,19 @@ public class MainActivity extends Activity {
                 catch (Exception e) { pendingSave = null; toast("書き出せませんでした"); }
             });
         }
+
+        // 通知欄に固定する。Android 13 以降は最初に通知の許可を聞く（許可されたら出し直す）
+        @JavascriptInterface
+        public void notify(String id, String title, String text) {
+            runOnUiThread(() -> {
+                Pins.put(MainActivity.this, id, title, text);
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTE);
+            });
+        }
+
+        @JavascriptInterface
+        public void unnotify(String id) { runOnUiThread(() -> Pins.remove(MainActivity.this, id)); }
 
         @JavascriptInterface
         public String version() { return BuildConfig.VERSION_NAME; }

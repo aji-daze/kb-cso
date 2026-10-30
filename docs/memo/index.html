@@ -105,6 +105,13 @@ body.k #kb{display:flex}
 #kb button:active{color:var(--fg)}
 #kb .sp{flex:1}
 @media (pointer:coarse){#bU,#bC{display:none}}
+/* ピン（一覧の上に固定）と通知欄（Android アプリだけ）。押してある間は濃く・塗る */
+#bF.on,#bO.on{color:var(--fg)}
+#bF.on svg,#bO.on svg{fill:currentColor}
+#bO{display:none}
+#bO.ok{display:grid}
+@media (max-width:420px){.bar button{width:38px}#st{font-size:11px;letter-spacing:.04em}}
+@media (max-width:370px){#st{visibility:hidden}}
 #to{position:fixed;left:50%;bottom:calc(32px + env(safe-area-inset-bottom));transform:translateX(-50%);font-size:13px;letter-spacing:.04em;
   color:var(--bg);background:var(--fg);padding:9px 16px;border-radius:6px;display:none;z-index:12;gap:18px;align-items:center;max-width:calc(100% - 32px)}
 #to.on{display:flex}
@@ -120,6 +127,8 @@ body.k #to{bottom:calc(60px + env(safe-area-inset-bottom))}
   <button id="sy" hidden></button>
   <button id="bP" title="画像を添付" aria-label="画像"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 16l-5-5-8 8"/></svg></button>
   <button id="bT" title="ラベル" aria-label="ラベル"><svg viewBox="0 0 24 24"><path d="M4 5h7l9 9-6 6-10-10z"/><circle cx="8.5" cy="9.5" r="1"/></svg></button>
+  <button id="bF" title="ピン留め（一覧の上に固定）" aria-label="ピン留め"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 13v7"/></svg></button>
+  <button id="bO" title="通知欄に固定" aria-label="通知欄に固定"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/></svg></button>
   <button id="bU" title="下線 (Ctrl/⌘+U)" aria-label="下線"><svg viewBox="0 0 24 24"><path d="M8 5v6a4 4 0 008 0V5M7 19h10"/></svg></button>
   <button id="bC" title="コードブロック (Alt+C)" aria-label="コードブロック"><svg viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg></button>
   <button id="bS" title="共有・コピー" aria-label="共有・コピー"><svg viewBox="0 0 24 24"><path d="M12 15V5M8 9l4-4 4 4M6 14v5h12v-5"/></svg></button>
@@ -152,7 +161,7 @@ body.k #to{bottom:calc(60px + env(safe-area-inset-bottom))}
 'use strict';
 var P='memo:',LS=localStorage,$=function(i){return document.getElementById(i)};
 var ed=$('ed'),bx=$('bx'),st=$('st'),dr=$('dr'),q=$('q'),ls=$('ls'),to=$('to');
-var curIm=[],curTg=[],cur=null,curU=0,saved='',timer=0,toT=0,undo=null,lastTa=ed.querySelector('textarea');
+var curIm=[],curTg=[],curPin=0,cur=null,curU=0,saved='',timer=0,toT=0,undo=null,lastTa=ed.querySelector('textarea');
 
 lastTa.focus();
 
@@ -217,18 +226,18 @@ function plain(t){return t.replace(/<\/?u>/g,'')}
 var IMGL=/^!\[[^\]]*\]\(画像\/([^)\s]+)\)$/,TAGL=/^#[^\s#]+(?:[ \t　]+#[^\s#]+)*$/,METAL=/^<!-- wataamemo (.*) -->$/;
 // 保存した全文 → 本文・下線（本文全体での位置）・画像・ラベル
 function meta(t){
-  var L=t.split('\n'),i=L.length,im=[],tg=[],u=[],any=false,m;
+  var L=t.split('\n'),i=L.length,im=[],tg=[],u=[],pin=0,any=false,m;
   while(i>0){
     var l=L[i-1].trim();
     if(l===''){i--;continue}
-    if((m=l.match(METAL))){try{u=JSON.parse(m[1]).u||[]}catch(e){}}
+    if((m=l.match(METAL))){try{var j=JSON.parse(m[1]);u=j.u||[];pin=j.pin?1:0}catch(e){}}
     else if((m=l.match(IMGL)))im.unshift(m[1]);
     else if(TAGL.test(l))tg=l.split(/[ \t　]+/).map(function(x){return x.slice(1)}).concat(tg);
     else break;
     i--;any=true;
   }
   // 本文のすぐ下（空行なし）に書かれた #… は本文の一部
-  if(!any||(i>0&&L[i].trim()!==''))return{t:t,u:[],im:[],tg:[]};
+  if(!any||(i>0&&L[i].trim()!==''))return{t:t,u:[],im:[],tg:[],pin:0};
   var b=L.slice(0,i).join('\n'),r=[];
   // 下線: 書いた文字がその位置に無ければ（ほかのアプリで書き換えられた）、いちばん近い同じ文字に付け直す。無ければ捨てる
   u.forEach(function(x){
@@ -240,16 +249,18 @@ function meta(t){
     if(best>=0)r.push([best,best+w.length]);
   });
   tg=tg.filter(function(x,k){return tg.indexOf(x)===k});
-  return{t:b,u:norm(r),im:im,tg:tg};
+  return{t:b,u:norm(r),im:im,tg:tg,pin:pin};
 }
-function compose(b,u,im,tg){
-  var a=[];
+function compose(b,u,im,tg,pin){
+  var a=[],j={};
   im.forEach(function(n){a.push('![](画像/'+n+')')});
   if(tg.length)a.push(tg.map(function(x){return'#'+x}).join(' '));
-  if(!a.length&&!u.length)return b;
+  if(!a.length&&!u.length&&!pin)return b;
   b=b.replace(/\s+$/,'');
   u=norm(u.map(function(x){return[x[0],Math.min(x[1],b.length)]}));
-  if(u.length)a.push('<!-- wataamemo '+JSON.stringify({u:u.map(function(x){return[x[0],x[1],b.slice(x[0],x[1])]})})+' -->');
+  if(u.length)j.u=u.map(function(x){return[x[0],x[1],b.slice(x[0],x[1])]});
+  if(pin)j.pin=1;
+  if(u.length||pin)a.push('<!-- wataamemo '+JSON.stringify(j)+' -->');
   return(b?b+'\n\n':'')+a.join('\n');
 }
 function ta(){var x=document.createElement('textarea');x.rows=1;x.spellcheck=false;x.setAttribute('autocomplete','off');x.setAttribute('autocapitalize','off');return x}
@@ -278,10 +289,10 @@ function getBody(){
   }
   return{t:a.join('\n'),u:u};
 }
-function getText(){var b=getBody();return compose(b.t,b.u,curIm,curTg)}
+function getText(){var b=getBody();return compose(b.t,b.u,curIm,curTg,curPin)}
 function parse(t){
   var mt=meta(t),g=mt.u,L=mt.t.split('\n'),out=[],buf=[],bs=0,o=0,i=0;
-  curIm=mt.im;curTg=mt.tg;
+  curIm=mt.im;curTg=mt.tg;curPin=mt.pin;
   function text(){
     var v=buf.join('\n'),w=unmark(v);
     return w.r.length?mkT(w.t,w.r):mkT(v,cut(g,bs,bs+v.length,bs));
@@ -304,7 +315,7 @@ function setText(t){
   bx.textContent='';
   parse(t).forEach(function(b){bx.appendChild(b)});
   lastTa=area(bx.firstChild);
-  drawIm();drawTg();
+  drawIm();drawTg();drawPin();
 }
 function put(x,pos){x.focus();var n=pos==='end'?x.value.length:pos||0;x.setSelectionRange(n,n);lastTa=x}
 // 文字を入れる。execCommand なら元に戻す(Ctrl+Z)が効く。
@@ -460,10 +471,10 @@ function save(){
   clearTimeout(timer);timer=0;
   var t=getText();
   if(t===saved)return;
-  if(!t.trim()){if(cur)rmM(cur);cur=null;saved=t;status();return}
+  if(!t.trim()){if(cur){rmM(cur);note(cur)}cur=null;saved=t;status();return}
   var now=Date.now(),old=cur&&get(cur);
   if(!cur)cur=nid();
-  try{setM(cur,{t:t,c:old?old.c:now,u:now});saved=t;curU=now;keep()}
+  try{setM(cur,{t:t,c:old?old.c:now,u:now});saved=t;curU=now;keep();note(cur)}
   catch(e){toast('保存できません（容量不足）。書き出してから古いメモを消してください')}
   status();
 }
@@ -588,6 +599,36 @@ $('tg').onclick=function(e){
 $('bP').onclick=addImages;
 $('bT').onclick=addTag;
 
+// ---- ピン留め・通知欄 ----
+// ピンはメモの中（末尾のコメント）に入れるので、ほかの端末にも同期される。
+// 通知欄への固定は Android アプリ（WataaApp.notify）だけ。どれを出すかはこの端末に覚える（memo.nt）。
+var NT='memo.nt',canNote=!!(window.WataaApp&&WataaApp.notify);
+function nts(){try{return JSON.parse(LS.getItem(NT))||{}}catch(e){return{}}}
+function drawPin(){$('bF').className=curPin?'on':'';$('bO').className=canNote?'ok'+(cur&&nts()[cur]?' on':''):''}
+$('bF').onclick=function(){curPin=curPin?0:1;drawPin();save();status();toast(curPin?'一覧の上に固定しました':'固定を外しました')};
+// 通知の中身: 1行目が題名、残りが本文
+function note(id){
+  if(!canNote||!nts()[id])return;
+  var m=get(id);
+  if(!m){var s=nts();delete s[id];LS.setItem(NT,JSON.stringify(s));WataaApp.unnotify(id);return}
+  var L=meta(m.t).t.replace(/^```.*$/gm,'').split('\n').map(function(x){return x.trim()}).filter(Boolean);
+  WataaApp.notify(id,L[0]||'メモ',L.slice(1).join('\n').slice(0,2000));
+}
+$('bO').onclick=function(){
+  save();
+  if(!cur){toast('先に何か書いてください');return}
+  var s=nts(),on=!s[cur];
+  if(on)s[cur]=1;else delete s[cur];
+  LS.setItem(NT,JSON.stringify(s));
+  if(on)note(cur);else WataaApp.unnotify(cur);
+  drawPin();toast(on?'通知欄に固定しました':'通知欄から外しました');
+};
+// 通知を押して開いたとき
+window.WataaOpen=function(id){if(get(id))open(id)};
+// 起動時に、覚えている通知を今の中身で出し直す（同期で変わった分・再起動で消えた分）
+if(canNote)setTimeout(function(){Object.keys(nts()).forEach(note)},500);
+drawPin();
+
 // 一覧。更新が新しい順に、今日・昨日・この1週間・月ごとの見出しを付ける
 function day0(t){var d=new Date(t);d.setHours(0,0,0,0);return +d}
 function group(u){
@@ -603,17 +644,19 @@ function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=c
 // 上にラベルを並べ、押すとそのラベルのメモだけにする
 var fTag='';
 function render(){
-  var w=q.value.trim().toLowerCase(),a=all(),f=document.createDocumentFragment(),n=0,last='',tags=allTags(),fl=$('fl');
+  var w=q.value.trim().toLowerCase(),a=all(),pn={},f=document.createDocumentFragment(),n=0,last='',tags=allTags(),fl=$('fl');
   if(tags.indexOf(fTag)<0)fTag='';
   fl.textContent='';
   if(tags.length)['すべて'].concat(tags).forEach(function(t,k){var c=el('button','chip'+((k?t:'')===fTag?' on':''),t);c.setAttribute('data-t',k?t:'');fl.appendChild(c)});
+  a.forEach(function(m){if(meta(m.t).pin)pn[m.id]=1});
+  a=a.filter(function(m){return pn[m.id]}).concat(a.filter(function(m){return!pn[m.id]}));
   for(var i=0;i<a.length;i++){
     var mt=meta(a[i].t),t=mt.t;
     if(fTag&&mt.tg.indexOf(fTag)<0)continue;
     if(w&&(t+'\n'+mt.tg.join(' ')).toLowerCase().indexOf(w)<0)continue;
     var lines=t.replace(/^```.*$/gm,'').trim().split('\n'),head=lines[0].slice(0,80),rest=lines.slice(1).join(' ').replace(/\s+/g,' ').trim().slice(0,80);
     if(!head&&mt.im.length)head='画像';
-    var g=group(a[i].u);
+    var g=mt.pin?'固定':group(a[i].u);
     if(g!==last){f.appendChild(el('li','g',g));last=g}
     // 本文は textContent で入れる（HTML として解釈させない）
     var li=el('li',a[i].id===cur?'cur':''),sm=el('small');
@@ -644,7 +687,7 @@ function quiet(){B.classList.add('w');clearTimeout(wT);wT=setTimeout(wake,1500)}
 function wake(){clearTimeout(wT);B.classList.remove('w')}
 addEventListener('mousemove',function(e){if(Math.abs(e.screenX-mx)+Math.abs(e.screenY-my)>4&&mx>=0)wake();mx=e.screenX;my=e.screenY});
 // 下線・コードのボタンを押しても入力欄のフォーカスと選択範囲を失わない
-['bU','bC','kU','kC','kT','bT'].forEach(function(i){$(i).onmousedown=$(i).onpointerdown=function(e){e.preventDefault()}});
+['bU','bC','kU','kC','kT','bT','bF','bO'].forEach(function(i){$(i).onmousedown=$(i).onpointerdown=function(e){e.preventDefault()}});
 $('kU').onclick=underline;
 $('kC').onclick=codeBlock;
 $('kT').onclick=function(){ins(lastTa,'\t')};
@@ -656,7 +699,7 @@ $('bN').onclick=function(){open(null)};
 $('bD').onclick=function(){
   save();
   if(!cur){load('');curU=0;put(area(bx.firstChild),0);status();return}
-  var id=cur,m=get(id);rmM(id);open(null);
+  var id=cur,m=get(id);rmM(id);note(id);open(null);
   toast('削除しました',function(){setM(id,m);open(id)});
 };
 $('tu').onclick=function(){if(undo)undo();to.className='';undo=null};
@@ -743,6 +786,7 @@ addEventListener('storage',function(e){
   if(url&&t.indexOf(url)<0)a.push(url);
   history.replaceState(null,'',location.pathname);
   if(a.length){load(a.join('\n'));saved='';save();put(area(bx.lastChild),'end');toast('共有から追加しました')}
+  else if(u.get('open')&&get(u.get('open')))open(u.get('open'));
   else if(u.has('list'))openList();
 })();
 // インストール後、.txt / .md を「このアプリで開く」と1件ずつメモとして取り込む
@@ -765,6 +809,7 @@ window.MEMO={
   // GitHub 側の変更を画面に反映する。開いているメモは、こちらで書きかけでなければ読み直す
   remote:function(id){
     if(id===cur&&getText()===saved){var m=get(id);if(!m){cur=null;curU=0;load('')}else{curU=m.u;load(m.t)}status()}
+    note(id);
     if(dr.className)render();
   }
 };

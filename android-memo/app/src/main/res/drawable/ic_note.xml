@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知欄の小さいアイコン（紙と鉛筆）。通知のアイコンは形だけが使われる -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M5,3h10a2,2 0,0 1,2 2v6.2l-2,2V5H5v14h5.5l-0.4,2H5a2,2 0,0 1,-2 -2V5a2,2 0,0 1,2 -2zM7,7h6v1.6H7zM7,10.5h6v1.6H7zM7,14h3.5v1.6H7zM19.3,11.6l2.1,2.1 -7.3,7.3 -2.8,0.7 0.7,-2.8z"/>
+</vector>
