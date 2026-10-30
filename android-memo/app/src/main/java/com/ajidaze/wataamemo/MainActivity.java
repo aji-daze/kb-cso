@@ -46,7 +46,7 @@ public class MainActivity extends Activity {
 
     static final String HOST = "appassets.androidplatform.net";
     static final String URL = "https://" + HOST + "/memo/index.html";
-    static final int REQ_FILE = 1, REQ_SAVE = 2;
+    static final int REQ_FILE = 1, REQ_SAVE = 2, REQ_NOTE = 3;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
@@ -130,6 +130,31 @@ public class MainActivity extends Activity {
 
         if (state != null) web.restoreState(state);
         if (web.getUrl() == null) web.loadUrl(startUrl(getIntent()));
+        web.postDelayed(this::checkUpdate, 3000);   // 起動の邪魔をしない
+    }
+
+    // 画面の新しい版を裏で取ってきて、書きかけでなければ読み直す。アプリ本体の新しい版があれば知らせる
+    private boolean checking;
+    private void checkUpdate() {
+        if (checking || !Updater.due(this)) return;
+        checking = true;
+        new Thread(() -> {
+            boolean web2 = Updater.checkWeb(this), apk = Updater.newerApk();
+            runOnUiThread(() -> {
+                checking = false;
+                if (web2) web.evaluateJavascript("window.WataaReload&&WataaReload()", null);
+                if (apk) web.evaluateJavascript("window.WataaUpdate&&WataaUpdate()", null);
+            });
+        }).start();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (web != null && web.getUrl() != null) {
+            web.evaluateJavascript("window.WataaResume&&WataaResume()", null);
+            checkUpdate();
+        }
     }
 
     // Microsoft のサインインで行き来する場所
@@ -145,7 +170,9 @@ public class MainActivity extends Activity {
         if (path == null || path.contains("..")) return missing();
         String p = path.replaceFirst("^/+", "");
         try {
-            InputStream in = getAssets().open(p);
+            // 裏で取ってきた新しい画面があればそちらを返す（Updater）
+            java.io.File o = p.startsWith("memo/") ? Updater.override(this, p.substring(5)) : null;
+            InputStream in = o != null ? new java.io.FileInputStream(o) : getAssets().open(p);
             String mime = p.endsWith(".html") ? "text/html" : p.endsWith(".js") ? "application/javascript"
                     : p.endsWith(".json") ? "application/json" : p.endsWith(".png") ? "image/png" : "application/octet-stream";
             return new WebResourceResponse(mime, mime.startsWith("image") ? null : "utf-8", in);
@@ -158,7 +185,14 @@ public class MainActivity extends Activity {
         return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", null, new ByteArrayInputStream(new byte[0]));
     }
 
+    // 通知から開いたメモの ID（英数字だけ通す）
+    private static String openId(Intent intent) {
+        String id = intent == null ? null : intent.getStringExtra("open");
+        return id != null && id.matches("[A-Za-z0-9_-]{1,64}") ? id : null;
+    }
+
     private String startUrl(Intent intent) {
+        if (openId(intent) != null) return URL + "?open=" + openId(intent);
         if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return URL;
         String text = intent.getStringExtra(Intent.EXTRA_TEXT), title = intent.getStringExtra(Intent.EXTRA_SUBJECT);
         if ((text == null || text.trim().isEmpty()) && (title == null || title.trim().isEmpty())) return URL;
@@ -168,8 +202,22 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        // アプリ本体の更新: OS の確認画面を出す
+        if (Updater.ACTION_INSTALLED.equals(intent.getAction())) {
+            int st = intent.getIntExtra(android.content.pm.PackageInstaller.EXTRA_STATUS, -999);
+            if (st == android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                @SuppressWarnings("deprecation") Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) try { startActivity(confirm); } catch (Exception ignored) { }
+            } else if (st != android.content.pm.PackageInstaller.STATUS_SUCCESS) {
+                toast("更新できませんでした。ブラウザでダウンロードしてください");
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(Updater.APK))); } catch (Exception ignored) { }
+            }
+            return;
+        }
         // 開いている最中に「共有」で呼ばれた: 画面を読み直す（書きかけは pagehide で保存される）
         if (Intent.ACTION_SEND.equals(intent.getAction())) web.loadUrl(startUrl(intent));
+        // 通知を押した: そのメモを開く
+        else if (openId(intent) != null) web.evaluateJavascript("window.WataaOpen&&WataaOpen('" + openId(intent) + "')", null);
     }
 
     // 戻る: 一覧や同期の画面を閉じる。閉じるものがなければアプリを裏に回す（次に開くのが速い）
@@ -216,6 +264,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        if (req != REQ_NOTE) return;
+        if (res.length > 0 && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) Pins.showAll(this);
+        else toast("通知が許可されていないため、通知欄に出せません（設定 → アプリ → wataamemo → 通知）");
+    }
+
     private void toast(String msg) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(); }
 
     /** 画面 → アプリ。ブラウザの機能が WebView では使えないところを肩代わりする */
@@ -249,6 +304,26 @@ public class MainActivity extends Activity {
                 catch (Exception e) { pendingSave = null; toast("書き出せませんでした"); }
             });
         }
+
+        // 通知欄に固定する。Android 13 以降は最初に通知の許可を聞く（許可されたら出し直す）
+        @JavascriptInterface
+        public void notify(String id, String title, String text) {
+            runOnUiThread(() -> {
+                Pins.put(MainActivity.this, id, title, text);
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTE);
+            });
+        }
+
+        // アプリ本体を更新する（APK を落として確認画面を出す）
+        @JavascriptInterface
+        public void update() {
+            runOnUiThread(() -> toast("更新をダウンロードしています…"));
+            new Thread(() -> Updater.install(MainActivity.this)).start();
+        }
+
+        @JavascriptInterface
+        public void unnotify(String id) { runOnUiThread(() -> Pins.remove(MainActivity.this, id)); }
 
         @JavascriptInterface
         public String version() { return BuildConfig.VERSION_NAME; }
