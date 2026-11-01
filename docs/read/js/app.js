@@ -982,8 +982,8 @@ async function renderLog() {
 // ================================================================ 本の詳細・登録
 function addSheet() {
   sheet('<h3>本を入れる</h3>' +
-    '<button class="item" id="a-lib"><span class="mark">▥</span><span><b>ドライブの本棚</b>' +
-      '<span>青空文庫の本はここに置いて、ここから入れる。どの端末でも同じ本が並ぶ</span></span></button>' +
+    '<button class="item" id="a-lib"><span class="mark">▥</span><span><b>ドライブの本棚を開く</b>' +
+      '<span>Google ドライブの本棚フォルダ。押した本をそのまま読む。青空文庫で落とした本もここに入る</span></span></button>' +
     '<button class="item" id="a-folder"><span class="mark">▤</span><span><b>フォルダを開く</b>' +
       '<span>本の入ったフォルダごと。OneDrive の同期フォルダでよい' +
       (Folder.supported() ? '。一度選ぶと覚える' : '（この端末では毎回選び直し）') + '</span></span></button>' +
@@ -1282,10 +1282,10 @@ async function aozoraBulk(rows) {
 
   const ok = await confirmSheet(
     list.length + '件を本棚に入れますか',
-    '落として<b>ドライブの本棚</b>に置き、そのまま本棚に入れます。ドライブにつながっていなければ、この端末にだけ入れます。',
+    '落として<b>ドライブの本棚</b>に置き、そのまま本棚に入れます。',
     list.length + '件を入れる');
   if (!ok) return;
-  await driveReady(true);
+  if (!(await driveReady(true))) return;
 
   sheet('<h3>入れています</h3>' +
     '<div id="bk-msg" style="font-size:13px;color:var(--sub);line-height:1.8;min-height:52px"></div>' +
@@ -1357,10 +1357,11 @@ function aozoraGet(row) {
     (el) => {
       $('#g-c', el).onclick = closeSheet;
       $('#g-in', el).onclick = async () => {
-        await driveReady(true);   // つながなければ、この端末にだけ入れる
+        // 落とした本は必ずドライブの本棚に置く。つながらなければ止める（設定の画面か理由が出る）
+        if (!(await driveReady(true))) return;
         toast('落としています…');
         const r = await aozoraInstall([row]);
-        if (r.n) { closeSheet(); render(); toast('本棚に入れました' + (r.put ? '（ドライブの本棚にも置きました）' : '（ドライブには置いていません）')); }
+        if (r.n) { closeSheet(); render(); toast(r.put ? 'ドライブの本棚に置いて、本棚に入れました' : '本棚に入れました（ドライブには置けませんでした）'); }
         else toast('落とせませんでした。「ブラウザで落とす」を使ってください');
       };
       $('#g-dl', el).onclick = () => {
@@ -1376,11 +1377,39 @@ function aozoraGet(row) {
 const LIB_DEFAULT = '13QVgjpOVZqn-0zFWo9hEZwZ_mBc7Ctuf';
 const libFolder = async () => (await DB.setting('libFolder')) || LIB_DEFAULT;
 
+// ミュージック（同じサイトのアプリ）で Google ドライブの設定を済ませていれば、そのクライアント ID を借りる。
+// 同じサイトなので許可した生成元も同じで、そのまま使える。ミュージックの保存場所が無い端末では何もしない
+// （無いのに開くと空の保存場所ができて、ミュージックが壊れるため、先に有無を確かめる）。
+async function borrowDriveId() {
+  try {
+    const dbs = indexedDB.databases ? await indexedDB.databases() : [];
+    if (!dbs.some((d) => d.name === 'kbmusic')) return '';
+    const db = await new Promise((ok, ng) => {
+      const r = indexedDB.open('kbmusic');
+      r.onupgradeneeded = () => r.transaction.abort();
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => ng(r.error);
+    });
+    if (!db.objectStoreNames.contains('settings')) { db.close(); return ''; }
+    const v = await new Promise((ok) => {
+      const g = db.transaction('settings').objectStore('settings').get('driveClientId');
+      g.onsuccess = () => ok(g.result); g.onerror = () => ok('');
+    });
+    db.close();
+    return typeof v === 'string' ? v.trim() : '';
+  } catch { return ''; }
+}
+async function driveClientId() {
+  let cid = await DB.setting(CID_KEY.drive);
+  if (!cid) { cid = await borrowDriveId(); if (cid) await DB.setting(CID_KEY.drive, cid); }
+  return cid || '';
+}
+
 // ドライブにつなぐ。interactive のときだけ認証の画面を出す（押した操作の中で呼ぶこと）
 async function driveReady(interactive) {
   if (Drive.hasToken()) return true;
   if (!interactive) return false;
-  const cid = await DB.setting(CID_KEY.drive);
+  const cid = await driveClientId();
   if (!cid) { toast('先に Google ドライブの設定をしてください'); cloudSheet(Drive); return false; }
   try { await Drive.connect(cid); return true; }
   catch (e) { toast('ドライブにつなげませんでした: ' + e.message); return false; }
@@ -1604,7 +1633,7 @@ function cloudSetupSheet(prov, current) {
 }
 
 async function cloudSheet(prov, opt = {}) {
-  const clientId = await DB.setting(CID_KEY[prov.key]);
+  const clientId = prov.key === 'drive' ? await driveClientId() : await DB.setting(CID_KEY[prov.key]);
   if (!clientId) return cloudSetupSheet(prov, '');
 
   sheet('<h3>' + esc(prov.label) + '</h3><div id="cl" style="color:var(--sub);font-size:13px">つないでいます…</div>');
@@ -1640,7 +1669,9 @@ async function cloudBrowse(prov, stack) {
   if (!el) return;
   const crumb = stack.map((f, i) => '<button class="chip" data-i="' + i + '">' + esc(f.name) + '</button>').join(' ');
   el.innerHTML = '<div class="grab"></div><h3>' + esc(prov.label) + '</h3>' +
-    '<div style="margin-bottom:8px">' + crumb + '</div>' +
+    '<div style="margin-bottom:8px">' + crumb +
+      (here.lib && here.id ? ' <a class="chip" target="_blank" rel="noopener" href="https://drive.google.com/drive/folders/' +
+        encodeURIComponent(here.id) + '">ドライブで見る ↗</a>' : '') + '</div>' +
     '<div id="cl-list" style="color:var(--sub);font-size:13px">読み込んでいます…</div>';
 
   $$('.chip[data-i]', el).forEach((c) => {
