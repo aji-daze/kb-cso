@@ -195,7 +195,7 @@ async function addBook(meta, chapters, status = 'stack') {
     ? Object.assign({}, old, {
       title: fresh.title, author: fresh.author || old.author, kind: fresh.kind, vertical: fresh.vertical,
       chapChars: counts, chars: fresh.chars, cover: fresh.cover || old.cover, paraFix: 1,
-      src: fresh.src || old.src || null, refreshed: Date.now(),
+      src: fresh.src || old.src || null, refreshed: Date.now(), stub: false,
     })
     : fresh;
   await DB.put('books', book);
@@ -482,7 +482,7 @@ async function renderNow() {
   const el = $('#v-now');
   const q = Quotes.ofDay();
   if (!S.books.length) {
-    el.innerHTML = quoteCard(q) +
+    el.innerHTML = quoteCard(q) + (await syncChip()) +
       '<div class="empty"><b>棚に本がありません</b>' +
       'EPUB・Markdown・テキストを取り込むか、青空文庫から落としてください。</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px;align-items:center">' +
@@ -492,6 +492,7 @@ async function renderNow() {
     $('#n-quote', el).onclick = () => aozoraSheet(q.work);
     $('#n-add', el).onclick = addSheet;
     $('#n-sample', el).onclick = addSample;
+    bindSyncChip(el);
     return;
   }
 
@@ -516,7 +517,7 @@ async function renderNow() {
   const outM = S.books.filter((b) => b.finished && b.finished >= mStart).length;
 
   el.innerHTML =
-    '<div class="home">' +
+    '<div class="home">' + (await syncChip()) +
       quoteCard(q) +
 
       '<section class="shelfcase">' +
@@ -557,6 +558,7 @@ async function renderNow() {
     if (owned) openBook(owned.id); else aozoraSheet(q.work);
   };
   $('#n-cont', el).onclick = () => (cur.manual ? manualSheet(cur) : openBook(cur.id));
+  bindSyncChip(el);
   $('#n-shelf', el).onclick = () => { S.view = 'shelf'; S.shelfTab = 'reading'; S.shelfAuthor = null; remember(); render(); };
   $$('.spine', el).forEach((s) => { s.onclick = () => bookSheet(s.dataset.id); });
 }
@@ -581,7 +583,7 @@ function authorHue(name) {
 function listCell(b, m, picked) {
   const p = Math.round(progressOf(b, m) * 100);
   const on = picked !== null && picked.has(b.id);
-  const right = b.status === 'done' ? '読了'
+  const right = b.stub ? '☁ 開くと落とす' : b.status === 'done' ? '読了'
     : b.status === 'reading' ? (p ? p + '%' : '読んでいる')
     : (remainLabel(b, m) || esc(KINDS[b.kind] || ''));
   return '<button class="bk lr' + (b.status === 'done' ? ' done' : '') + (b.status === 'reading' ? ' rd' : '') + (on ? ' on' : '') +
@@ -691,6 +693,7 @@ async function renderShelf() {
         '<button id="s-vg" aria-pressed="' + (S.shelfView === 'grid') + '" aria-label="表紙">▦</button>' +
       '</span>' +
     '</div>' +
+    (await syncChip()) +
     '<label class="ssearch"><input type="search" id="s-q" placeholder="作品名・著者で探す" autocomplete="off" value="' + esc(S.shelfQ) + '"></label>' +
     '<div class="seg" id="s-seg">' +
       Object.entries(SHELF_TABS).map(([k, v]) =>
@@ -747,6 +750,7 @@ async function renderShelf() {
     };
   });
   $('#s-add', el).onclick = addSheet;
+  bindSyncChip(el);
   // 打つたびに一覧を絞る。描き直しても入力欄の位置と字の位置は戻す
   $('#s-q', el).oninput = (ev) => {
     const at = ev.target.selectionStart;
@@ -1411,7 +1415,7 @@ async function driveReady(interactive) {
   if (!interactive) return false;
   const cid = await driveClientId();
   if (!cid) { toast('先に Google ドライブの設定をしてください'); cloudSheet(Drive); return false; }
-  try { await Drive.connect(cid); return true; }
+  try { await Drive.connect(cid); syncSoon(); return true; }
   catch (e) { toast('ドライブにつなげませんでした: ' + e.message); return false; }
 }
 
@@ -1419,6 +1423,135 @@ async function driveReady(interactive) {
 // 押した本は本棚に入り（入れ直しなら中身だけ新しくなる）、そのまま開く。
 async function libSheet() {
   return cloudSheet(Drive, { lib: true });
+}
+
+// ---- どの端末でも同じ本棚（ドライブの本棚フォルダを棚そのものにする） ----------------
+// フォルダにある本は、どの端末の棚にも並ぶ（中身はまだ落とさない。初めて開いたときに落とす）。
+// 読んだ位置・状態・印・ページ設定・抜き書きは、同じフォルダの「ぽちゃ文庫-記録.json」で持ち合い、
+// 新しく読んだ方（更新時刻が後の方）を残す。Google は操作なしにつなげないので、つながっている間に揃える。
+const SYNC_NAME = 'ぽちゃ文庫-記録.json';
+const kindOfName = (n) => (/\.zip$/i.test(n) ? 'aozora' : /\.epub$/i.test(n) ? 'epub' : /\.(md|markdown)$/i.test(n) ? 'md' : 'txt');
+
+async function syncLibrary({ quiet = true } = {}) {
+  if (!Drive.hasToken() || S.syncing) return false;
+  S.syncing = true;
+  try {
+    const folder = await libFolder();
+    const files = await Drive.list(folder);
+    const recF = files.find((f) => f.name === SYNC_NAME);
+    let remote = { v: 1, books: {}, notes: [] };
+    if (recF) { try { remote = Object.assign(remote, JSON.parse(await (await Drive.download(recF)).text())); } catch {} }
+    const mk = await allMarks();
+    const byId = new Map(S.all.filter((b) => b.src && b.src.lib && b.src.id).map((b) => [b.src.id, b]));
+    let added = 0, changed = 0;
+
+    // フォルダにあって、この端末に無い本は、棚に名前だけ置く
+    for (const f of files) {
+      if (f.isFolder || f.name === SYNC_NAME || !BOOK_EXT.test(f.name) || byId.has(f.id)) continue;
+      const same = S.all.find((b) => b.source === f.name);
+      if (same) {   // 前に同じファイルを別の道で入れていた → このファイルとして扱う
+        same.src = Object.assign({}, same.src, { p: 'drive', lib: 1, id: f.id, m: (same.src && same.src.m) || f.mtime });
+        await putBookSafe(same); byId.set(f.id, same); continue;
+      }
+      const info = (remote.books || {})[f.id] || {};
+      const kind = info.kind || kindOfName(f.name);
+      // 記録に無ければファイル名から。青空文庫から落とした本は「作品名（著者）.zip」
+      const base = f.name.replace(/\.[^.]+$/, ''), pa = /^(.+?)（([^（）]+)）$/.exec(base);
+      const stub = {
+        id: DB.uid('b'), title: info.title || (pa ? pa[1] : base), author: info.author || (pa ? pa[2] : ''),
+        kind, source: f.name, status: 'stack', added: Date.now(), finished: 0,
+        chars: info.chars || 0, chapChars: [], vertical: kind === 'aozora', mood: kind === 'aozora' ? 'wa_v' : 'memo',
+        cover: null, manual: null, stub: true, src: { p: 'drive', lib: 1, id: f.id, m: '' },
+      };
+      await DB.put('books', stub); byId.set(f.id, stub); added++;
+    }
+
+    // 読んだ位置・状態・設定：新しく読んだ方を残す
+    for (const [id, r] of Object.entries(remote.books || {})) {
+      const b = byId.get(id);
+      if (!b || !r.mark) continue;
+      const lm = mk.get(b.id);
+      if ((r.mark.updated || 0) <= ((lm && lm.updated) || 0)) continue;
+      await DB.put('marks', Object.assign({}, r.mark, { id: b.id }));
+      if (r.status) { b.status = r.status; b.finished = r.finished || 0; }
+      if (r.layout) b.layout = r.layout;
+      await putBookSafe(b); changed++;
+    }
+    // 抜き書き：無いものを足す
+    const haveN = new Set((await Notes.list()).map((n) => n.id));
+    for (const n of remote.notes || []) {
+      const b = byId.get(n.driveId);
+      if (haveN.has(n.id) || !b) continue;
+      const row = Object.assign({}, n, { bookId: b.id, bookTitle: n.bookTitle || b.title });
+      delete row.driveId;
+      await DB.put('notes', row); changed++;
+    }
+
+    // この端末の分を書き戻す（相手の分で、こちらに無い本・抜き書きもそのまま残す）
+    await loadBooks();
+    const mk2 = await allMarks();
+    const out = { v: 1, at: Date.now(), books: {}, notes: [] };
+    const toDrive = new Map();
+    for (const b of S.all) {
+      if (!b.src || !b.src.lib || !b.src.id) continue;
+      toDrive.set(b.id, b.src.id);
+      const m = mk2.get(b.id), old = (remote.books || {})[b.src.id] || {};
+      out.books[b.src.id] = {
+        title: b.title, author: b.author, kind: b.kind, chars: b.chars || old.chars || 0,
+        status: b.status, finished: b.finished || 0, layout: b.layout || old.layout || null,
+        mark: m ? { ch: m.ch || 0, off: m.off || 0, pct: m.pct || 0, y: m.y, hl: m.hl, lastLine: m.lastLine || '', updated: m.updated || 0 } : (old.mark || null),
+      };
+    }
+    for (const [id, r] of Object.entries(remote.books || {})) if (!out.books[id]) out.books[id] = r;
+    for (const n of await Notes.list()) { const did = toDrive.get(n.bookId); if (did) out.notes.push(Object.assign({}, n, { driveId: did })); }
+    const outIds = new Set(out.notes.map((n) => n.id));
+    for (const n of remote.notes || []) if (!outIds.has(n.id)) out.notes.push(n);
+    await Drive.upload(folder, SYNC_NAME, new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    await DB.setting('syncAt', Date.now());
+    if (added || changed) { await loadBooks(); if (!R.open && !D.open) render(); }
+    if (!quiet || added || changed) toast('ほかの端末と揃えました' + (added ? '（本 ' + added + '冊が増えました）' : ''));
+    return true;
+  } catch (e) {
+    console.warn('揃えられません', e);
+    if (!quiet) toast('ドライブと揃えられませんでした: ' + e.message);
+    return false;
+  } finally { S.syncing = false; }
+}
+
+let syncT = null;
+function syncSoon() { clearTimeout(syncT); syncT = setTimeout(() => syncLibrary(), 1500); }
+
+// 揃えた時刻の言い方（「3時間前」）
+function agoLabel(t) {
+  if (!t) return 'まだ一度も';
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? 'さっき' : m < 60 ? m + '分前' : m < 1440 ? Math.round(m / 60) + '時間前' : Math.round(m / 1440) + '日前';
+}
+
+// 棚・ホームの上に出す「揃える」の一行。つながっていて最近揃えていれば出さない（そのときは裏で揃える）
+async function syncChip() {
+  const at = (await DB.setting('syncAt')) || 0;
+  if (Drive.hasToken()) { if (Date.now() - at > 5 * 60000) syncSoon(); return ''; }
+  if (!(await driveClientId())) return '';
+  if (Date.now() - at < 30 * 60000) return '';
+  return '<button class="syncchip" id="sync-go">☁ ほかの端末と揃える<span>前回 ' + agoLabel(at) + '</span></button>';
+}
+function bindSyncChip(el) {
+  const b = $('#sync-go', el);
+  if (b) b.onclick = async () => { if (await driveReady(true)) await syncLibrary({ quiet: false }); render(); };
+}
+
+// 名前だけの本（まだ落としていない）を開くとき：ドライブから落として中身を入れる
+async function fetchStub(b) {
+  if (!(await driveReady(true))) return null;
+  toast('ドライブから落としています…');
+  try {
+    const st = await Drive.stat(b.src.id);
+    if (!st) { toast('ドライブの本棚にもうありません'); return null; }
+    await importBlob(b.source, await Drive.download({ id: b.src.id }), b.source,
+      Object.assign({}, b.src, { m: st.mtime, s: st.size }));
+    return S.all.find((x) => x.id === b.id) || null;
+  } catch (e) { toast('落とせませんでした: ' + e.message); return null; }
 }
 
 // 青空文庫の本を落とす。青空文庫のサーバーはアプリから直接読めない（CORS）ので、
@@ -1443,14 +1576,17 @@ async function aozoraInstall(rows, onStep) {
     if (onStep) onStep(i, row);
     const got = await aozoraFetch(row);
     if (!got) { fail.push(row); continue; }
+    // ドライブでは「作品名（著者）.zip」にする。どの端末でも名前で何の本かわかるように
+    const name = (row.title + (row.author ? '（' + row.author + '）' : '')).replace(/[\\/:*?"<>|]/g, '_') + '.zip';
     let ref = { lib: 1 };
     if (lib) {
-      try { const f = await Drive.upload(lib, got.name, got.blob); ref = { p: 'drive', lib: 1, id: f.id, m: f.mtime, s: f.size }; put++; }
+      try { const f = await Drive.upload(lib, name, got.blob); ref = { p: 'drive', lib: 1, id: f.id, m: f.mtime, s: f.size }; put++; }
       catch (e) { console.warn('ドライブに置けません', e); }
     }
-    try { await importBlob(got.name, got.blob, got.name, ref); n++; } catch (e) { console.warn(e); fail.push(row); }
+    try { await importBlob(name, got.blob, name, ref); n++; } catch (e) { console.warn(e); fail.push(row); }
   }
   fillKana();
+  if (put) syncSoon();
   return { n, put, fail };
 }
 
@@ -1954,7 +2090,8 @@ async function openBook(id) {
   let b = S.books.find((x) => x.id === id);
   if (!b) return;
   if (b.manual) { manualSheet(b); return; }
-  b = await freshen(b);
+  if (b.stub) { b = await fetchStub(b); if (!b) return; }
+  else b = await freshen(b);
   const file = await DB.get('files', id);
   if (!file || !file.chapters) { toast('本文が見つかりません'); return; }
 
@@ -2065,6 +2202,7 @@ function closeReaderUI() {
   hideLayoutNote();
   applyChrome();
   loadBooks().then(render);
+  if (Drive.hasToken()) syncSoon();   // 読んだ位置をほかの端末へ
 }
 // 「棚へ」ボタン・Esc など、ユーザーが読書画面を閉じる操作から呼ぶ。
 // 積んだ history をその場で1つ消費する。
@@ -2197,7 +2335,9 @@ function toggleUI() {
   const e = readerEls();
   const show = e.top.hidden;
   e.top.hidden = e.bot.hidden = !show;
-  if (show) { buildReadSheet(); e.bot.scrollTop = 0; }
+  // 上の帯（棚へ・目次）を出すときは、引き継ぎの一行を消す（重なって「棚へ」が押せなくなるため）。
+  // 他の本の設定は、下のシートの「引き継ぎ」から同じものを出せる
+  if (show) { hideLayoutNote(); buildReadSheet(); e.bot.scrollTop = 0; }
 }
 
 // ---------------------------------------------------------------- 設定シート（紙）
@@ -3194,7 +3334,7 @@ async function boot() {
     // （iOS でバックグラウンドのまま OS に落とされても、この分は消えない）。
     // 戻ってきたら resume するだけで、id は同じまま計り直す。end() や
     // pagehide と合わせても、同じ id を上書きするだけなので二重には数えない。
-    if (document.hidden) { Stats.checkpoint(); R.turnAt = Date.now(); }
+    if (document.hidden) { Stats.checkpoint(); R.turnAt = Date.now(); if (Drive.hasToken()) syncLibrary(); }
     else { Stats.resume(); R.turnAt = Date.now(); }
   });
   addEventListener('pagehide', () => { const s = Stats.end(); if (s && R.book) Stats.publishToDesk(R.book.title, s.ms); });
