@@ -1,6 +1,6 @@
 // 画面一式をキャッシュし、2回目以降はネットワークを待たずに開く。
 // 保存データは localStorage 側にあるのでここでは触らない。
-const VERSION = 'memo-v18';
+const VERSION = 'memo-v19';
 const SHELL = [
   './',
   './index.html',

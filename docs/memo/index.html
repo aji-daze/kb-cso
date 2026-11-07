@@ -55,6 +55,18 @@ input.chip{outline:0;font:inherit;font-size:13px;width:9em;color:var(--fg);borde
 .chip.on{color:var(--bg);background:var(--fg);border-color:var(--fg)}
 #fl{display:flex;gap:6px;overflow-x:auto;padding:10px 0 2px;flex:none;scrollbar-width:none}
 #fl .chip{white-space:nowrap}
+#fl .chip.ed{border-style:dashed}
+/* ラベルの編集（一覧の代わりに出す） */
+#lb{flex:1;overflow:auto;list-style:none;padding:4px 0 24px}
+#lb[hidden],#fl[hidden]{display:none}
+#lb .lh{display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px;font-size:12px;letter-spacing:.14em;color:var(--sub)}
+#lb .lh button{font-size:13px;letter-spacing:.06em;color:var(--sub);padding:8px 0}
+#lb .lr{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--faint)}
+#lb input{flex:1;min-width:0;border:0;background:none;color:var(--fg);font:inherit;letter-spacing:inherit;padding:12px 0;outline:0;border-radius:0}
+#lb input:focus{box-shadow:inset 0 -1px 0 var(--sub)}
+#lb small{font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+#lb .lr button{font-size:13px;color:var(--sub);padding:12px 0}
+#lb button:hover{color:var(--fg)}
 #ls .th{float:right;width:44px;height:44px;object-fit:cover;border-radius:4px;margin:2px 0 0 12px;background:var(--faint)}
 #iv{position:fixed;inset:0;z-index:11;display:none;flex-direction:column;background:rgba(0,0,0,.94);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 #iv.on{display:flex}
@@ -144,6 +156,7 @@ body.k #to{bottom:calc(60px + env(safe-area-inset-bottom))}
 <div id="dr"><div id="pn">
   <div class="top"><input id="q" type="search" placeholder="検索" autocomplete="off"><button id="bX" title="閉じる (Esc)" aria-label="閉じる"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button></div>
   <div id="fl"></div>
+  <div id="lb" hidden></div>
   <ul id="ls"></ul>
   <div class="ft">
     <button id="bE">書き出し</button>
@@ -599,6 +612,55 @@ $('tg').onclick=function(e){
 $('bP').onclick=addImages;
 $('bT').onclick=addTag;
 
+// ---- ラベルの編集（名前の変更・削除）----
+// そのラベルが付いた全部のメモを書き換える（同期で他の端末にも届く）。更新日時は変えない（一覧の並びを崩さない）。
+// 変える前の中身を覚えておき、「元に戻す」で全部戻す。
+function retag(from,to){
+  save();
+  var before={},n=0;
+  all().forEach(function(m){
+    var mt=meta(m.t),k=mt.tg.indexOf(from);if(k<0)return;
+    var tg=mt.tg.slice();
+    if(to)tg[k]=to;else tg.splice(k,1);
+    tg=tg.filter(function(x,i){return tg.indexOf(x)===i});
+    before[m.id]={t:m.t,c:m.c,u:m.u};
+    setM(m.id,{t:compose(mt.t,mt.u,mt.im,tg,mt.pin),c:m.c,u:m.u});n++;
+  });
+  if(cur&&before[cur]){var m=get(cur);load(m.t)}
+  if(fTag===from)fTag=to||'';
+  return{n:n,undo:function(){save();Object.keys(before).forEach(function(id){setM(id,before[id])});if(cur&&before[cur])load(before[cur].t);if(!$('lb').hidden)lbDraw();else render()}};
+}
+function lbCount(){var c={};all().forEach(function(m){meta(m.t).tg.forEach(function(t){c[t]=(c[t]||0)+1})});return c}
+function lbDraw(){
+  var box=$('lb'),c=lbCount(),tags=allTags(),h=el('div','lh');
+  box.textContent='';
+  h.appendChild(el('span','','ラベルの編集'));h.appendChild(el('button','lx','一覧に戻る'));box.appendChild(h);
+  if(!tags.length)box.appendChild(el('div','lh','ラベルはありません'));
+  tags.forEach(function(t){
+    var r=el('div','lr'),x=document.createElement('input');
+    x.value=t;x.setAttribute('data-t',t);x.setAttribute('enterkeyhint','done');x.autocomplete='off';x.setAttribute('aria-label','ラベル「'+t+'」の名前');
+    r.appendChild(x);r.appendChild(el('small','',c[t]+'件'));
+    var d=el('button','ld','削除');d.setAttribute('data-t',t);r.appendChild(d);box.appendChild(r);
+  });
+}
+function lbOpen(){lbDraw();$('lb').hidden=false;ls.hidden=true;$('fl').hidden=true}
+function lbClose(){$('lb').hidden=true;ls.hidden=false;$('fl').hidden=false;if(dr.className)render()}
+function lbRename(x){
+  var from=x.getAttribute('data-t'),to=x.value.replace(/[\s#]+/g,'');
+  if(!to||to===from){x.value=from;return}
+  var exists=allTags().indexOf(to)>=0,r=retag(from,to);
+  lbDraw();
+  toast((exists?'「'+from+'」を「'+to+'」にまとめました':'「'+from+'」を「'+to+'」に変えました')+'（'+r.n+'件）',r.undo);
+}
+$('lb').addEventListener('keydown',function(e){if(e.target.tagName==='INPUT'&&e.key==='Enter'&&!e.isComposing){e.preventDefault();e.target.blur()}else if(e.key==='Escape'&&e.target.tagName==='INPUT'){e.stopPropagation();e.target.value=e.target.getAttribute('data-t');e.target.blur()}});
+$('lb').addEventListener('focusout',function(e){if(e.target.tagName==='INPUT')lbRename(e.target)});
+$('lb').onclick=function(e){
+  if(e.target.classList.contains('lx')){lbClose();return}
+  if(!e.target.classList.contains('ld'))return;
+  var t=e.target.getAttribute('data-t'),r=retag(t,'');
+  lbDraw();toast('ラベル「'+t+'」を削除しました（'+r.n+'件のメモから外しました）',r.undo);
+};
+
 // ---- ピン留め・通知欄 ----
 // ピンはメモの中（末尾のコメント）に入れるので、ほかの端末にも同期される。
 // 通知欄への固定は Android アプリ（WataaApp.notify）だけ。どれを出すかはこの端末に覚える（memo.nt）。
@@ -647,7 +709,7 @@ function render(){
   var w=q.value.trim().toLowerCase(),a=all(),pn={},f=document.createDocumentFragment(),n=0,last='',tags=allTags(),fl=$('fl');
   if(tags.indexOf(fTag)<0)fTag='';
   fl.textContent='';
-  if(tags.length)['すべて'].concat(tags).forEach(function(t,k){var c=el('button','chip'+((k?t:'')===fTag?' on':''),t);c.setAttribute('data-t',k?t:'');fl.appendChild(c)});
+  if(tags.length){['すべて'].concat(tags).forEach(function(t,k){var c=el('button','chip'+((k?t:'')===fTag?' on':''),t);c.setAttribute('data-t',k?t:'');fl.appendChild(c)});fl.appendChild(el('button','chip ed','編集'))}
   a.forEach(function(m){if(meta(m.t).pin)pn[m.id]=1});
   a=a.filter(function(m){return pn[m.id]}).concat(a.filter(function(m){return!pn[m.id]}));
   for(var i=0;i<a.length;i++){
@@ -670,13 +732,14 @@ function render(){
   ls.appendChild(n?f:el('li','none',w||fTag?'見つかりません':'メモはまだありません'));
   q.placeholder='検索'+(a.length?'（'+a.length+'件）':'');
 }
-function openList(){save();wake();q.value='';render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
+function openList(){save();wake();q.value='';lbClose();render();dr.className='on';if(matchMedia('(hover:hover)').matches)q.focus()}
 function close(){dr.className=''}
 function back(){close();lastTa.focus()}
 window.WataaBack=function(){
   var p=document.getElementById('syp');
   if(p&&p.className){p.className='';return true}
   if($('iv').className){$('iv').className='';return true}
+  if(!$('lb').hidden){lbClose();return true}
   if(dr.className){back();return true}
   return false;
 };
@@ -716,7 +779,7 @@ $('bS').onclick=function(){
 };
 dr.onclick=function(e){if(e.target===dr)close()};
 q.oninput=render;
-$('fl').onclick=function(e){var c=e.target.closest('.chip');if(c){fTag=c.getAttribute('data-t');render()}};
+$('fl').onclick=function(e){var c=e.target.closest('.chip');if(!c)return;if(c.classList.contains('ed')){lbOpen();return}fTag=c.getAttribute('data-t');render()};
 q.onkeydown=function(e){if(e.key==='Enter'&&!e.isComposing){e.preventDefault();var f=ls.querySelector('li[data-id]');if(f)open(f.getAttribute('data-id'))}};
 ls.onclick=function(e){var li=e.target.closest('li[data-id]');if(li)open(li.getAttribute('data-id'))};
 
@@ -764,6 +827,7 @@ document.addEventListener('keydown',function(e){
   else if(e.altKey&&(k==='n'||e.code==='KeyN')){e.preventDefault();open(null)}
   else if(e.altKey&&(k==='c'||e.code==='KeyC')&&!dr.className){e.preventDefault();codeBlock()}
   else if(k==='escape'&&$('iv').className)$('iv').className='';
+  else if(k==='escape'&&!$('lb').hidden)lbClose();
   else if(k==='escape'&&dr.className)back();
 });
 
