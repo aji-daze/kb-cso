@@ -37,7 +37,7 @@ const waitServer = (url) =>
 const server = spawn(process.execPath, [path.join(__dirname, 'serve.cjs')], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
 await waitServer(`${BASE}/index.html`);
 const browser = await chromium.launch({
-  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  
   args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
 });
 const errors = [];

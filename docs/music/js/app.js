@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -1479,8 +1479,10 @@ function maybeAutoResume(wasWanted) {
   // 待ち時間を延ばしながら何度も試すと、3回目以降は読み込みから4秒を過ぎてしまう。
   // そこで一度この判定に入ったら、位置が進むまでは同じ曲では判定を保つ
   // （症状は「位置0秒のまま先に進まない」ことなので、位置が動いたら普通の再生とみなす）。
-  const nearStart = audio.currentTime < 1.5;
-  const isSwitchPause = nearStart && (Date.now() - lastLoadAt < 4000 || switchModeTrackId === id);
+  // 再開のたびに少しずつ位置が進むので（記録では 1秒→2秒）、一度この判定に入った曲は 8秒までは保つ。
+  // 前はここで 1.5秒を越えた途端に「曲の途中」扱いになり、2回で諦めていた
+  const isSwitchPause =
+    (audio.currentTime < 1.5 && Date.now() - lastLoadAt < 4000) || (switchModeTrackId === id && audio.currentTime < 8);
   if (isSwitchPause) switchModeTrackId = id;
   const maxAttempts = isSwitchPause ? SWITCH_RESUME_MAX : MIDTRACK_RESUME_MAX;
 
@@ -1491,6 +1493,7 @@ function maybeAutoResume(wasWanted) {
       autoResumeCount = maxAttempts;
       plog('再開してもすぐ止められたので、外部の要求と判断して諦める');
       autoResumeGaveUpAt = Date.now();
+      P.stopKeepAlive();
       return;
     }
   }
@@ -1503,6 +1506,7 @@ function maybeAutoResume(wasWanted) {
         : '外部の要求と判断して諦める'
     );
     autoResumeGaveUpAt = Date.now();
+    P.stopKeepAlive();
     return;
   }
 
@@ -3883,7 +3887,14 @@ function wire() {
   };
 
   // audio のイベント
+  let kaLogged = false;
   audio.addEventListener('play', () => {
+    P.clearPauseReason(); // 前の一時停止の理由が残っていたら捨てる（次の外部要因の pause に付かないように）
+    P.startKeepAlive().then((ok) => {
+      if (kaLogged && ok) return;
+      kaLogged = true;
+      plog(ok ? '無音の見張り役を開始（曲の切り替えで再生が途切れないように）' : '無音の見張り役を起動できなかった');
+    });
     wantPlaying = true;
     lastPausedAt = 0;
     lastPlayStartAt = Date.now();
@@ -3901,7 +3912,7 @@ function wire() {
       const wasWanted = wantPlaying;
       const why = reason || '外部（端末・他アプリ・イヤホン）';
       plog(
-        `一時停止［${why}］（位置 ${Math.round(audio.currentTime)}秒/全体 ${Math.round(audio.duration || 0)}秒 · 画面${
+        `一時停止［${why}］（位置 ${Math.round(audio.currentTime)}秒/全体 ${Math.round(audio.duration || 0)}秒 · 見張り=${P.keepAliveState()} · 画面${
           document.visibilityState === 'visible' ? '表' : '裏'
         } · ready=${audio.readyState} · net=${audio.networkState}）`
       );
@@ -4153,7 +4164,7 @@ async function watchdogTick() {
       const pos = audio.currentTime;
       try {
         // load() が勝手に pause を出すかは端末次第なので、こちらから理由付きで止めてから読み直す
-        P.pauseWith('立て直しのため読み直し');
+        P.pauseWith('立て直しのため読み直し', { keep: true });
         audio.load();
         audio.addEventListener(
           'loadedmetadata',

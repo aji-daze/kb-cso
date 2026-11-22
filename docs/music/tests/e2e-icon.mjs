@@ -148,7 +148,7 @@ async function main() {
   await waitForServer(`${BASE}/index.html`);
 
   const browser = await chromium.launch({
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    
     args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
   });
 

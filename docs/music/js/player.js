@@ -7,15 +7,62 @@ audio.preload = 'auto';
 
 // pause() を呼ぶたびに理由を控えておき、'pause' イベント側でログに出せるようにする。
 // 端末や他アプリがこちらの知らないところで止めた場合は理由が無いままになる。
+// 理由には期限を付ける。pause() の直後に load() や src の差し替えをすると、HTML の仕様で
+// 'pause' イベントが捨てられ、理由が使われないまま残る。残った理由が、あとで端末に止められた
+// ときの pause に誤って付き、「自分で止めた」扱いになって自動再開が働かなかった。
 let pauseReason = null;
-export function pauseWith(reason) {
+let pauseReasonAt = 0;
+// keep: true のときは無音の見張り役を止めない（読み直しなど、すぐ鳴らし直す前提の一時停止）
+export function pauseWith(reason, { keep = false } = {}) {
   pauseReason = reason;
+  pauseReasonAt = Date.now();
+  if (!keep) stopKeepAlive();
   audio.pause();
 }
+
+// ---------- 無音の見張り役（keepalive） ----------
+// Android は、裏で再生が一瞬でも途切れると「再生していないアプリ」とみなし、
+// そこから新しく音を鳴らし始めるのを止めてしまうことがある（曲の切り替え直後に
+// 位置0〜2秒で何度再開しても即座に止められる、という記録がこれに当たる）。
+// そこで、本体とは別の <audio> で無音をループ再生し続け、曲の切り替えで本体が
+// 一瞬止まっても「このアプリは再生中」の状態が途切れないようにする。
+// Web Audio にはつながない（イコライザとは無関係）。音量は普通のまま、中身が無音。
+let ka = null;
+function silentWavUrl(seconds = 10, rate = 8000) {
+  const n = seconds * rate;
+  const buf = new ArrayBuffer(44 + n);
+  const v = new DataView(buf);
+  const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  str(36, 'data'); v.setUint32(40, n, true);
+  new Uint8Array(buf, 44).fill(128); // 8bit PCM の無音
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+export function startKeepAlive() {
+  if (!ka) {
+    ka = new Audio(silentWavUrl());
+    ka.loop = true;
+    ka.preload = 'auto';
+  }
+  if (!ka.paused) return Promise.resolve(true);
+  return ka.play().then(() => true, () => false);
+}
+export function stopKeepAlive() {
+  if (ka && !ka.paused) ka.pause();
+}
+export function keepAliveState() {
+  return !ka ? 'none' : ka.paused ? 'off' : 'on';
+}
 export function takePauseReason() {
-  const r = pauseReason;
+  const r = Date.now() - pauseReasonAt < 1500 ? pauseReason : null;
   pauseReason = null;
   return r;
+}
+// 再生が始まったら、使われずに残っている理由は捨てる
+export function clearPauseReason() {
+  pauseReason = null;
 }
 
 export const EQ_BANDS = [60, 230, 910, 3600, 14000];

@@ -59,7 +59,7 @@ async function main() {
   await waitForServer(`${BASE}/index.html`);
 
   const browser = await chromium.launch({
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    
     args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
   });
 
@@ -245,6 +245,13 @@ async function main() {
     });
 
     await step('同じ曲で外部pauseを短い間隔で繰り返すと3回目以降は再開しない', async () => {
+      // 電話などを想定した「曲の途中」での停止の挙動を見る。
+      // 直前の項目の曲は「切り替え直後」の判定に入っていて、その曲は 8 秒までその判定を保つ仕様なので、
+      // 新しい曲を選び、2.5 秒進めて確実に「曲の途中」にしてから始める
+      await clickSong('Song 5');
+      await sleep(2500);
+      await externalPause(); // 1回目（曲の途中）→ 再開される
+      await sleep(1300);
       // 再開直後（5秒以内）にもう一度外部pause → 本物とみなして諦める
       await externalPause();
       await sleep(300);

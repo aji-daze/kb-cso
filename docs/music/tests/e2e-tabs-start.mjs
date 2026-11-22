@@ -28,7 +28,7 @@ const assert = (c, m) => {
 };
 
 const browser = await chromium.launch({
-  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  
   args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
 });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 900 }, locale: 'ja-JP' });
