@@ -843,3 +843,16 @@ input, select, textarea { font-size: 16px; }
   color: var(--tx); font-size: 13.5px; background: var(--surface);
 }
 .syncchip span { margin-left: auto; font-size: 11.5px; color: var(--sub); }
+
+/* 読み上げ：読んでいる文の印と、下の帯 */
+::highlight(tts) { background-color: rgba(255, 200, 60, .38); color: inherit; }
+#ttsbar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + var(--safe-b)); z-index: 36;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; width: min(440px, calc(100% - 24px)); box-sizing: border-box;
+  background: var(--surface); color: var(--tx); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg);
+}
+#ttsbar .tts-row { display: flex; gap: 6px; align-items: center; }
+#ttsbar button { flex: 1; height: 40px; border-radius: 8px; border: 1px solid var(--line); color: var(--tx); font-size: 15px; }
+#ttsbar #tts-play { flex: 1.3; background: var(--acc); color: var(--on-acc); border-color: var(--acc); font-weight: 700; }
+#ttsbar #tts-stop { flex: 1.6; font-size: 13px; }
+#ttsbar select { flex: 1; min-width: 0; height: 36px; font: inherit; font-size: 13px; color: var(--tx); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
