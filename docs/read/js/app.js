@@ -12,6 +12,7 @@ import * as Folder from './folder.js';
 import { Pager } from './pager.js';
 import * as MdView from './mdview.js';
 import * as Dict from './dict.js';
+import * as Speech from './speech.js';
 import { mdToChapters, txtToChapters } from './md.js';
 import { readEpub } from './epub.js';
 import { readZip } from './zip.js';
@@ -2198,6 +2199,7 @@ function closeReaderUI() {
   if (s && R.book) Stats.publishToDesk(R.book.title, s.ms);
   e.root.hidden = true;
   e.top.hidden = e.bot.hidden = e.toc.hidden = true;
+  if (TTS.where === 'book') ttsStop();
   R.open = false; R.book = null; R.pager = null;
   hideLayoutNote();
   applyChrome();
@@ -2664,6 +2666,230 @@ async function minchoPanel(box) {
   };
 }
 
+// ================================================================ 読み上げ
+// pomenote と同じ読み上げ（js/speech.js）。端末の音声合成で、文ごとに読む。
+// 本の読書画面と文書のどちらでも使う。読んでいる文に薄く印を付け、ページ（スクロール）もついていく。
+// 文字を選んでいれば、その文から読み始める。選んでいなければ、いま見ているところから。
+const TTS = { on: false, where: '', idx: null, wake: null };
+const ttsReader = Speech.createReader({
+  onSentence: (item) => ttsFollow(item),
+  onState: (st) => ttsState(st),
+});
+
+function ttsPrefs() {
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem('pocha.tts') || 'null'); } catch {}
+  return Object.assign({ rate: 1, style: 'standard', voice: '' }, v || {});
+}
+function ttsSave(p) { try { localStorage.setItem('pocha.tts', JSON.stringify(p)); } catch {} }
+const ttsOpts = (p) => ({ rate: p.rate, voiceURI: p.voice, style: Speech.styleOf(p.style) });
+
+// 本文の文字の並びを作る。ルビの読みは位置に数えず、読み上げるときだけ本文の文字と差し替える。
+// コードの塊・プロパティは読まない。段落ごとに区切りを持つ（見出しの後で文がつながらないように）。
+function ttsIndex(root, nodes) {
+  if (!nodes) {
+    nodes = [];
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (t) => (!t.nodeValue || t.parentElement.closest('rt,rp,pre,.props,script,style')
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let at = 0;
+    for (let t = w.nextNode(); t; t = w.nextNode()) { nodes.push({ node: t, start: at, len: t.nodeValue.length }); at += t.nodeValue.length; }
+  }
+  const text = nodes.map((n) => n.node.nodeValue).join('');
+  const BLOCK = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,.callout-title,div';
+  const blocks = [], ruby = new Map();
+  for (const n of nodes) {
+    const el = n.node.parentElement;
+    const blk = el.closest(BLOCK) || root;
+    const last = blocks[blocks.length - 1];
+    if (last && last.el === blk) last.e = n.start + n.len;
+    else blocks.push({ el: blk, s: n.start, e: n.start + n.len });
+    const rb = el.closest('ruby');
+    if (rb) {
+      const r = ruby.get(rb) || { s: n.start, e: n.start, reading: [...rb.querySelectorAll('rt')].map((x) => x.textContent).join('') };
+      r.e = n.start + n.len; ruby.set(rb, r);
+    }
+  }
+  return { root, nodes, text, blocks, ruby: [...ruby.values()].filter((r) => r.reading) };
+}
+
+// 読み上げる文：ルビの付いた所は読みに差し替える
+function ttsSay(ix, s, e, calm) {
+  let out = '', at = s;
+  for (const r of ix.ruby) {
+    if (r.e <= s || r.s >= e) continue;
+    out += ix.text.slice(at, Math.max(at, r.s)) + r.reading;
+    at = Math.max(at, r.e);
+  }
+  return Speech.toSpeech(out + ix.text.slice(at, e), { calm });
+}
+
+function ttsQueue(ix, from) {
+  const st = Speech.styleOf(ttsPrefs().style);
+  const q = [];
+  for (const b of ix.blocks) {
+    if (b.e <= from) continue;
+    const items = Speech.sentences(ix.text, Math.max(b.s, from), b.e, { splitComma: st.commaGap > 0, calm: st.calm });
+    if (!items.length) continue;
+    items[items.length - 1].kind = 'para';
+    for (const it of items) { it.say = ttsSay(ix, it.start, it.end, st.calm); if (/[\p{L}\p{N}]/u.test(it.say)) q.push(it); }
+  }
+  return q;
+}
+
+// 文字位置 → 範囲
+function ttsRange(ix, s, e) {
+  const find = (off) => {
+    let lo = 0, hi = ix.nodes.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ix.nodes[m].start <= off) lo = m; else hi = m - 1; }
+    const n = ix.nodes[lo];
+    return n ? { node: n.node, idx: Math.max(0, Math.min(n.len, off - n.start)) } : null;
+  };
+  const a = find(s), b = find(Math.max(s, e - 1));
+  if (!a || !b) return null;
+  const r = document.createRange();
+  try { r.setStart(a.node, a.idx); r.setEnd(b.node, Math.min(b.node.nodeValue.length, b.idx + 1)); } catch { return null; }
+  return r;
+}
+
+// 選んでいる所の位置（無ければ null）
+function ttsSelFrom(ix) {
+  const s = getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount || !ix.root.contains(s.anchorNode)) return null;
+  const r = s.getRangeAt(0);
+  const n = ix.nodes.find((x) => x.node === r.startContainer);
+  return n ? n.start + r.startOffset : null;
+}
+
+async function ttsStart(where) {
+  if (!Speech.supported()) { toast('この端末（ブラウザ）は読み上げに対応していません'); return; }
+  let ix, from;
+  if (where === 'book') {
+    if (!R.pager) return;
+    ix = ttsIndex($('#rflow'), R.pager.nodes);
+    from = ttsSelFrom(ix) ?? R.pager.offsetAt(R.pager.i);
+  } else {
+    const body = $('#d-body');
+    ix = ttsIndex(body);
+    from = ttsSelFrom(ix);
+    if (from == null) {   // いま見えている最初の段落から
+      const top = $('#d-view').getBoundingClientRect();
+      const b = ix.blocks.find((x) => { const r = x.el.getBoundingClientRect(); return r.bottom > top.top + 4 && r.right > top.left && r.left < top.right; });
+      from = b ? b.s : 0;
+    }
+  }
+  const q = ttsQueue(ix, from);
+  if (!q.length) { toast('読み上げる文がありません'); return; }
+  getSelection().removeAllRanges();
+  if (!Speech.japaneseVoices().length) toast('日本語の声が見つからないときは、端末の設定「テキスト読み上げ」で日本語を入れてください', 5000);
+  Object.assign(TTS, { on: true, where, idx: ix });
+  ttsBar();
+  ttsReader.start(q, ttsOpts(ttsPrefs()));
+}
+
+function ttsStop() {
+  if (!TTS.on) return;
+  TTS.on = false;
+  ttsReader.stop();
+  ttsMark(null);
+  const b = $('#ttsbar'); if (b) b.remove();
+}
+
+function ttsMark(range) {
+  if (!window.CSS || !CSS.highlights) return;   // 印を付けられない端末では、ページの追従だけ
+  if (range) CSS.highlights.set('tts', new Highlight(range)); else CSS.highlights.delete('tts');
+}
+
+// 読んでいる文の所へページ（スクロール）を合わせる
+function ttsFollow(item) {
+  const ix = TTS.idx;
+  if (!ix) return;
+  const r = ttsRange(ix, item.start, item.end);
+  ttsMark(r);
+  if (TTS.where === 'book' && R.pager) {
+    const pg = R.pager.pageOf(item.start);
+    if (pg !== R.pager.i) { R.pager.go(pg); R.off = R.pager.offsetAt(pg); paintFoot(); }
+  } else if (TTS.where === 'doc' && r) {
+    const box = r.getBoundingClientRect(), e = docEls();
+    if (D.mode === 'page') {
+      const x = box.left - e.body.getBoundingClientRect().left;
+      const pg = Math.floor((x + 2) / D.step);
+      if (pg !== D.page) goDocPage(pg);
+    } else {
+      const v = e.scroll.getBoundingClientRect();
+      if (box.top < v.top + 40 || box.bottom > v.bottom - 90) e.scroll.scrollBy({ top: box.top - v.top - v.height * 0.3, behavior: 'smooth' });
+    }
+  }
+  const lab = $('#tts-play'); if (lab) lab.textContent = '❚❚';
+}
+
+async function ttsState(st) {
+  const play = $('#tts-play');
+  if (play) play.textContent = st === 'play' ? '❚❚' : '▶';
+  // 読んでいるあいだは画面を消さない（消えると止まる端末が多い）
+  try {
+    if (st === 'play' && navigator.wakeLock && !TTS.wake) TTS.wake = await navigator.wakeLock.request('screen');
+    if (st !== 'play' && TTS.wake) { TTS.wake.release(); TTS.wake = null; }
+  } catch {}
+  if (st !== 'end' || !TTS.on) return;
+  // 本は次の章へ続ける。文書は最後で止める
+  if (TTS.where === 'book' && R.chapters && R.ch < R.chapters.length - 1) {
+    await showChapter(R.ch + 1, 0);
+    const ix = ttsIndex($('#rflow'), R.pager.nodes);
+    TTS.idx = ix;
+    const q = ttsQueue(ix, 0);
+    if (q.length) { ttsReader.start(q, ttsOpts(ttsPrefs())); return; }
+  }
+  toast('最後まで読み上げました');
+  ttsStop();
+}
+
+// 読み上げ中の帯：前の文・止める/続ける・次の文・速さ・声の調子・声・終わる
+function ttsBar() {
+  let bar = $('#ttsbar');
+  if (bar) bar.remove();
+  const p = ttsPrefs();
+  const voices = Speech.japaneseVoices();
+  bar = document.createElement('div');
+  bar.id = 'ttsbar';
+  bar.innerHTML =
+    '<div class="tts-row">' +
+      '<button id="tts-prev" aria-label="前の文">⏮</button>' +
+      '<button id="tts-play" aria-label="止める・続ける">❚❚</button>' +
+      '<button id="tts-next" aria-label="次の文">⏭</button>' +
+      '<button id="tts-rate" aria-label="速さ">×' + p.rate.toFixed(1) + '</button>' +
+      '<button id="tts-stop" aria-label="読み上げを終わる">■ 終わる</button>' +
+    '</div>' +
+    '<div class="tts-row">' +
+      '<select id="tts-style" aria-label="声の調子">' + Object.entries(Speech.VOICE_STYLES).map(([k, s]) =>
+        '<option value="' + k + '"' + (p.style === k ? ' selected' : '') + '>' + esc(s.short) + '</option>').join('') + '</select>' +
+      (voices.length > 1 ? '<select id="tts-voice" aria-label="声"><option value="">声：おまかせ</option>' + voices.map((v) =>
+        '<option value="' + esc(v.voiceURI) + '"' + (p.voice === v.voiceURI ? ' selected' : '') + '>' + esc(v.name) + '</option>').join('') + '</select>' : '') +
+    '</div>';
+  for (const t of ['click', 'pointerdown', 'pointerup']) bar.addEventListener(t, (ev) => ev.stopPropagation());
+  document.body.appendChild(bar);
+  $('#tts-prev').onclick = () => ttsReader.skip(-1);
+  $('#tts-next').onclick = () => ttsReader.skip(1);
+  $('#tts-play').onclick = () => (ttsReader.state.playing ? ttsReader.pause() : ttsReader.resume());
+  $('#tts-stop').onclick = ttsStop;
+  const RATES = [0.8, 1, 1.2, 1.5, 2];
+  $('#tts-rate').onclick = (ev) => {
+    const q = ttsPrefs();
+    q.rate = RATES[(RATES.indexOf(q.rate) + 1) % RATES.length] || 1;
+    ttsSave(q); ev.target.textContent = '×' + q.rate.toFixed(1);
+    ttsReader.configure(ttsOpts(q));
+  };
+  $('#tts-style').onchange = (ev) => {
+    // 調子が変わると区切り方も変わるので、いま読んでいる文から組み直す
+    const q = ttsPrefs(); q.style = ev.target.value; ttsSave(q);
+    const cur = ttsReader.state.queue[ttsReader.state.index];
+    const nq = ttsQueue(TTS.idx, cur ? cur.start : 0);
+    if (nq.length) ttsReader.start(nq, ttsOpts(q));
+  };
+  if ($('#tts-voice')) $('#tts-voice').onchange = (ev) => { const q = ttsPrefs(); q.voice = ev.target.value; ttsSave(q); ttsReader.configure(ttsOpts(q)); };
+}
+
 // ================================================================ 文書
 // 本ではない Markdown の置き場。表紙は出さず、題名と書き出しの一覧にする。
 // 開くと横書きの1枚の紙（#doc）。ページはめくらず、スクロールで読む。
@@ -2938,6 +3164,7 @@ function saveDocPos() {
 // DOM・状態を片づけるだけ。history には触らない（popstate から呼ぶ用）。
 function closeDocUI() {
   if (!D.open) return;
+  if (TTS.where === 'doc') ttsStop();
   saveDocPos();
   const e = docEls();
   e.root.hidden = true;
@@ -3059,6 +3286,7 @@ function bindDocView() {
   $('#d-close').onclick = closeDoc;
   $('#d-toc').onclick = docTocSheet;
   $('#d-look').onclick = docLookSheet;
+  $('#d-tts').onclick = () => (TTS.on && TTS.where === 'doc' ? ttsStop() : ttsStart('doc'));
   e.scroll.addEventListener('scroll', () => {
     if (D.mode === 'page') { if (e.scroll.scrollTop) e.scroll.scrollTop = 0; return; }
     paintDocBar();
@@ -3308,6 +3536,8 @@ async function boot() {
   $('#r-close').onclick = closeReader;
   $('#r-toc').onclick = tocOpen;
   $('#sel-note').onclick = saveSelection;
+  $('#r-tts').onclick = () => { hideUI(); ttsStart('book'); };
+  $('#sel-tts').onclick = () => { $('#selbar').hidden = true; ttsStart('book'); };
   $('#sel-dict').onclick = () => { const w = selWord($('#rflow')); if (w) { $('#selbar').hidden = true; dictSheet(w); } };
   $('#sel-cancel').onclick = () => { getSelection().removeAllRanges(); $('#selbar').hidden = true; };
   document.addEventListener('selectionchange', onSelChange);
