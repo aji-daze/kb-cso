@@ -5,7 +5,7 @@ import * as P from './player.js';
 import * as drive from './drive.js';
 import * as art from './art.js';
 
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 
 /* ============================ 見た目（テーマ・アクセント・フォント） ============================
    色は CSS 変数を通して body[data-theme] / body[data-accent] / body[data-font] で切り替える。
@@ -795,10 +795,11 @@ const SORT_LABELS = {
   addedAt: '追加した順',
   duration: '長さ順',
   custom: '登録順',
+  favoritedAt: 'お気に入りにした順',
 };
 const SORT_KEYS = ['filename', 'title', 'artist', 'album', 'track', 'playCount', 'lastPlayed', 'addedAt', 'duration'];
 // 選び直したとき、その項目にとって「既定の向き」にする（再生回数・再生日時・追加日は新しい/多い方が先）
-const SORT_DEFAULT_DESC = { playCount: true, lastPlayed: true, addedAt: true };
+const SORT_DEFAULT_DESC = { playCount: true, lastPlayed: true, addedAt: true, favoritedAt: true };
 
 // 画面ごとの設定キー・並べ替え候補・初期値（＝今までの挙動）
 const SORT_SCREENS = {
@@ -808,7 +809,16 @@ const SORT_SCREENS = {
   artist: { store: 'sortByArtist', keys: SORT_KEYS, def: { by: 'title', desc: false } },
   // プレイリストだけ「登録順」を持つ。既定はそれ＝並べ替えを足さない（今まで通りの並び）
   playlist: { store: 'sortByPlaylist', keys: ['custom', ...SORT_KEYS], def: { by: 'custom', desc: false } },
+  // お気に入りだけ「お気に入りにした順」を持つ。既定は今までどおり曲名順
+  favorites: { store: 'sortByFavorites', keys: ['favoritedAt', ...SORT_KEYS], def: { by: 'title', desc: false } },
 };
+
+// お気に入りは「お気に入り」タブとプレイリスト一覧の「お気に入り」の2か所から開ける。
+// 並び順が食い違わないよう、どちらも同じ設定を使う
+function sortSlot(screen, key) {
+  if (screen === 'playlist' && key === 'fav') return ['favorites', 'all'];
+  return [screen, key];
+}
 
 function getSortState(screen, instKey) {
   const conf = SORT_SCREENS[screen];
@@ -841,6 +851,14 @@ function sortTracks(tracks, by, desc) {
     playCount: (a, b) => dir * ((a.playCount || 0) - (b.playCount || 0)) || jcmp(a.title, b.title),
     addedAt: (a, b) => dir * ((a.addedAt || 0) - (b.addedAt || 0)),
     duration: (a, b) => dir * ((a.duration || 0) - (b.duration || 0)),
+    // 日時の無い曲（この機能より前にお気に入りにした曲）は、向きに関わらず最後に曲名順で置く
+    favoritedAt: (a, b) => {
+      const av = a.favoritedAt || 0, bv = b.favoritedAt || 0;
+      if (!av && !bv) return jcmp(a.title, b.title);
+      if (!av) return 1;
+      if (!bv) return -1;
+      return dir * (av - bv);
+    },
     lastPlayed: (a, b) => {
       const av = a.lastPlayed || 0, bv = b.lastPlayed || 0;
       if (!av && !bv) return jcmp(a.title, b.title);
@@ -1106,7 +1124,8 @@ function renderFolders() {
 }
 
 function renderFavorites() {
-  const tracks = builtinPlaylist('fav').tracks;
+  const st = getSortState('favorites', 'all');
+  const tracks = sortTracks(builtinPlaylist('fav').tracks, st.by, st.desc);
   if (!tracks.length) {
     view.innerHTML = emptyState('お気に入りに追加した曲がここに並びます。<br>曲のメニューからハートで追加できます。');
     return;
@@ -1114,7 +1133,7 @@ function renderFavorites() {
   const head = document.createElement('div');
   head.className = 'detail-actions';
   head.style.padding = '10px 14px';
-  head.innerHTML = `<button class="btn" data-act="playall">すべて再生</button><button class="btn" data-act="shuffleall">シャッフル再生</button><span class="muted" style="align-self:center;font-size:12px">${tracks.length} 曲</span>`;
+  head.innerHTML = `<button class="btn" data-act="playall">すべて再生</button><button class="btn" data-act="shuffleall">シャッフル再生</button><button class="btn" data-act="sort" data-screen="favorites" data-instkey="all">並び: ${esc(sortLabel(st))}</button><span class="muted" style="align-self:center;font-size:12px">${tracks.length} 曲</span>`;
   view.appendChild(head);
   const box = document.createElement('div');
   view.appendChild(box);
@@ -1248,7 +1267,8 @@ function renderPlaylistDetail(key) {
   if (!b && !pl) return (view.innerHTML = emptyState('プレイリストが見つかりません'));
   const name = b ? b.name : pl.name;
   const base = b ? b.tracks : pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean);
-  const st = getSortState('playlist', key);
+  const [sortScreen, sortKey] = sortSlot('playlist', key);
+  const st = getSortState(sortScreen, sortKey);
   const tracks = sortTracks(base, st.by, st.desc);
   $('#mainTitle').textContent = name;
   const total = tracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -1256,7 +1276,7 @@ function renderPlaylistDetail(key) {
     <div class="detail-actions" style="padding:14px">
       <button class="btn primary" data-act="playall">再生</button>
       <button class="btn" data-act="shuffleall">シャッフル</button>
-      <button class="btn" data-act="sort" data-screen="playlist" data-instkey="${esc(key)}">並び: ${esc(sortLabel(st))}</button>
+      <button class="btn" data-act="sort" data-screen="${sortScreen}" data-instkey="${esc(sortKey)}">並び: ${esc(sortLabel(st))}</button>
       ${pl ? `<button class="btn" data-act="plmenu" data-key="${esc(pl.id)}">…</button>` : ''}
       <span class="muted" style="align-self:center;font-size:12px">${tracks.length}曲 · ${fmtLong(total)}</span>
     </div>
@@ -1295,12 +1315,13 @@ function currentListTracks() {
     const pl = b ? null : state.playlists.find((p) => p.id === r.key);
     const base = b ? b.tracks : pl ? pl.trackIds.map((id) => state.byId.get(id)).filter(Boolean) : [];
     const name = b ? b.name : pl ? pl.name : '';
-    const st = getSortState('playlist', r.key);
+    const st = getSortState(...sortSlot('playlist', r.key));
     return { tracks: sortTracks(base, st.by, st.desc), label: name };
   }
   if (r.name === 'favorites') {
     const b = builtinPlaylist('fav');
-    return { tracks: b.tracks, label: b.name };
+    const st = getSortState('favorites', 'all');
+    return { tracks: sortTracks(b.tracks, st.by, st.desc), label: b.name };
   }
   const st = getSortState('songs', 'all');
   return { tracks: sortTracks(filtered(), st.by, st.desc), label: state.query ? '検索結果' : 'すべての曲' };
@@ -1890,6 +1911,7 @@ function insertNext(id) {
 
 async function toggleFav(t) {
   t.favorite = !t.favorite;
+  t.favoritedAt = t.favorite ? Date.now() : 0; // 「お気に入りにした順」で並べるため
   await db.put('tracks', t);
   if (currentTrack() && currentTrack().id === t.id) $('#tFav').classList.toggle('on', !!t.favorite);
   toast(t.favorite ? 'お気に入りに追加しました' : 'お気に入りから外しました');
